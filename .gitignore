@@ -1,0 +1,36 @@
+# Binaries
+satsbook
+lndcheck
+*.exe
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and config
+.env
+*.macaroon
+*.cert
+*.key
+credentials.json
+
+# Test coverage
+*.out
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
