@@ -1,6 +1,6 @@
 # Binaries
-satsbook
-lndcheck
+/satsbook
+/lndcheck
 *.exe
 *.dll
 *.so
@@ -24,12 +24,14 @@ credentials.json
 *.out
 coverage.html
 
-# IDE
+# IDE/Tools
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.claude
+CLAUDE.MD
 
 # OS
 .DS_Store
