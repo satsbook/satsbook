@@ -1,5 +1,11 @@
 .PHONY: build run test clean
 
+# Load environment variables from .env file if it exists
+ifneq (,$(wildcard .env))
+	include .env
+	export
+endif
+
 # Build the binary
 build:
 	go build -o satsbook ./cmd/satsbook
