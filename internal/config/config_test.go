@@ -207,6 +207,54 @@ func TestLoad_ValidLogLevels(t *testing.T) {
 	}
 }
 
+func TestLoad_MissingLNDHost(t *testing.T) {
+	cfg := &Config{
+		LNDHost:         "",
+		LNDPort:         10009,
+		LNDMacaroonPath: "/test/macaroon",
+		LNDTLSCertPath:  "/test/tls.cert",
+		DatabasePath:    "./satsbook.db",
+		AppPort:         8080,
+		LogLevel:        "info",
+	}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("validate() should fail when LNDHost is empty")
+	}
+}
+
+func TestLoad_MissingDatabasePath(t *testing.T) {
+	cfg := &Config{
+		LNDHost:         "localhost",
+		LNDPort:         10009,
+		LNDMacaroonPath: "/test/macaroon",
+		LNDTLSCertPath:  "/test/tls.cert",
+		DatabasePath:    "",
+		AppPort:         8080,
+		LogLevel:        "info",
+	}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("validate() should fail when DatabasePath is empty")
+	}
+}
+
+func TestLoad_InvalidAppPort(t *testing.T) {
+	cases := []int{0, -1, 65536, 99999}
+	for _, port := range cases {
+		cfg := &Config{
+			LNDHost:         "localhost",
+			LNDPort:         10009,
+			LNDMacaroonPath: "/test/macaroon",
+			LNDTLSCertPath:  "/test/tls.cert",
+			DatabasePath:    "./satsbook.db",
+			AppPort:         port,
+			LogLevel:        "info",
+		}
+		if err := cfg.validate(); err == nil {
+			t.Errorf("validate() should fail for AppPort=%d", port)
+		}
+	}
+}
+
 func TestGetEnvAsInt_InvalidValue(t *testing.T) {
 	os.Setenv("TEST_INT", "not-a-number")
 	defer os.Unsetenv("TEST_INT")
