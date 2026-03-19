@@ -1,4 +1,4 @@
-.PHONY: build run test clean
+.PHONY: build build-lndcheck run test clean
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard .env))
@@ -9,6 +9,10 @@ endif
 # Build the binary
 build:
 	go build -o satsbook ./cmd/satsbook
+
+# Build the lndcheck utility
+build-lndcheck:
+	go build -o lndcheck ./cmd/lndcheck
 
 # Run the application
 run:
