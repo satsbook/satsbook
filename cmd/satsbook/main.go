@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/satsbook/satsbook/internal/config"
+	"github.com/satsbook/satsbook/internal/db"
 )
 
 func main() {
@@ -24,6 +25,14 @@ func main() {
 	log.Printf("Database: %s", cfg.DatabasePath)
 	log.Printf("App Port: %d", cfg.AppPort)
 	log.Printf("Log Level: %s", cfg.LogLevel)
+
+	// Initialize database
+	database, err := db.NewDB(cfg.DatabasePath)
+	if err != nil {
+		log.Fatalf("failed to initialize database: %v", err)
+	}
+	defer database.Close()
+	log.Printf("database initialized at %s", cfg.DatabasePath)
 
 	// TODO: Implement main application logic
 }
