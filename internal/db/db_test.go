@@ -54,6 +54,7 @@ func TestMigrations_TablesExist(t *testing.T) {
 		"disposals",
 		"exchange_imports",
 		"sync_state",
+		"wallet_balance_snapshots",
 	}
 
 	for _, tableName := range expectedTables {
@@ -92,7 +93,7 @@ func TestMigrations_IdempotentOnReopen(t *testing.T) {
 }
 
 // TestMigrations_NeverRerun verifies that migrations are only applied once.
-// After opening the database twice, schema_migrations should have exactly 1 row.
+// After opening the database twice, schema_migrations should have the same number of rows.
 func TestMigrations_NeverRerun(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
@@ -101,6 +102,13 @@ func TestMigrations_NeverRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first NewDB failed: %v", err)
 	}
+
+	var countAfterFirst int
+	err = db1.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&countAfterFirst)
+	if err != nil {
+		t.Fatalf("failed to count schema_migrations rows: %v", err)
+	}
+
 	db1.Close()
 
 	// Second open
@@ -111,13 +119,13 @@ func TestMigrations_NeverRerun(t *testing.T) {
 	defer db2.Close()
 
 	// Count rows in schema_migrations
-	var count int
-	err = db2.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
+	var countAfterSecond int
+	err = db2.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&countAfterSecond)
 	if err != nil {
 		t.Fatalf("failed to count schema_migrations rows: %v", err)
 	}
 
-	if count != 1 {
-		t.Errorf("expected 1 row in schema_migrations, got %d", count)
+	if countAfterSecond != countAfterFirst {
+		t.Errorf("expected %d rows in schema_migrations after reopen, got %d", countAfterFirst, countAfterSecond)
 	}
 }
