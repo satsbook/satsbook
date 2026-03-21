@@ -6,23 +6,13 @@ import (
 	"time"
 )
 
-// syncTxForTest defines the interface for testing sync operations.
-// This mirrors the syncer.SyncTx interface but is defined here for testing.
-type syncTxForTest interface {
-	SetSyncState(source string, syncedAt time.Time, offset int64) error
-	InsertForwardingEvents(events []ForwardingEvent) error
-	UpsertChannels(channels []Channel) error
-	UpsertInvoices(invoices []Invoice) error
-	UpsertPayments(payments []Payment) error
-	InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error
-}
-
 func newTestDB(t *testing.T) *DB {
-	db, err := NewDB(":memory:")
+	t.Helper()
+	d, err := NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create test database: %v", err)
 	}
-	return db
+	return d
 }
 
 func TestGetSyncState_NotFound(t *testing.T) {
@@ -48,9 +38,8 @@ func TestSetAndGetSyncState(t *testing.T) {
 	defer d.Close()
 
 	now := time.Now().UTC()
-	err := d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.SetSyncState("forwarding", now, 42)
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.SetSyncState("forwarding", now, 42)
 	})
 	if err != nil {
 		t.Fatalf("failed to set sync state: %v", err)
@@ -70,6 +59,50 @@ func TestSetAndGetSyncState(t *testing.T) {
 	}
 }
 
+func TestGetSyncState_WithinTransaction(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	// Set initial state
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.SetSyncState("test", now, 10)
+	})
+	if err != nil {
+		t.Fatalf("failed to set initial sync state: %v", err)
+	}
+
+	// Read within a new transaction
+	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+		syncedAt, offset, err := tx.GetSyncState("test")
+		if err != nil {
+			return err
+		}
+		if syncedAt.Unix() != now.Unix() {
+			t.Errorf("expected synced time %v, got %v", now, syncedAt)
+		}
+		if offset != 10 {
+			t.Errorf("expected offset 10, got %d", offset)
+		}
+
+		// Read non-existent source
+		zeroTime, zeroOffset, err := tx.GetSyncState("nonexistent")
+		if err != nil {
+			return err
+		}
+		if !zeroTime.IsZero() {
+			t.Errorf("expected zero time for nonexistent, got %v", zeroTime)
+		}
+		if zeroOffset != 0 {
+			t.Errorf("expected offset 0 for nonexistent, got %d", zeroOffset)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("transaction failed: %v", err)
+	}
+}
+
 func TestInsertForwardingEvents(t *testing.T) {
 	d := newTestDB(t)
 	defer d.Close()
@@ -85,6 +118,7 @@ func TestInsertForwardingEvents(t *testing.T) {
 			FeeMsat:    1000,
 		},
 		{
+			// Duplicate — same unique key, should be ignored
 			Timestamp:  now,
 			ChanIDIn:   12345,
 			ChanIDOut:  67890,
@@ -94,15 +128,13 @@ func TestInsertForwardingEvents(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.InsertForwardingEvents(events)
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.InsertForwardingEvents(events)
 	})
 	if err != nil {
 		t.Fatalf("failed to insert events: %v", err)
 	}
 
-	// Verify events were inserted (duplicate ignored via unique index)
 	var count int
 	err = d.db.QueryRow("SELECT COUNT(*) FROM forwarding_events").Scan(&count)
 	if err != nil {
@@ -111,6 +143,18 @@ func TestInsertForwardingEvents(t *testing.T) {
 
 	if count != 1 {
 		t.Errorf("expected 1 event (duplicate ignored), got %d", count)
+	}
+}
+
+func TestInsertForwardingEvents_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.InsertForwardingEvents(nil)
+	})
+	if err != nil {
+		t.Fatalf("inserting empty events should not error: %v", err)
 	}
 }
 
@@ -128,9 +172,8 @@ func TestUpsertChannels(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.UpsertChannels(channels)
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertChannels(channels)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert channels: %v", err)
@@ -147,15 +190,13 @@ func TestUpsertChannels(t *testing.T) {
 		},
 	}
 
-	err = d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.UpsertChannels(updatedChannels)
+	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertChannels(updatedChannels)
 	})
 	if err != nil {
 		t.Fatalf("failed to update channels: %v", err)
 	}
 
-	// Verify the update
 	var localBalance int64
 	err = d.db.QueryRow("SELECT local_balance FROM channels WHERE chan_id = ?", 123456).Scan(&localBalance)
 	if err != nil {
@@ -164,6 +205,18 @@ func TestUpsertChannels(t *testing.T) {
 
 	if localBalance != 60000 {
 		t.Errorf("expected local balance 60000, got %d", localBalance)
+	}
+}
+
+func TestUpsertChannels_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertChannels(nil)
+	})
+	if err != nil {
+		t.Fatalf("upserting empty channels should not error: %v", err)
 	}
 }
 
@@ -181,12 +234,29 @@ func TestUpsertInvoices(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.UpsertInvoices(invoices)
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertInvoices(invoices)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert invoices: %v", err)
+	}
+
+	// Upsert with settlement
+	settledAt := now.Add(time.Hour)
+	updatedInvoices := []Invoice{
+		{
+			PaymentHash: "hash1",
+			AmtPaidMsat: 100000,
+			CreatedAt:   now,
+			SettledAt:   &settledAt,
+		},
+	}
+
+	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertInvoices(updatedInvoices)
+	})
+	if err != nil {
+		t.Fatalf("failed to update invoice: %v", err)
 	}
 
 	var amtPaid int64
@@ -197,6 +267,18 @@ func TestUpsertInvoices(t *testing.T) {
 
 	if amtPaid != 100000 {
 		t.Errorf("expected amount 100000, got %d", amtPaid)
+	}
+}
+
+func TestUpsertInvoices_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertInvoices(nil)
+	})
+	if err != nil {
+		t.Fatalf("upserting empty invoices should not error: %v", err)
 	}
 }
 
@@ -215,12 +297,29 @@ func TestUpsertPayments(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.UpsertPayments(payments)
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertPayments(payments)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert payments: %v", err)
+	}
+
+	// Verify upsert updates status
+	updatedPayments := []Payment{
+		{
+			PaymentHash: "hash1",
+			Status:      "FAILED",
+			ValueMsat:   100000,
+			FeeMsat:     1000,
+			CreatedAt:   now,
+		},
+	}
+
+	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertPayments(updatedPayments)
+	})
+	if err != nil {
+		t.Fatalf("failed to update payment: %v", err)
 	}
 
 	var status string
@@ -229,8 +328,20 @@ func TestUpsertPayments(t *testing.T) {
 		t.Fatalf("failed to query payment: %v", err)
 	}
 
-	if status != "SUCCEEDED" {
-		t.Errorf("expected status SUCCEEDED, got %s", status)
+	if status != "FAILED" {
+		t.Errorf("expected status FAILED, got %s", status)
+	}
+}
+
+func TestUpsertPayments_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertPayments(nil)
+	})
+	if err != nil {
+		t.Fatalf("upserting empty payments should not error: %v", err)
 	}
 }
 
@@ -246,9 +357,8 @@ func TestInsertWalletBalanceSnapshot(t *testing.T) {
 		UnconfirmedSat: 10000,
 	}
 
-	err := d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.InsertWalletBalanceSnapshot(snapshot)
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.InsertWalletBalanceSnapshot(snapshot)
 	})
 	if err != nil {
 		t.Fatalf("failed to insert snapshot: %v", err)
@@ -272,9 +382,8 @@ func TestRunSync_RollsBackOnError(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Insert a channel successfully
-	err := d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		return syncTx.UpsertChannels([]Channel{
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertChannels([]Channel{
 			{
 				ChanID:        123456,
 				RemotePubKey:  "node1",
@@ -289,16 +398,16 @@ func TestRunSync_RollsBackOnError(t *testing.T) {
 	}
 
 	// Attempt a transaction that will fail
-	err = d.RunSync(context.Background(), func(tx interface{}) error {
-		syncTx := tx.(syncTxForTest)
-		// This succeeds
-		_ = syncTx.SetSyncState("test", now, 0)
-		// But then we return an error
-		return ErrTest
+	testErr := &TestError{"test error"}
+	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+		// This succeeds within the tx
+		_ = tx.SetSyncState("test", now, 0)
+		// But we return an error to trigger rollback
+		return testErr
 	})
 
-	if err != ErrTest {
-		t.Errorf("expected ErrTest, got %v", err)
+	if err != testErr {
+		t.Errorf("expected testErr, got %v", err)
 	}
 
 	// Verify that the sync_state was NOT written (rollback happened)
@@ -311,7 +420,7 @@ func TestRunSync_RollsBackOnError(t *testing.T) {
 		t.Errorf("expected zero time (no sync state), but got %v", syncedAt)
 	}
 
-	// Verify that the channel still exists (insert was transactional)
+	// Verify the pre-existing channel still exists
 	var count int
 	err = d.db.QueryRow("SELECT COUNT(*) FROM channels").Scan(&count)
 	if err != nil {
@@ -323,9 +432,16 @@ func TestRunSync_RollsBackOnError(t *testing.T) {
 	}
 }
 
-// ErrTest is a test error for rollback testing.
-var ErrTest = &TestError{"test error"}
+func TestBoolToInt(t *testing.T) {
+	if boolToInt(true) != 1 {
+		t.Error("expected boolToInt(true) == 1")
+	}
+	if boolToInt(false) != 0 {
+		t.Error("expected boolToInt(false) == 0")
+	}
+}
 
+// TestError is a test error for rollback testing.
 type TestError struct {
 	msg string
 }

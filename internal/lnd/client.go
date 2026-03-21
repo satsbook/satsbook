@@ -176,13 +176,12 @@ func (c *Client) ListChannels(ctx context.Context) ([]Channel, error) {
 
 // ForwardingEvent represents a routing event with fee information.
 type ForwardingEvent struct {
-	Timestamp      time.Time
-	ChanIDIn       uint64
-	ChanIDOut      uint64
-	AmountIn       uint64 // msat
-	AmountOut      uint64 // msat
-	Fee            uint64 // msat
-	FeeMsat        uint64 // deprecated, same as Fee
+	Timestamp time.Time
+	ChanIDIn  uint64
+	ChanIDOut uint64
+	AmountIn  uint64 // msat
+	AmountOut uint64 // msat
+	Fee       uint64 // msat
 }
 
 // ForwardingHistory returns routing events between the given times, with automatic pagination.
@@ -207,13 +206,12 @@ func (c *Client) ForwardingHistory(ctx context.Context, startTime, endTime time.
 
 		for _, ev := range resp.ForwardingEvents {
 			allEvents = append(allEvents, ForwardingEvent{
-				Timestamp:      time.Unix(int64(ev.Timestamp), 0),
-				ChanIDIn:       ev.ChanIdIn,
-				ChanIDOut:      ev.ChanIdOut,
-				AmountIn:       ev.AmtInMsat,
-				AmountOut:      ev.AmtOutMsat,
-				Fee:            ev.FeeMsat,
-				FeeMsat:        ev.FeeMsat,
+				Timestamp: time.Unix(int64(ev.Timestamp), 0),
+				ChanIDIn:  ev.ChanIdIn,
+				ChanIDOut: ev.ChanIdOut,
+				AmountIn:  ev.AmtInMsat,
+				AmountOut: ev.AmtOutMsat,
+				Fee:       ev.FeeMsat,
 			})
 		}
 

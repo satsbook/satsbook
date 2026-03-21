@@ -16,10 +16,11 @@ import (
 
 // TestSync_RealNode tests sync against a real LND node.
 // Requires environment variables:
-//   SATSBOOK_LND_HOST
-//   SATSBOOK_LND_PORT
-//   SATSBOOK_LND_MACAROON_PATH
-//   SATSBOOK_LND_TLS_CERT_PATH
+//
+//	SATSBOOK_LND_HOST
+//	SATSBOOK_LND_PORT
+//	SATSBOOK_LND_MACAROON_PATH
+//	SATSBOOK_LND_TLS_CERT_PATH
 //
 // Run with: go test -tags integration ./internal/syncer/
 func TestSync_RealNode(t *testing.T) {
@@ -45,52 +46,23 @@ func TestSync_RealNode(t *testing.T) {
 
 	// Create syncer
 	logger := log.New(os.Stderr, "[integration-test] ", log.LstdFlags)
-	syncer := New(lndClient, database, logger, 5*time.Minute, 7) // 7 days of history
+	s := New(lndClient, database, logger, 5*time.Minute, 7) // 7 days of history
 
 	// Run sync
-	err = syncer.Sync(context.Background())
+	err = s.Sync(context.Background())
 	if err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
 
-	// Verify that data was synced
-	var forwardingCount int
-	err = database.db.QueryRow("SELECT COUNT(*) FROM forwarding_events").Scan(&forwardingCount)
-	if err != nil {
-		t.Fatalf("failed to count forwarding events: %v", err)
-	}
-	t.Logf("Synced %d forwarding events", forwardingCount)
-
-	var channelCount int
-	err = database.db.QueryRow("SELECT COUNT(*) FROM channels").Scan(&channelCount)
-	if err != nil {
-		t.Fatalf("failed to count channels: %v", err)
-	}
-	t.Logf("Synced %d channels", channelCount)
-
-	var invoiceCount int
-	err = database.db.QueryRow("SELECT COUNT(*) FROM invoices").Scan(&invoiceCount)
-	if err != nil {
-		t.Fatalf("failed to count invoices: %v", err)
-	}
-	t.Logf("Synced %d invoices", invoiceCount)
-
-	var paymentCount int
-	err = database.db.QueryRow("SELECT COUNT(*) FROM payments").Scan(&paymentCount)
-	if err != nil {
-		t.Fatalf("failed to count payments: %v", err)
-	}
-	t.Logf("Synced %d payments", paymentCount)
-
-	var snapshotCount int
-	err = database.db.QueryRow("SELECT COUNT(*) FROM wallet_balance_snapshots").Scan(&snapshotCount)
-	if err != nil {
-		t.Fatalf("failed to count balance snapshots: %v", err)
-	}
-	t.Logf("Synced %d wallet balance snapshots", snapshotCount)
-
-	// At minimum, we should have a wallet balance snapshot (always synced)
-	if snapshotCount < 1 {
-		t.Errorf("expected at least 1 wallet balance snapshot, got %d", snapshotCount)
+	// Verify sync state was written for all sources
+	for _, source := range []string{"forwarding", "invoices", "payments", "wallet"} {
+		syncedAt, _, err := database.GetSyncState(context.Background(), source)
+		if err != nil {
+			t.Fatalf("failed to get sync state for %s: %v", source, err)
+		}
+		if syncedAt.IsZero() {
+			t.Errorf("expected non-zero sync time for %s", source)
+		}
+		t.Logf("Sync state for %s: %s", source, syncedAt.Format(time.RFC3339))
 	}
 }
