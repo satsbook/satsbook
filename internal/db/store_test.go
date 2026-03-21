@@ -62,9 +62,10 @@ func TestInsertForwardingEvents(t *testing.T) {
 	d := newTestDB(t)
 	defer d.Close()
 
+	now := time.Now().UTC()
 	events := []ForwardingEvent{
 		{
-			Timestamp:  time.Now().UTC(),
+			Timestamp:  now,
 			ChanIDIn:   12345,
 			ChanIDOut:  67890,
 			AmtInMsat:  100000,
@@ -72,7 +73,7 @@ func TestInsertForwardingEvents(t *testing.T) {
 			FeeMsat:    1000,
 		},
 		{
-			Timestamp:  time.Now().UTC(),
+			Timestamp:  now,
 			ChanIDIn:   12345,
 			ChanIDOut:  67890,
 			AmtInMsat:  100000,
@@ -88,7 +89,7 @@ func TestInsertForwardingEvents(t *testing.T) {
 		t.Fatalf("failed to insert events: %v", err)
 	}
 
-	// Verify events were inserted (including the duplicate via INSERT OR IGNORE)
+	// Verify events were inserted (duplicate ignored via unique index)
 	var count int
 	err = d.db.QueryRow("SELECT COUNT(*) FROM forwarding_events").Scan(&count)
 	if err != nil {
