@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -51,17 +52,7 @@ type WalletBalanceSnapshot struct {
 	UnconfirmedSat  int64
 }
 
-// SyncTx represents a transaction context for syncing operations.
-type SyncTx interface {
-	SetSyncState(source string, syncedAt time.Time, offset int64) error
-	InsertForwardingEvents(events []ForwardingEvent) error
-	UpsertChannels(channels []Channel) error
-	UpsertInvoices(invoices []Invoice) error
-	UpsertPayments(payments []Payment) error
-	InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error
-}
-
-// dbSyncTx implements SyncTx interface for a SQL transaction.
+// dbSyncTx provides transactional sync operations for a SQL transaction.
 type dbSyncTx struct {
 	tx *sql.Tx
 }
@@ -72,7 +63,10 @@ func (t *dbSyncTx) SetSyncState(source string, syncedAt time.Time, offset int64)
 		`INSERT OR REPLACE INTO sync_state (source, last_synced_at, last_offset) VALUES (?, ?, ?)`,
 		source, syncedAt, offset,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("set sync state for %q: %w", source, err)
+	}
+	return nil
 }
 
 // InsertForwardingEvents inserts forwarding events into the database.
@@ -89,7 +83,7 @@ func (t *dbSyncTx) InsertForwardingEvents(events []ForwardingEvent) error {
 			event.Timestamp, event.ChanIDIn, event.ChanIDOut, event.AmtInMsat, event.AmtOutMsat, event.FeeMsat,
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("insert forwarding event for channels %d→%d: %w", event.ChanIDIn, event.ChanIDOut, err)
 		}
 	}
 
@@ -109,7 +103,7 @@ func (t *dbSyncTx) UpsertChannels(channels []Channel) error {
 			ch.ChanID, ch.RemotePubKey, ch.LocalBalance, ch.RemoteBalance, boolToInt(ch.Active),
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("upsert channel %d: %w", ch.ChanID, err)
 		}
 	}
 
@@ -129,7 +123,7 @@ func (t *dbSyncTx) UpsertInvoices(invoices []Invoice) error {
 			inv.PaymentHash, inv.AmtPaidMsat, inv.CreatedAt, inv.SettledAt,
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("upsert invoice %s: %w", inv.PaymentHash, err)
 		}
 	}
 
@@ -149,7 +143,7 @@ func (t *dbSyncTx) UpsertPayments(payments []Payment) error {
 			pmt.PaymentHash, pmt.Status, pmt.ValueMsat, pmt.FeeMsat, pmt.CreatedAt,
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("upsert payment %s (%s): %w", pmt.PaymentHash, pmt.Status, err)
 		}
 	}
 
@@ -163,7 +157,10 @@ func (t *dbSyncTx) InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error {
 		 VALUES (?, ?, ?, ?)`,
 		s.CapturedAt, s.TotalSat, s.ConfirmedSat, s.UnconfirmedSat,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("insert wallet balance snapshot: %w", err)
+	}
+	return nil
 }
 
 // GetSyncState retrieves the sync state for a given source.
@@ -177,12 +174,12 @@ func (d *DB) GetSyncState(ctx context.Context, source string) (time.Time, int64,
 		source,
 	).Scan(&lastSyncedAt, &lastOffset)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		// Not synced yet; return zero values
 		return time.Time{}, 0, nil
 	}
 	if err != nil {
-		return time.Time{}, 0, fmt.Errorf("failed to get sync state: %w", err)
+		return time.Time{}, 0, fmt.Errorf("get sync state for %q: %w", source, err)
 	}
 
 	if !lastSyncedAt.Valid {
@@ -194,7 +191,8 @@ func (d *DB) GetSyncState(ctx context.Context, source string) (time.Time, int64,
 
 // RunSync wraps a sync operation in a transaction.
 // If the function returns an error, the transaction is rolled back.
-func (d *DB) RunSync(ctx context.Context, fn func(SyncTx) error) error {
+// fn should accept a SyncTx-like interface (defined in syncer package at use-site).
+func (d *DB) RunSync(ctx context.Context, fn func(interface{}) error) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -202,7 +200,9 @@ func (d *DB) RunSync(ctx context.Context, fn func(SyncTx) error) error {
 
 	syncTx := &dbSyncTx{tx: tx}
 	if err := fn(syncTx); err != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("fn error: %w; rollback error: %v", err, rbErr)
+		}
 		return err
 	}
 

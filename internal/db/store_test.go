@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+// syncTxForTest defines the interface for testing sync operations.
+// This mirrors the syncer.SyncTx interface but is defined here for testing.
+type syncTxForTest interface {
+	SetSyncState(source string, syncedAt time.Time, offset int64) error
+	InsertForwardingEvents(events []ForwardingEvent) error
+	UpsertChannels(channels []Channel) error
+	UpsertInvoices(invoices []Invoice) error
+	UpsertPayments(payments []Payment) error
+	InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error
+}
+
 func newTestDB(t *testing.T) *DB {
 	db, err := NewDB(":memory:")
 	if err != nil {
@@ -37,8 +48,9 @@ func TestSetAndGetSyncState(t *testing.T) {
 	defer d.Close()
 
 	now := time.Now().UTC()
-	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.SetSyncState("forwarding", now, 42)
+	err := d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.SetSyncState("forwarding", now, 42)
 	})
 	if err != nil {
 		t.Fatalf("failed to set sync state: %v", err)
@@ -82,8 +94,9 @@ func TestInsertForwardingEvents(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertForwardingEvents(events)
+	err := d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.InsertForwardingEvents(events)
 	})
 	if err != nil {
 		t.Fatalf("failed to insert events: %v", err)
@@ -115,8 +128,9 @@ func TestUpsertChannels(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels(channels)
+	err := d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.UpsertChannels(channels)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert channels: %v", err)
@@ -133,8 +147,9 @@ func TestUpsertChannels(t *testing.T) {
 		},
 	}
 
-	err = d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels(updatedChannels)
+	err = d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.UpsertChannels(updatedChannels)
 	})
 	if err != nil {
 		t.Fatalf("failed to update channels: %v", err)
@@ -166,8 +181,9 @@ func TestUpsertInvoices(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertInvoices(invoices)
+	err := d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.UpsertInvoices(invoices)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert invoices: %v", err)
@@ -199,8 +215,9 @@ func TestUpsertPayments(t *testing.T) {
 		},
 	}
 
-	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertPayments(payments)
+	err := d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.UpsertPayments(payments)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert payments: %v", err)
@@ -229,8 +246,9 @@ func TestInsertWalletBalanceSnapshot(t *testing.T) {
 		UnconfirmedSat: 10000,
 	}
 
-	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertWalletBalanceSnapshot(snapshot)
+	err := d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.InsertWalletBalanceSnapshot(snapshot)
 	})
 	if err != nil {
 		t.Fatalf("failed to insert snapshot: %v", err)
@@ -254,8 +272,9 @@ func TestRunSync_RollsBackOnError(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Insert a channel successfully
-	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels([]Channel{
+	err := d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
+		return syncTx.UpsertChannels([]Channel{
 			{
 				ChanID:        123456,
 				RemotePubKey:  "node1",
@@ -270,9 +289,10 @@ func TestRunSync_RollsBackOnError(t *testing.T) {
 	}
 
 	// Attempt a transaction that will fail
-	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+	err = d.RunSync(context.Background(), func(tx interface{}) error {
+		syncTx := tx.(syncTxForTest)
 		// This succeeds
-		_ = tx.SetSyncState("test", now, 0)
+		_ = syncTx.SetSyncState("test", now, 0)
 		// But then we return an error
 		return ErrTest
 	})
