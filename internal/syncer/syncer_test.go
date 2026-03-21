@@ -60,7 +60,6 @@ func (m *mockLNDClient) WalletBalance(ctx context.Context) (*lnd.WalletBalance, 
 // mockStore mocks the Store interface.
 type mockStore struct {
 	syncState map[string]syncStateEntry
-	syncFn    func(db.SyncTx) error
 }
 
 type syncStateEntry struct {
@@ -81,7 +80,7 @@ func (m *mockStore) GetSyncState(ctx context.Context, source string) (time.Time,
 	return time.Time{}, 0, nil
 }
 
-func (m *mockStore) RunSync(ctx context.Context, fn func(db.SyncTx) error) error {
+func (m *mockStore) RunSync(ctx context.Context, fn func(interface{}) error) error {
 	tx := &mockSyncTx{
 		store:      m,
 		syncStates: make(map[string]syncStateEntry),
@@ -100,13 +99,6 @@ type mockSyncTx struct {
 	syncStates               map[string]syncStateEntry
 }
 
-func newMockSyncTx(store *mockStore) *mockSyncTx {
-	return &mockSyncTx{
-		store:      store,
-		syncStates: make(map[string]syncStateEntry),
-	}
-}
-
 func (m *mockSyncTx) SetSyncState(source string, syncedAt time.Time, offset int64) error {
 	m.syncStates[source] = syncStateEntry{
 		lastSyncedAt: syncedAt,
@@ -121,22 +113,34 @@ func (m *mockSyncTx) SetSyncState(source string, syncedAt time.Time, offset int6
 }
 
 func (m *mockSyncTx) InsertForwardingEvents(events []db.ForwardingEvent) error {
-	m.forwardingEventsInserted = append(m.forwardingEventsInserted, events...)
+	if len(events) == 0 {
+		return nil
+	}
+	m.forwardingEventsInserted = events
 	return nil
 }
 
 func (m *mockSyncTx) UpsertChannels(channels []db.Channel) error {
-	m.channelsUpserted = append(m.channelsUpserted, channels...)
+	if len(channels) == 0 {
+		return nil
+	}
+	m.channelsUpserted = channels
 	return nil
 }
 
 func (m *mockSyncTx) UpsertInvoices(invoices []db.Invoice) error {
-	m.invoicesUpserted = append(m.invoicesUpserted, invoices...)
+	if len(invoices) == 0 {
+		return nil
+	}
+	m.invoicesUpserted = invoices
 	return nil
 }
 
 func (m *mockSyncTx) UpsertPayments(payments []db.Payment) error {
-	m.paymentsUpserted = append(m.paymentsUpserted, payments...)
+	if len(payments) == 0 {
+		return nil
+	}
+	m.paymentsUpserted = payments
 	return nil
 }
 
