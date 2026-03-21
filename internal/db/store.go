@@ -54,7 +54,33 @@ type WalletBalanceSnapshot struct {
 
 // dbSyncTx provides transactional sync operations for a SQL transaction.
 type dbSyncTx struct {
-	tx *sql.Tx
+	tx  *sql.Tx
+	ctx context.Context
+}
+
+// GetSyncState retrieves the sync state for a given source within the transaction.
+// Returns zero time and 0 offset if not found (no error).
+func (t *dbSyncTx) GetSyncState(source string) (time.Time, int64, error) {
+	var lastSyncedAt sql.NullTime
+	var lastOffset int64
+
+	err := t.tx.QueryRowContext(t.ctx,
+		`SELECT last_synced_at, last_offset FROM sync_state WHERE source = ?`,
+		source,
+	).Scan(&lastSyncedAt, &lastOffset)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, 0, nil
+	}
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("get sync state for %q: %w", source, err)
+	}
+
+	if !lastSyncedAt.Valid {
+		return time.Time{}, lastOffset, nil
+	}
+
+	return lastSyncedAt.Time, lastOffset, nil
 }
 
 // SetSyncState sets the sync state for a given source.
@@ -189,16 +215,26 @@ func (d *DB) GetSyncState(ctx context.Context, source string) (time.Time, int64,
 	return lastSyncedAt.Time, lastOffset, nil
 }
 
+// SyncTx defines the transactional operations available during a sync cycle.
+type SyncTx interface {
+	SetSyncState(source string, syncedAt time.Time, offset int64) error
+	GetSyncState(source string) (time.Time, int64, error)
+	InsertForwardingEvents(events []ForwardingEvent) error
+	UpsertChannels(channels []Channel) error
+	UpsertInvoices(invoices []Invoice) error
+	UpsertPayments(payments []Payment) error
+	InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error
+}
+
 // RunSync wraps a sync operation in a transaction.
 // If the function returns an error, the transaction is rolled back.
-// fn should accept a SyncTx-like interface (defined in syncer package at use-site).
-func (d *DB) RunSync(ctx context.Context, fn func(interface{}) error) error {
+func (d *DB) RunSync(ctx context.Context, fn func(SyncTx) error) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	syncTx := &dbSyncTx{tx: tx}
+	syncTx := &dbSyncTx{tx: tx, ctx: ctx}
 	if err := fn(syncTx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("fn error: %w; rollback error: %v", err, rbErr)

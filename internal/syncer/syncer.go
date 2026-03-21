@@ -18,21 +18,9 @@ type LNDClient interface {
 	WalletBalance(ctx context.Context) (*lnd.WalletBalance, error)
 }
 
-// SyncTx represents a transaction context for syncing operations.
-// Defined here at the use-site per idiomatic Go.
-type SyncTx interface {
-	SetSyncState(source string, syncedAt time.Time, offset int64) error
-	InsertForwardingEvents(events []db.ForwardingEvent) error
-	UpsertChannels(channels []db.Channel) error
-	UpsertInvoices(invoices []db.Invoice) error
-	UpsertPayments(payments []db.Payment) error
-	InsertWalletBalanceSnapshot(s db.WalletBalanceSnapshot) error
-}
-
 // Store defines the interface for persisting sync data.
 type Store interface {
-	GetSyncState(ctx context.Context, source string) (time.Time, int64, error)
-	RunSync(ctx context.Context, fn func(interface{}) error) error // fn receives SyncTx implementer (see db package)
+	RunSync(ctx context.Context, fn func(db.SyncTx) error) error
 }
 
 // Syncer orchestrates LND data synchronization.
@@ -79,14 +67,13 @@ func (s *Syncer) Run(ctx context.Context) {
 
 // Sync performs one full synchronization cycle.
 func (s *Syncer) Sync(ctx context.Context) error {
-	return s.store.RunSync(ctx, func(tx interface{}) error {
-		syncTx := tx.(SyncTx)
-		return s.syncCycle(ctx, syncTx)
+	return s.store.RunSync(ctx, func(tx db.SyncTx) error {
+		return s.syncCycle(ctx, tx)
 	})
 }
 
 // syncCycle is the core sync logic, executed within a transaction.
-func (s *Syncer) syncCycle(ctx context.Context, tx SyncTx) error {
+func (s *Syncer) syncCycle(ctx context.Context, tx db.SyncTx) error {
 	if err := s.syncForwardingEvents(ctx, tx); err != nil {
 		return err
 	}
@@ -111,9 +98,9 @@ func (s *Syncer) syncCycle(ctx context.Context, tx SyncTx) error {
 }
 
 // syncForwardingEvents syncs forwarding events since the last sync timestamp.
-func (s *Syncer) syncForwardingEvents(ctx context.Context, tx SyncTx) error {
-	// Get the last sync time for forwarding events
-	lastSyncedAt, _, err := s.store.GetSyncState(ctx, "forwarding")
+func (s *Syncer) syncForwardingEvents(ctx context.Context, tx db.SyncTx) error {
+	// Read state within the transaction for consistent isolation
+	lastSyncedAt, _, err := tx.GetSyncState("forwarding")
 	if err != nil {
 		return err
 	}
@@ -128,13 +115,13 @@ func (s *Syncer) syncForwardingEvents(ctx context.Context, tx SyncTx) error {
 
 	endTime := time.Now()
 
-	// Fetch forwarding events
+	// Fetch forwarding events from LND
 	events, err := s.lnd.ForwardingHistory(ctx, startTime, endTime)
 	if err != nil {
 		return err
 	}
 
-	// Convert to DB types and insert
+	// Convert to DB types
 	dbEvents := make([]db.ForwardingEvent, len(events))
 	for i, ev := range events {
 		dbEvents[i] = db.ForwardingEvent{
@@ -151,7 +138,6 @@ func (s *Syncer) syncForwardingEvents(ctx context.Context, tx SyncTx) error {
 		return err
 	}
 
-	// Update sync state
 	if err := tx.SetSyncState("forwarding", endTime, 0); err != nil {
 		return err
 	}
@@ -161,14 +147,12 @@ func (s *Syncer) syncForwardingEvents(ctx context.Context, tx SyncTx) error {
 }
 
 // syncChannels syncs the current channel state.
-func (s *Syncer) syncChannels(ctx context.Context, tx SyncTx) error {
-	// Fetch current channels
+func (s *Syncer) syncChannels(ctx context.Context, tx db.SyncTx) error {
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
 		return err
 	}
 
-	// Convert to DB types
 	dbChannels := make([]db.Channel, len(channels))
 	for i, ch := range channels {
 		dbChannels[i] = db.Channel{
@@ -189,20 +173,17 @@ func (s *Syncer) syncChannels(ctx context.Context, tx SyncTx) error {
 }
 
 // syncInvoices syncs invoices since the last sync offset.
-func (s *Syncer) syncInvoices(ctx context.Context, tx SyncTx) error {
-	// Get the last sync offset for invoices
-	_, lastOffset, err := s.store.GetSyncState(ctx, "invoices")
+func (s *Syncer) syncInvoices(ctx context.Context, tx db.SyncTx) error {
+	_, lastOffset, err := tx.GetSyncState("invoices")
 	if err != nil {
 		return err
 	}
 
-	// Fetch invoices starting from the offset
 	invoices, nextOffset, err := s.lnd.ListInvoices(ctx, uint64(lastOffset))
 	if err != nil {
 		return err
 	}
 
-	// Convert to DB types
 	dbInvoices := make([]db.Invoice, len(invoices))
 	for i, inv := range invoices {
 		var settledAt *time.Time
@@ -222,7 +203,6 @@ func (s *Syncer) syncInvoices(ctx context.Context, tx SyncTx) error {
 		return err
 	}
 
-	// Update sync state with the next offset
 	if err := tx.SetSyncState("invoices", time.Now(), int64(nextOffset)); err != nil {
 		return err
 	}
@@ -232,20 +212,17 @@ func (s *Syncer) syncInvoices(ctx context.Context, tx SyncTx) error {
 }
 
 // syncPayments syncs payments since the last sync offset.
-func (s *Syncer) syncPayments(ctx context.Context, tx SyncTx) error {
-	// Get the last sync offset for payments
-	_, lastOffset, err := s.store.GetSyncState(ctx, "payments")
+func (s *Syncer) syncPayments(ctx context.Context, tx db.SyncTx) error {
+	_, lastOffset, err := tx.GetSyncState("payments")
 	if err != nil {
 		return err
 	}
 
-	// Fetch payments starting from the offset
 	payments, nextOffset, err := s.lnd.ListPayments(ctx, uint64(lastOffset))
 	if err != nil {
 		return err
 	}
 
-	// Convert to DB types
 	dbPayments := make([]db.Payment, len(payments))
 	for i, pmt := range payments {
 		dbPayments[i] = db.Payment{
@@ -261,7 +238,6 @@ func (s *Syncer) syncPayments(ctx context.Context, tx SyncTx) error {
 		return err
 	}
 
-	// Update sync state with the next offset
 	if err := tx.SetSyncState("payments", time.Now(), int64(nextOffset)); err != nil {
 		return err
 	}
@@ -271,16 +247,13 @@ func (s *Syncer) syncPayments(ctx context.Context, tx SyncTx) error {
 }
 
 // syncWalletBalance syncs the current wallet balance.
-func (s *Syncer) syncWalletBalance(ctx context.Context, tx SyncTx) error {
-	// Fetch wallet balance
+func (s *Syncer) syncWalletBalance(ctx context.Context, tx db.SyncTx) error {
 	balance, err := s.lnd.WalletBalance(ctx)
 	if err != nil {
 		return err
 	}
 
 	now := time.Now()
-
-	// Insert snapshot
 	snapshot := db.WalletBalanceSnapshot{
 		CapturedAt:     now,
 		TotalSat:       balance.TotalBalance,
@@ -292,7 +265,6 @@ func (s *Syncer) syncWalletBalance(ctx context.Context, tx SyncTx) error {
 		return err
 	}
 
-	// Update sync state
 	if err := tx.SetSyncState("wallet", now, 0); err != nil {
 		return err
 	}

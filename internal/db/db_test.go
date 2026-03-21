@@ -92,6 +92,14 @@ func TestMigrations_IdempotentOnReopen(t *testing.T) {
 	defer db2.Close()
 }
 
+// TestClose_NilDB verifies that closing a DB with nil inner db does not panic.
+func TestClose_NilDB(t *testing.T) {
+	d := &DB{db: nil}
+	if err := d.Close(); err != nil {
+		t.Errorf("Close on nil db should return nil, got %v", err)
+	}
+}
+
 // TestMigrations_NeverRerun verifies that migrations are only applied once.
 // After opening the database twice, schema_migrations should have the same number of rows.
 func TestMigrations_NeverRerun(t *testing.T) {
