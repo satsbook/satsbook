@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config holds all runtime configuration for the application.
@@ -16,6 +17,10 @@ type Config struct {
 
 	// Database settings
 	DatabasePath string
+
+	// Syncer settings
+	SyncInterval   time.Duration
+	MaxHistoryDays int
 
 	// Application settings
 	AppPort  int
@@ -35,6 +40,10 @@ func Load() (*Config, error) {
 
 		// Database defaults
 		DatabasePath: getEnv("SATSBOOK_DATABASE_PATH", "./satsbook.db"),
+
+		// Syncer defaults
+		SyncInterval:   getEnvAsDuration("SATSBOOK_SYNC_INTERVAL", 5*time.Minute),
+		MaxHistoryDays: getEnvAsInt("SATSBOOK_MAX_HISTORY_DAYS", 90),
 
 		// Application defaults
 		AppPort:  getEnvAsInt("SATSBOOK_APP_PORT", 8080),
@@ -85,6 +94,14 @@ func (c *Config) validate() error {
 		return fmt.Errorf("log level must be one of [debug, info, warn, error], got %q", c.LogLevel)
 	}
 
+	if c.SyncInterval < 1*time.Minute {
+		return fmt.Errorf("sync interval must be at least 1 minute, got %v", c.SyncInterval)
+	}
+
+	if c.MaxHistoryDays < 1 || c.MaxHistoryDays > 3650 {
+		return fmt.Errorf("max history days must be between 1 and 3650, got %d", c.MaxHistoryDays)
+	}
+
 	return nil
 }
 
@@ -101,6 +118,16 @@ func getEnvAsInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+// getEnvAsDuration retrieves an environment variable as a duration or returns a default value.
+func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if d, err := time.ParseDuration(value); err == nil {
+			return d
 		}
 	}
 	return defaultValue

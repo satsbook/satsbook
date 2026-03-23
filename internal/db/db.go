@@ -96,6 +96,19 @@ var migrations = []string{
 		last_offset INTEGER DEFAULT 0
 	);
 	`,
+	// Migration 1: Add unique index on forwarding_events and wallet_balance_snapshots table
+	`
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_forwarding_events_unique
+		ON forwarding_events(timestamp, chan_id_in, chan_id_out, amt_out_msat);
+
+	CREATE TABLE IF NOT EXISTS wallet_balance_snapshots (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		captured_at     DATETIME NOT NULL,
+		total_sat       INTEGER NOT NULL,
+		confirmed_sat   INTEGER NOT NULL,
+		unconfirmed_sat INTEGER NOT NULL
+	);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.
