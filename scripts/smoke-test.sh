@@ -37,7 +37,7 @@ FAILURES=0
 # ─── Defaults ─────────────────────────────────────────────────────────
 SATSBOOK_BINARY=""
 SOAK_DURATION=120  # seconds (default: 2 minutes, use 600 for full 10-min soak)
-SYNC_WAIT=15       # seconds to wait for a sync cycle
+SYNC_WAIT=30       # seconds to wait for initial sync cycle
 DB_PATH=""
 CLEANUP_DB=false
 
@@ -92,8 +92,8 @@ else
 fi
 export SATSBOOK_DATABASE_PATH="$DB_PATH"
 
-# Use a short sync interval for testing
-export SATSBOOK_SYNC_INTERVAL="30s"
+# Use a short sync interval for testing (minimum allowed: 1m)
+export SATSBOOK_SYNC_INTERVAL="1m"
 export SATSBOOK_MAX_HISTORY_DAYS="7"
 export SATSBOOK_LOG_LEVEL="info"
 
