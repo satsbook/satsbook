@@ -18,11 +18,40 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Build
         run: go build ./...
 
-      - name: Test
+      - name: Test (race detection)
         run: go test -race -coverprofile=coverage.out ./...
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out
+
+      - name: Enforce minimum coverage
+        run: |
+          # Check per-package minimums
+          check_coverage() {
+            local pkg=$1
+            local min=$2
+            local cov
+            cov=$(go test -coverprofile=/dev/null "./$pkg" 2>&1 | grep -oP '\d+\.\d+(?=%)' || echo "0")
+            if (( $(echo "$cov < $min" | bc -l) )); then
+              echo "FAIL: $pkg coverage is ${cov}% (minimum: ${min}%)"
+              return 1
+            else
+              echo "OK:   $pkg coverage is ${cov}% (minimum: ${min}%)"
+              return 0
+            fi
+          }
+
+          FAILED=0
+          check_coverage "internal/syncer" 80 || FAILED=1
+          check_coverage "internal/config" 85 || FAILED=1
+          check_coverage "internal/db"     75 || FAILED=1
+          exit $FAILED
+
+      - name: Cross-compile (linux/arm64)
+        run: GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/satsbook
