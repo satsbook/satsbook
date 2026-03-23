@@ -44,6 +44,15 @@ type Payment struct {
 	CreatedAt   time.Time
 }
 
+// OnchainTx represents an on-chain transaction stored in the database.
+type OnchainTx struct {
+	TxHash           string
+	AmountSat        int64
+	NumConfirmations int32
+	Timestamp        time.Time
+	Label            string
+}
+
 // WalletBalanceSnapshot represents a wallet balance snapshot.
 type WalletBalanceSnapshot struct {
 	CapturedAt      time.Time
@@ -176,6 +185,27 @@ func (t *dbSyncTx) UpsertPayments(payments []Payment) error {
 	return nil
 }
 
+// UpsertOnchainTxns inserts or updates on-chain transactions.
+// Confirmation count and label may change between syncs.
+func (t *dbSyncTx) UpsertOnchainTxns(txns []OnchainTx) error {
+	if len(txns) == 0 {
+		return nil
+	}
+
+	for _, tx := range txns {
+		_, err := t.tx.Exec(
+			`INSERT OR REPLACE INTO onchain_txns (tx_hash, amount_sat, num_confirmations, timestamp, label)
+			 VALUES (?, ?, ?, ?, ?)`,
+			tx.TxHash, tx.AmountSat, tx.NumConfirmations, tx.Timestamp, tx.Label,
+		)
+		if err != nil {
+			return fmt.Errorf("upsert onchain tx %s: %w", tx.TxHash, err)
+		}
+	}
+
+	return nil
+}
+
 // InsertWalletBalanceSnapshot inserts a wallet balance snapshot.
 func (t *dbSyncTx) InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error {
 	_, err := t.tx.Exec(
@@ -223,6 +253,7 @@ type SyncTx interface {
 	UpsertChannels(channels []Channel) error
 	UpsertInvoices(invoices []Invoice) error
 	UpsertPayments(payments []Payment) error
+	UpsertOnchainTxns(txns []OnchainTx) error
 	InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error
 }
 

@@ -18,6 +18,7 @@ type mockLNDClient struct {
 	forwardingHistory []lnd.ForwardingEvent
 	invoices          []lnd.Invoice
 	payments          []lnd.Payment
+	onchainTxns       []lnd.OnchainTx
 	walletBalance     *lnd.WalletBalance
 
 	// Per-method errors for targeted failure testing
@@ -25,6 +26,7 @@ type mockLNDClient struct {
 	forwardingHistoryErr error
 	invoicesErr          error
 	paymentsErr          error
+	onchainTxnsErr       error
 	walletBalanceErr     error
 }
 
@@ -54,6 +56,13 @@ func (m *mockLNDClient) ListPayments(ctx context.Context, offset uint64) ([]lnd.
 		return nil, 0, m.paymentsErr
 	}
 	return m.payments, offset + uint64(len(m.payments)), nil
+}
+
+func (m *mockLNDClient) GetTransactions(ctx context.Context) ([]lnd.OnchainTx, error) {
+	if m.onchainTxnsErr != nil {
+		return nil, m.onchainTxnsErr
+	}
+	return m.onchainTxns, nil
 }
 
 func (m *mockLNDClient) WalletBalance(ctx context.Context) (*lnd.WalletBalance, error) {
@@ -93,6 +102,7 @@ type mockSyncTx struct {
 	channelsUpserted         []db.Channel
 	invoicesUpserted         []db.Invoice
 	paymentsUpserted         []db.Payment
+	onchainTxnsUpserted      []db.OnchainTx
 	balanceSnapshots         []db.WalletBalanceSnapshot
 }
 
@@ -128,6 +138,11 @@ func (m *mockSyncTx) UpsertInvoices(invoices []db.Invoice) error {
 
 func (m *mockSyncTx) UpsertPayments(payments []db.Payment) error {
 	m.paymentsUpserted = append(m.paymentsUpserted, payments...)
+	return nil
+}
+
+func (m *mockSyncTx) UpsertOnchainTxns(txns []db.OnchainTx) error {
+	m.onchainTxnsUpserted = append(m.onchainTxnsUpserted, txns...)
 	return nil
 }
 
@@ -174,7 +189,7 @@ func TestSync_FirstRun(t *testing.T) {
 	}
 
 	// Verify all sync sources wrote state
-	for _, source := range []string{"forwarding", "invoices", "payments", "wallet"} {
+	for _, source := range []string{"forwarding", "invoices", "payments", "onchain", "wallet"} {
 		entry, ok := store.syncState[source]
 		if !ok {
 			t.Errorf("expected sync state for %q", source)
@@ -357,6 +372,24 @@ func TestSync_PaymentsError(t *testing.T) {
 	}
 }
 
+func TestSync_OnchainTxnsError(t *testing.T) {
+	store := newMockStore()
+	mockLND := &mockLNDClient{
+		forwardingHistory: []lnd.ForwardingEvent{},
+		channels:          []lnd.Channel{},
+		invoices:          []lnd.Invoice{},
+		payments:          []lnd.Payment{},
+		onchainTxnsErr:    errors.New("transactions unavailable"),
+		walletBalance:     defaultMockBalance(),
+	}
+
+	s := newTestSyncer(mockLND, store)
+	err := s.Sync(context.Background())
+	if err == nil {
+		t.Fatal("expected error from onchain txns failure")
+	}
+}
+
 func TestSync_WalletBalanceError(t *testing.T) {
 	store := newMockStore()
 	mockLND := &mockLNDClient{
@@ -364,6 +397,7 @@ func TestSync_WalletBalanceError(t *testing.T) {
 		channels:          []lnd.Channel{},
 		invoices:          []lnd.Invoice{},
 		payments:          []lnd.Payment{},
+		onchainTxns:       []lnd.OnchainTx{},
 		walletBalanceErr:  errors.New("wallet unavailable"),
 	}
 
@@ -391,8 +425,8 @@ func TestSync_EmptyResults(t *testing.T) {
 	}
 
 	// Sync should still complete and write state for all sources
-	if len(store.syncState) < 4 {
-		t.Errorf("expected at least 4 sync state entries, got %d", len(store.syncState))
+	if len(store.syncState) < 5 {
+		t.Errorf("expected at least 5 sync state entries, got %d", len(store.syncState))
 	}
 }
 
