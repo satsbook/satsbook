@@ -345,6 +345,79 @@ func TestUpsertPayments_Empty(t *testing.T) {
 	}
 }
 
+func TestUpsertOnchainTxns(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	txns := []OnchainTx{
+		{
+			TxHash:           "abc123",
+			AmountSat:        50000,
+			NumConfirmations: 3,
+			Timestamp:        now,
+			Label:            "channel open",
+		},
+	}
+
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertOnchainTxns(txns)
+	})
+	if err != nil {
+		t.Fatalf("failed to upsert onchain txns: %v", err)
+	}
+
+	// Upsert with updated confirmations
+	updatedTxns := []OnchainTx{
+		{
+			TxHash:           "abc123",
+			AmountSat:        50000,
+			NumConfirmations: 6,
+			Timestamp:        now,
+			Label:            "channel open",
+		},
+	}
+
+	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertOnchainTxns(updatedTxns)
+	})
+	if err != nil {
+		t.Fatalf("failed to update onchain txn: %v", err)
+	}
+
+	var confs int32
+	err = d.db.QueryRow("SELECT num_confirmations FROM onchain_txns WHERE tx_hash = ?", "abc123").Scan(&confs)
+	if err != nil {
+		t.Fatalf("failed to query onchain txn: %v", err)
+	}
+
+	if confs != 6 {
+		t.Errorf("expected 6 confirmations, got %d", confs)
+	}
+
+	// Verify only 1 row (upsert, not duplicate)
+	var count int
+	err = d.db.QueryRow("SELECT COUNT(*) FROM onchain_txns").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to count onchain txns: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 onchain txn, got %d", count)
+	}
+}
+
+func TestUpsertOnchainTxns_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertOnchainTxns(nil)
+	})
+	if err != nil {
+		t.Fatalf("upserting empty onchain txns should not error: %v", err)
+	}
+}
+
 func TestInsertWalletBalanceSnapshot(t *testing.T) {
 	d := newTestDB(t)
 	defer d.Close()

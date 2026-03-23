@@ -15,6 +15,7 @@ type LNDClient interface {
 	ForwardingHistory(ctx context.Context, start, end time.Time) ([]lnd.ForwardingEvent, error)
 	ListInvoices(ctx context.Context, offset uint64) ([]lnd.Invoice, uint64, error)
 	ListPayments(ctx context.Context, offset uint64) ([]lnd.Payment, uint64, error)
+	GetTransactions(ctx context.Context) ([]lnd.OnchainTx, error)
 	WalletBalance(ctx context.Context) (*lnd.WalletBalance, error)
 }
 
@@ -87,6 +88,10 @@ func (s *Syncer) syncCycle(ctx context.Context, tx db.SyncTx) error {
 	}
 
 	if err := s.syncPayments(ctx, tx); err != nil {
+		return err
+	}
+
+	if err := s.syncOnchainTxns(ctx, tx); err != nil {
 		return err
 	}
 
@@ -243,6 +248,37 @@ func (s *Syncer) syncPayments(ctx context.Context, tx db.SyncTx) error {
 	}
 
 	s.logger.Printf("synced %d payments", len(dbPayments))
+	return nil
+}
+
+// syncOnchainTxns syncs on-chain transactions from the wallet.
+// This always fetches the full list and upserts — confirmation counts change over time.
+func (s *Syncer) syncOnchainTxns(ctx context.Context, tx db.SyncTx) error {
+	txns, err := s.lnd.GetTransactions(ctx)
+	if err != nil {
+		return err
+	}
+
+	dbTxns := make([]db.OnchainTx, len(txns))
+	for i, t := range txns {
+		dbTxns[i] = db.OnchainTx{
+			TxHash:           t.TxHash,
+			AmountSat:        t.Amount,
+			NumConfirmations: t.NumConfirmations,
+			Timestamp:        t.Timestamp,
+			Label:            t.Label,
+		}
+	}
+
+	if err := tx.UpsertOnchainTxns(dbTxns); err != nil {
+		return err
+	}
+
+	if err := tx.SetSyncState("onchain", time.Now(), 0); err != nil {
+		return err
+	}
+
+	s.logger.Printf("synced %d on-chain transactions", len(dbTxns))
 	return nil
 }
 
