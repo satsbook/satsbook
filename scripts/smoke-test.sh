@@ -212,11 +212,12 @@ stop_satsbook
 SYNC_STATES=$(db_count "sync_state")
 SNAPSHOTS=$(db_count "wallet_balance_snapshots")
 CHANNELS=$(db_count "channels")
+ONCHAIN=$(db_count "onchain_txns")
 
-if [[ "$SYNC_STATES" -ge 4 ]]; then
-  pass "sync_state has $SYNC_STATES entries (expected >= 4)"
+if [[ "$SYNC_STATES" -ge 5 ]]; then
+  pass "sync_state has $SYNC_STATES entries (expected >= 5)"
 else
-  fail "sync_state has $SYNC_STATES entries (expected >= 4)"
+  fail "sync_state has $SYNC_STATES entries (expected >= 5)"
 fi
 
 if [[ "$SNAPSHOTS" -ge 1 ]]; then
@@ -225,10 +226,14 @@ else
   fail "wallet_balance_snapshots is empty"
 fi
 
-if [[ "$CHANNELS" -ge 0 ]]; then
-  # Channels might be 0 if the node has none — that's ok, just report
-  info "channels: $CHANNELS, forwarding_events: $(db_count forwarding_events), invoices: $(db_count invoices), payments: $(db_count payments)"
+if [[ "$ONCHAIN" -ge 1 ]]; then
+  pass "onchain_txns has $ONCHAIN row(s)"
+else
+  fail "onchain_txns is empty (expected at least 1 on-chain transaction)"
 fi
+
+# Report all table counts
+info "channels: $CHANNELS, forwarding_events: $(db_count forwarding_events), invoices: $(db_count invoices), payments: $(db_count payments), onchain_txns: $ONCHAIN"
 
 SNAP_AFTER_FIRST=$SNAPSHOTS
 
@@ -358,6 +363,7 @@ sqlite3 "$DB_PATH" "
   UNION ALL SELECT 'channels', COUNT(*) FROM channels
   UNION ALL SELECT 'invoices', COUNT(*) FROM invoices
   UNION ALL SELECT 'payments', COUNT(*) FROM payments
+  UNION ALL SELECT 'onchain_txns', COUNT(*) FROM onchain_txns
   UNION ALL SELECT 'wallet_snapshots', COUNT(*) FROM wallet_balance_snapshots;
 " 2>/dev/null | sed 's/|/: /' | sed 's/^/  /'
 

@@ -334,3 +334,37 @@ func (c *Client) WalletBalance(ctx context.Context) (*WalletBalance, error) {
 		UnconfirmedBalance: resp.UnconfirmedBalance,
 	}, nil
 }
+
+// OnchainTx represents an on-chain transaction.
+type OnchainTx struct {
+	TxHash           string
+	Amount           int64
+	NumConfirmations int32
+	Timestamp        time.Time
+	Label            string
+}
+
+// GetTransactions returns on-chain transactions from the wallet.
+// It fetches all transactions from block height 0 to the current tip (including unconfirmed).
+func (c *Client) GetTransactions(ctx context.Context) ([]OnchainTx, error) {
+	resp, err := c.client.GetTransactions(ctx, &lnrpc.GetTransactionsRequest{
+		StartHeight: 0,
+		EndHeight:   -1, // include unconfirmed
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transactions: %w", err)
+	}
+
+	txns := make([]OnchainTx, len(resp.Transactions))
+	for i, tx := range resp.Transactions {
+		txns[i] = OnchainTx{
+			TxHash:           tx.TxHash,
+			Amount:           tx.Amount,
+			NumConfirmations: tx.NumConfirmations,
+			Timestamp:        time.Unix(tx.TimeStamp, 0),
+			Label:            tx.Label,
+		}
+	}
+
+	return txns, nil
+}
