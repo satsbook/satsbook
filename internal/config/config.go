@@ -23,8 +23,9 @@ type Config struct {
 	MaxHistoryDays int
 
 	// Application settings
-	AppPort  int
-	LogLevel string
+	AppPort     int
+	LogLevel    string
+	PriceAPIURL string
 }
 
 // Load reads configuration from environment variables.
@@ -46,8 +47,9 @@ func Load() (*Config, error) {
 		MaxHistoryDays: getEnvAsInt("SATSBOOK_MAX_HISTORY_DAYS", 90),
 
 		// Application defaults
-		AppPort:  getEnvAsInt("SATSBOOK_APP_PORT", 8080),
-		LogLevel: getEnv("SATSBOOK_LOG_LEVEL", "info"),
+		AppPort:     getEnvAsInt("SATSBOOK_APP_PORT", 8080),
+		LogLevel:    getEnv("SATSBOOK_LOG_LEVEL", "info"),
+		PriceAPIURL: getEnv("SATSBOOK_PRICE_API_URL", "https://mempool.space/api/v1/prices"),
 	}
 
 	// Validate required fields

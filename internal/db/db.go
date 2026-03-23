@@ -109,6 +109,15 @@ var migrations = []string{
 		unconfirmed_sat INTEGER NOT NULL
 	);
 	`,
+	// Migration 2: Indexes for dashboard query performance
+	`
+	CREATE INDEX IF NOT EXISTS idx_forwarding_events_timestamp
+		ON forwarding_events(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_forwarding_events_chan_id_in
+		ON forwarding_events(chan_id_in);
+	CREATE INDEX IF NOT EXISTS idx_forwarding_events_chan_id_out
+		ON forwarding_events(chan_id_out);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.
@@ -122,6 +131,17 @@ func NewDB(path string) (*DB, error) {
 	if err := sqldb.Ping(); err != nil {
 		sqldb.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	// Enable WAL mode for concurrent read/write (syncer writes while HTTP reads)
+	if _, err := sqldb.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		sqldb.Close()
+		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	}
+	// Set busy timeout so readers wait rather than getting SQLITE_BUSY
+	if _, err := sqldb.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		sqldb.Close()
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
 	}
 
 	db := &DB{db: sqldb}

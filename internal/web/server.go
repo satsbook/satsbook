@@ -1,0 +1,71 @@
+package web
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+)
+
+// Server is the HTTP server for the dashboard API.
+type Server struct {
+	httpServer *http.Server
+	logger     *log.Logger
+}
+
+// NewServer creates a new HTTP server with routing and middleware.
+func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/summary", handler.HandleSummary)
+	mux.HandleFunc("/api/channels", handler.HandleChannels)
+	mux.HandleFunc("/api/forwarding", handler.HandleForwarding)
+	mux.HandleFunc("/api/node", handler.HandleNode)
+
+	return &Server{
+		httpServer: &http.Server{
+			Addr:         fmt.Sprintf(":%d", port),
+			Handler:      requestLogger(mux, logger),
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		},
+		logger: logger,
+	}
+}
+
+// Start begins listening for HTTP requests. It blocks until the server is shut down.
+func (s *Server) Start() error {
+	s.logger.Printf("HTTP server listening on %s", s.httpServer.Addr)
+	err := s.httpServer.ListenAndServe()
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
+}
+
+// Shutdown gracefully shuts down the server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.httpServer.Shutdown(ctx)
+}
+
+// requestLogger is middleware that logs each HTTP request.
+func requestLogger(next http.Handler, logger *log.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		logger.Printf("%s %s %d %s", r.Method, r.URL.Path, rw.statusCode, time.Since(start).Round(time.Millisecond))
+	})
+}
+
+// responseWriter wraps http.ResponseWriter to capture the status code.
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
