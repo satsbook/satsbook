@@ -176,42 +176,54 @@ func (c *Client) ListChannels(ctx context.Context) ([]Channel, error) {
 
 // ForwardingEvent represents a routing event with fee information.
 type ForwardingEvent struct {
-	Timestamp      time.Time
-	ChanIDIn       uint64
-	ChanIDOut      uint64
-	AmountIn       uint64 // msat
-	AmountOut      uint64 // msat
-	Fee            uint64 // msat
-	FeeMsat        uint64 // deprecated, same as Fee
+	Timestamp time.Time
+	ChanIDIn  uint64
+	ChanIDOut uint64
+	AmountIn  uint64 // msat
+	AmountOut uint64 // msat
+	Fee       uint64 // msat
 }
 
-// ForwardingHistory returns routing events between the given times.
+// ForwardingHistory returns routing events between the given times, with automatic pagination.
+// It fetches all events in the time range by paginating through the results.
 func (c *Client) ForwardingHistory(ctx context.Context, startTime, endTime time.Time) ([]ForwardingEvent, error) {
-	req := &lnrpc.ForwardingHistoryRequest{
-		StartTime:    uint64(startTime.Unix()),
-		EndTime:      uint64(endTime.Unix()),
-		NumMaxEvents: 100000, // Get all events in range
-	}
+	const pageSize uint32 = 1000
+	var allEvents []ForwardingEvent
+	var indexOffset uint32 = 0
 
-	resp, err := c.client.ForwardingHistory(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get forwarding history: %w", err)
-	}
-
-	events := make([]ForwardingEvent, len(resp.ForwardingEvents))
-	for i, ev := range resp.ForwardingEvents {
-		events[i] = ForwardingEvent{
-			Timestamp:      time.Unix(int64(ev.Timestamp), 0),
-			ChanIDIn:       ev.ChanIdIn,
-			ChanIDOut:      ev.ChanIdOut,
-			AmountIn:       ev.AmtInMsat,
-			AmountOut:      ev.AmtOutMsat,
-			Fee:            ev.FeeMsat,
-			FeeMsat:        ev.FeeMsat,
+	for {
+		req := &lnrpc.ForwardingHistoryRequest{
+			StartTime:      uint64(startTime.Unix()),
+			EndTime:        uint64(endTime.Unix()),
+			IndexOffset:    indexOffset,
+			NumMaxEvents:   pageSize,
 		}
+
+		resp, err := c.client.ForwardingHistory(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get forwarding history: %w", err)
+		}
+
+		for _, ev := range resp.ForwardingEvents {
+			allEvents = append(allEvents, ForwardingEvent{
+				Timestamp: time.Unix(int64(ev.Timestamp), 0),
+				ChanIDIn:  ev.ChanIdIn,
+				ChanIDOut: ev.ChanIdOut,
+				AmountIn:  ev.AmtInMsat,
+				AmountOut: ev.AmtOutMsat,
+				Fee:       ev.FeeMsat,
+			})
+		}
+
+		// Stop if we got fewer events than the page size
+		if len(resp.ForwardingEvents) < int(pageSize) {
+			break
+		}
+
+		indexOffset = resp.LastOffsetIndex
 	}
 
-	return events, nil
+	return allEvents, nil
 }
 
 // Invoice represents a received payment.
@@ -226,15 +238,17 @@ type Invoice struct {
 	Memo           string
 }
 
-// ListInvoices returns a list of all invoices (received payments).
-func (c *Client) ListInvoices(ctx context.Context) ([]Invoice, error) {
+// ListInvoices returns invoices starting from the given offset and the next offset to use.
+func (c *Client) ListInvoices(ctx context.Context, offset uint64) ([]Invoice, uint64, error) {
 	req := &lnrpc.ListInvoiceRequest{
-		NumMaxInvoices: 100000, // Get all invoices
+		IndexOffset:    offset,
+		NumMaxInvoices: 1000,
+		Reversed:       false,
 	}
 
 	resp, err := c.client.ListInvoices(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list invoices: %w", err)
+		return nil, 0, fmt.Errorf("failed to list invoices: %w", err)
 	}
 
 	invoices := make([]Invoice, len(resp.Invoices))
@@ -256,7 +270,7 @@ func (c *Client) ListInvoices(ctx context.Context) ([]Invoice, error) {
 		}
 	}
 
-	return invoices, nil
+	return invoices, resp.LastIndexOffset, nil
 }
 
 // Payment represents a sent payment.
@@ -271,15 +285,16 @@ type Payment struct {
 	PaymentRequest string
 }
 
-// ListPayments returns a list of all payments (sent payments).
-func (c *Client) ListPayments(ctx context.Context) ([]Payment, error) {
+// ListPayments returns payments starting from the given offset and the next offset to use.
+func (c *Client) ListPayments(ctx context.Context, offset uint64) ([]Payment, uint64, error) {
 	req := &lnrpc.ListPaymentsRequest{
-		MaxPayments: 100000, // Get all payments
+		IndexOffset: offset,
+		MaxPayments: 1000,
 	}
 
 	resp, err := c.client.ListPayments(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list payments: %w", err)
+		return nil, 0, fmt.Errorf("failed to list payments: %w", err)
 	}
 
 	payments := make([]Payment, len(resp.Payments))
@@ -296,7 +311,7 @@ func (c *Client) ListPayments(ctx context.Context) ([]Payment, error) {
 		}
 	}
 
-	return payments, nil
+	return payments, resp.LastIndexOffset, nil
 }
 
 // WalletBalance represents the on-chain wallet balance.

@@ -99,6 +99,28 @@ make run
 make clean
 ```
 
+### Smoke Test (requires LND node)
+
+Run the smoke test against a real LND node to verify the full data pipeline.
+The script must be run from the repo root:
+
+```bash
+# With a .env file configured (see .env.example)
+./scripts/smoke-test.sh
+
+# Or pass connection details directly
+./scripts/smoke-test.sh \
+  --macaroon ~/.lnd/data/chain/bitcoin/mainnet/readonly.macaroon \
+  --tls-cert ~/.lnd/tls.cert
+
+# With a prebuilt binary (no Go toolchain needed on the server)
+GOOS=linux GOARCH=amd64 go build -o satsbook ./cmd/satsbook
+scp satsbook scripts/smoke-test.sh yourserver:~/project/
+ssh yourserver 'cd ~/project && ./scripts/smoke-test.sh --binary ./satsbook'
+```
+
+Run `./scripts/smoke-test.sh --help` for all options.
+
 ## Architecture Highlights
 
 - **Single Binary**: Compiled Go binary with no runtime dependencies
