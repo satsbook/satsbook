@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/lnd"
 )
 
@@ -34,23 +35,30 @@ type PriceProvider interface {
 	FetchedAt() time.Time
 }
 
+// ImportStore defines operations for importing exchange data.
+type ImportStore interface {
+	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+}
+
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
-	store    DashboardStore
-	node     NodeInfoProvider
-	price    PriceProvider
-	logger   *log.Logger
-	renderer *Renderer
+	store       DashboardStore
+	node        NodeInfoProvider
+	price       PriceProvider
+	importStore ImportStore
+	logger      *log.Logger
+	renderer    *Renderer
 }
 
 // NewHandler creates a new Handler.
-func NewHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider, logger *log.Logger) *Handler {
+func NewHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider, importStore ImportStore, logger *log.Logger) *Handler {
 	return &Handler{
-		store:    store,
-		node:     node,
-		price:    price,
-		logger:   logger,
-		renderer: NewRenderer(),
+		store:       store,
+		node:        node,
+		price:       price,
+		importStore: importStore,
+		logger:      logger,
+		renderer:    NewRenderer(),
 	}
 }
 
@@ -341,4 +349,68 @@ func msatToSat(msat int64) int64 {
 
 func msatToUSD(msat int64, btcPrice float64) float64 {
 	return (float64(msat) / 100_000_000_000.0) * btcPrice
+}
+
+// HandleStrikeImport serves POST /api/import/strike.
+func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// 10MB max upload
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		h.writeError(w, http.StatusBadRequest, "failed to parse upload: file may be too large (10MB max)")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "missing 'file' field in upload")
+		return
+	}
+	defer file.Close()
+
+	result, err := exchange.ParseStrikeCSV(file)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if len(result.Rows) == 0 {
+		h.writeError(w, http.StatusBadRequest, "CSV contains no valid data rows")
+		return
+	}
+
+	summary, err := h.importStore.ImportStrikeCSV(r.Context(), result.Rows)
+	if err != nil {
+		h.logger.Printf("strike import failed: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
+		return
+	}
+
+	resp := importResponse{
+		Total:        summary.Total,
+		NewPurchases: summary.NewPurchases,
+		Duplicates:   summary.Duplicates,
+		ParseErrors:  result.Errors,
+	}
+
+	// HTMX request — render partial
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := h.renderer.Render(w, "import_result", resp); err != nil {
+			h.logger.Printf("failed to render import result: %v", err)
+		}
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, resp)
+}
+
+type importResponse struct {
+	Total        int      `json:"total"`
+	NewPurchases int      `json:"new_purchases"`
+	Duplicates   int      `json:"duplicates"`
+	ParseErrors  []string `json:"parse_errors,omitempty"`
 }

@@ -1,0 +1,22 @@
+{{define "import_result"}}
+<div class="card">
+  <div class="card-label" style="color: var(--green);">Import Complete</div>
+  <p style="margin-top: 8px;">
+    Imported <strong>{{.Total}}</strong> transaction{{if ne .Total 1}}s{{end}},
+    <strong>{{.NewPurchases}}</strong> new purchase{{if ne .NewPurchases 1}}s{{end}},
+    <strong>{{.Duplicates}}</strong> duplicate{{if ne .Duplicates 1}}s{{end}} skipped.
+  </p>
+  {{if .ParseErrors}}
+  <details style="margin-top: 12px;">
+    <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.85rem;">
+      {{len .ParseErrors}} row{{if ne (len .ParseErrors) 1}}s{{end}} had errors
+    </summary>
+    <ul style="margin-top: 8px; font-size: 0.8rem; color: var(--text-muted);">
+      {{range .ParseErrors}}
+      <li>{{.}}</li>
+      {{end}}
+    </ul>
+  </details>
+  {{end}}
+</div>
+{{end}}

@@ -1,17 +1,21 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/lnd"
 )
 
@@ -77,8 +81,19 @@ func (m *mockPrice) FetchedAt() time.Time {
 	return m.fetchedAt
 }
 
+type mockImportStore struct {
+	importStrikeFn func(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+}
+
+func (m *mockImportStore) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+	if m.importStrikeFn != nil {
+		return m.importStrikeFn(ctx, rows)
+	}
+	return &db.ImportSummary{}, nil
+}
+
 func newTestHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider) *Handler {
-	return NewHandler(store, node, price, log.New(os.Stderr, "[test] ", 0))
+	return NewHandler(store, node, price, &mockImportStore{}, log.New(os.Stderr, "[test] ", 0))
 }
 
 // --- HandleSummary tests ---
@@ -491,5 +506,122 @@ func TestParseTimeParam(t *testing.T) {
 	_, err = parseTimeParam(req, "t", defaultTime)
 	if err == nil {
 		t.Error("expected error for invalid time format")
+	}
+}
+
+// --- HandleStrikeImport tests ---
+
+func createMultipartCSV(t *testing.T, csvContent string) (*http.Request, *httptest.ResponseRecorder) {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, err := writer.CreateFormFile("file", "transactions.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write([]byte(csvContent))
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req, httptest.NewRecorder()
+}
+
+func TestHandleStrikeImport_Success(t *testing.T) {
+	importStore := &mockImportStore{
+		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+			return &db.ImportSummary{Total: len(rows), NewPurchases: 1, Duplicates: 0}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-001,2024-06-15T10:30:00Z,Purchase,0.001,67.00,0.50,Completed\n"
+	req, w := createMultipartCSV(t, csv)
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp importResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if resp.Total != 1 {
+		t.Errorf("expected total 1, got %d", resp.Total)
+	}
+	if resp.NewPurchases != 1 {
+		t.Errorf("expected 1 new purchase, got %d", resp.NewPurchases)
+	}
+}
+
+func TestHandleStrikeImport_WrongMethod(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/api/import/strike", nil)
+	w := httptest.NewRecorder()
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleStrikeImport_InvalidCSV(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	csv := "Bad,Header,Format\ndata,here,now\n"
+	req, w := createMultipartCSV(t, csv)
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleStrikeImport_EmptyCSV(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\n"
+	req, w := createMultipartCSV(t, csv)
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty data, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleStrikeImport_MissingFile(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike", nil)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=abc")
+	w := httptest.NewRecorder()
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleStrikeImport_HTMXResponse(t *testing.T) {
+	importStore := &mockImportStore{
+		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+			return &db.ImportSummary{Total: 2, NewPurchases: 1, Duplicates: 1}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-001,2024-06-15T10:30:00Z,Purchase,0.001,67.00,0.50,Completed\n"
+	req, w := createMultipartCSV(t, csv)
+	req.Header.Set("HX-Request", "true")
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("expected text/html for HTMX, got %q", ct)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "new purchase") {
+		t.Errorf("expected summary in HTML, got: %s", body)
 	}
 }

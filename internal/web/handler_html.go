@@ -311,6 +311,14 @@ func (h *Handler) HandleForwardingPartial(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// HandleImportPage serves GET /import.
+func (h *Handler) HandleImportPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "import_layout", nil); err != nil {
+		h.logger.Printf("failed to render import page: %v", err)
+	}
+}
+
 // parseDateParam parses a "YYYY-MM-DD" query parameter.
 func parseDateParam(r *http.Request, key string, defaultVal time.Time) (time.Time, error) {
 	v := r.URL.Query().Get(key)

@@ -21,6 +21,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 
 	// HTML routes
 	mux.HandleFunc("/", handler.HandleDashboard)
+	mux.HandleFunc("/import", handler.HandleImportPage)
 	mux.HandleFunc("/partials/forwarding", handler.HandleForwardingPartial)
 
 	// Static assets (embedded)
@@ -32,6 +33,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/channels", handler.HandleChannels)
 	mux.HandleFunc("/api/forwarding", handler.HandleForwarding)
 	mux.HandleFunc("/api/node", handler.HandleNode)
+	mux.HandleFunc("/api/import/strike", handler.HandleStrikeImport)
 
 	return &Server{
 		httpServer: &http.Server{

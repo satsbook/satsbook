@@ -3,9 +3,12 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/satsbook/satsbook/internal/exchange"
 )
 
 // FeeSummary returns aggregate fee stats for forwarding events since the given time.
@@ -229,4 +232,82 @@ func (d *DB) ForwardingEvents(ctx context.Context, from, to time.Time, limit, of
 	}
 
 	return &ForwardingPage{Events: events, Total: total}, nil
+}
+
+// ImportSummary holds the result of an exchange CSV import.
+type ImportSummary struct {
+	Total        int
+	NewPurchases int
+	Duplicates   int
+}
+
+// ImportStrikeCSV imports parsed Strike CSV rows into exchange_imports and btc_lots.
+// The entire operation runs in a single transaction.
+func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*ImportSummary, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin import transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	summary := &ImportSummary{Total: len(rows)}
+
+	for _, row := range rows {
+		rawData, _ := json.Marshal(row)
+
+		// Insert into exchange_imports (dedup via UNIQUE(source, external_id))
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO exchange_imports (source, external_id, raw_data)
+			 VALUES (?, ?, ?)`,
+			"strike", row.TransactionID, string(rawData),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert exchange import %q: %w", row.TransactionID, err)
+		}
+
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected for %q: %w", row.TransactionID, err)
+		}
+
+		if affected == 0 {
+			summary.Duplicates++
+			continue
+		}
+
+		// Create btc_lot for completed purchases
+		if row.IsPurchase() && row.AmountSat > 0 {
+			// Dedup check: don't create lot if one already exists for this tx
+			var exists int
+			err := tx.QueryRowContext(ctx,
+				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
+				"strike", row.TransactionID,
+			).Scan(&exists)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("check btc_lot %q: %w", row.TransactionID, err)
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				priceUSD := row.AmountUSD
+				if priceUSD == 0 && row.AmountBTC > 0 {
+					// Fallback: no USD amount, skip lot creation
+					continue
+				}
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
+					 VALUES (?, ?, ?, ?, ?)`,
+					row.Date, row.AmountSat, priceUSD, "strike", row.TransactionID,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("insert btc_lot %q: %w", row.TransactionID, err)
+				}
+				summary.NewPurchases++
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit import: %w", err)
+	}
+
+	return summary, nil
 }
