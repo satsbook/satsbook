@@ -7,11 +7,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/satsbook/satsbook/internal/config"
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/lnd"
+	"github.com/satsbook/satsbook/internal/price"
 	"github.com/satsbook/satsbook/internal/syncer"
+	"github.com/satsbook/satsbook/internal/web"
 )
 
 func main() {
@@ -52,6 +55,14 @@ func main() {
 	syncerLogger := log.New(os.Stdout, "[syncer] ", log.LstdFlags)
 	s := syncer.New(lndClient, database, syncerLogger, cfg.SyncInterval, cfg.MaxHistoryDays)
 
+	// Initialize price cache
+	priceCache := price.NewCache(price.WithAPIURL(cfg.PriceAPIURL))
+
+	// Initialize HTTP server
+	httpLogger := log.New(os.Stdout, "[http] ", log.LstdFlags)
+	handler := web.NewHandler(database, lndClient, priceCache, httpLogger)
+	srv := web.NewServer(handler, cfg.AppPort, httpLogger)
+
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
@@ -61,6 +72,21 @@ func main() {
 		sig := <-sigCh
 		log.Printf("received signal %v, shutting down...", sig)
 		cancel()
+
+		// Give HTTP server 5 seconds to drain
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("HTTP server shutdown error: %v", err)
+		}
+	}()
+
+	// Start HTTP server in background
+	go func() {
+		if err := srv.Start(); err != nil {
+			log.Printf("HTTP server error: %v", err)
+			cancel()
+		}
 	}()
 
 	// Run syncer (blocks until ctx is cancelled)
