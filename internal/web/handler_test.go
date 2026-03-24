@@ -29,6 +29,7 @@ type mockStore struct {
 	forwardingEventsFn  func(ctx context.Context, from, to time.Time, limit, offset int) (*db.ForwardingPage, error)
 	dailyFeesFn         func(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error)
 	lastSyncedAtFn      func(ctx context.Context) (time.Time, error)
+	exchangeBalanceFn   func(ctx context.Context, source string) (int64, error)
 }
 
 func (m *mockStore) FeeSummary(ctx context.Context, since time.Time) (int64, int64, error) {
@@ -57,6 +58,12 @@ func (m *mockStore) LastSyncedAt(ctx context.Context) (time.Time, error) {
 		return m.lastSyncedAtFn(ctx)
 	}
 	return time.Time{}, nil
+}
+func (m *mockStore) ExchangeBalance(ctx context.Context, source string) (int64, error) {
+	if m.exchangeBalanceFn != nil {
+		return m.exchangeBalanceFn(ctx, source)
+	}
+	return 0, nil
 }
 
 type mockNodeInfo struct {

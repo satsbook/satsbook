@@ -514,3 +514,43 @@ func TestImportStrikeCSV_BuyType(t *testing.T) {
 		t.Errorf("expected 1 purchase for Buy type, got %d", summary.NewPurchases)
 	}
 }
+
+func TestExchangeBalance(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// Empty — should return 0
+	bal, err := d.ExchangeBalance(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bal != 0 {
+		t.Errorf("expected 0 balance before import, got %d", bal)
+	}
+
+	// Import rows with mixed amounts
+	rows := testStrikeRows() // Purchase +0.001, Withdrawal +0.0005, Receive +0.0001
+	_, err = d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	bal, err = d.ExchangeBalance(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 0.001 + 0.0005 + 0.0001 = 0.0016 BTC = 160000 sats
+	if bal != 160000 {
+		t.Errorf("expected 160000 sats, got %d", bal)
+	}
+
+	// Different source should return 0
+	bal, err = d.ExchangeBalance(context.Background(), "river")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bal != 0 {
+		t.Errorf("expected 0 for river, got %d", bal)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/exchange"
@@ -314,4 +315,21 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 	}
 
 	return summary, nil
+}
+
+// ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
+// by summing AmountBTC from all imported rows.
+func (d *DB) ExchangeBalance(ctx context.Context, source string) (int64, error) {
+	var totalBTC sql.NullFloat64
+	err := d.db.QueryRowContext(ctx,
+		`SELECT SUM(json_extract(raw_data, '$.AmountBTC'))
+		 FROM exchange_imports WHERE source = ?`, source,
+	).Scan(&totalBTC)
+	if err != nil {
+		return 0, fmt.Errorf("exchange balance for %s: %w", source, err)
+	}
+	if !totalBTC.Valid {
+		return 0, nil
+	}
+	return int64(math.Round(totalBTC.Float64 * 1e8)), nil
 }

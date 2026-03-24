@@ -22,6 +22,7 @@ type DashboardStore interface {
 	ForwardingEvents(ctx context.Context, from, to time.Time, limit, offset int) (*db.ForwardingPage, error)
 	DailyFees(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error)
 	LastSyncedAt(ctx context.Context) (time.Time, error)
+	ExchangeBalance(ctx context.Context, source string) (int64, error)
 }
 
 // NodeInfoProvider fetches node info from LND.
