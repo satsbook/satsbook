@@ -1,0 +1,47 @@
+{{define "forwarding_table"}}
+{{if eq (len .Events) 0}}
+  <div class="chart-empty">No forwarding events in this range</div>
+{{else}}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Channel In</th>
+        <th>Channel Out</th>
+        <th>Amount (sats)</th>
+        <th>Fee (sats)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Events}}
+      <tr>
+        <td>{{.Timestamp.Format "2006-01-02 15:04"}}</td>
+        <td><span class="truncate" title="{{.ChanIDIn}}">{{.ChanIDIn}}</span></td>
+        <td><span class="truncate" title="{{.ChanIDOut}}">{{.ChanIDOut}}</span></td>
+        <td>{{formatSats (msatToSat .AmtInMsat)}}</td>
+        <td>{{formatSats (msatToSat .FeeMsat)}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+<div class="pagination">
+  <span>Showing {{.PageStart}}-{{.PageEnd}} of {{.Total}}</span>
+  <div>
+    {{if gt .Page 1}}
+      <a hx-get="/partials/forwarding?from={{.From}}&to={{.To}}&page={{sub .Page 1}}&limit={{.Limit}}"
+         hx-target="#forwarding-table" hx-swap="innerHTML">Previous</a>
+    {{else}}
+      <span class="disabled">Previous</span>
+    {{end}}
+    {{if .HasNext}}
+      <a hx-get="/partials/forwarding?from={{.From}}&to={{.To}}&page={{add .Page 1}}&limit={{.Limit}}"
+         hx-target="#forwarding-table" hx-swap="innerHTML">Next</a>
+    {{else}}
+      <span class="disabled">Next</span>
+    {{end}}
+  </div>
+</div>
+{{end}}
+{{end}}

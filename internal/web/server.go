@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"time"
@@ -17,6 +18,16 @@ type Server struct {
 // NewServer creates a new HTTP server with routing and middleware.
 func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	mux := http.NewServeMux()
+
+	// HTML routes
+	mux.HandleFunc("/", handler.HandleDashboard)
+	mux.HandleFunc("/partials/forwarding", handler.HandleForwardingPartial)
+
+	// Static assets (embedded)
+	staticSub, _ := fs.Sub(staticFS, "static")
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
+	// JSON API routes
 	mux.HandleFunc("/api/summary", handler.HandleSummary)
 	mux.HandleFunc("/api/channels", handler.HandleChannels)
 	mux.HandleFunc("/api/forwarding", handler.HandleForwarding)
