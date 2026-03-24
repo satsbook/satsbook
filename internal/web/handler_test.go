@@ -535,7 +535,7 @@ func TestHandleStrikeImport_Success(t *testing.T) {
 	}
 	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
 
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-001,2024-06-15T10:30:00Z,Purchase,0.001,67.00,0.50,Completed\n"
+	csv := "Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note\ntx-001,Jan 15 2024 10:30:00,Purchase,67.00,0.50,0.001,,94000.00,67.00,,,,\n"
 	req, w := createMultipartCSV(t, csv)
 	h.HandleStrikeImport(w, req)
 
@@ -579,7 +579,7 @@ func TestHandleStrikeImport_InvalidCSV(t *testing.T) {
 
 func TestHandleStrikeImport_EmptyCSV(t *testing.T) {
 	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\n"
+	csv := "Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note\n"
 	req, w := createMultipartCSV(t, csv)
 	h.HandleStrikeImport(w, req)
 
@@ -608,7 +608,7 @@ func TestHandleStrikeImport_HTMXResponse(t *testing.T) {
 	}
 	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
 
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-001,2024-06-15T10:30:00Z,Purchase,0.001,67.00,0.50,Completed\n"
+	csv := "Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note\ntx-001,Jan 15 2024 10:30:00,Purchase,67.00,0.50,0.001,,94000.00,67.00,,,,\n"
 	req, w := createMultipartCSV(t, csv)
 	req.Header.Set("HX-Request", "true")
 	h.HandleStrikeImport(w, req)

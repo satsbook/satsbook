@@ -377,9 +377,9 @@ func TestLastSyncedAt_WithData(t *testing.T) {
 func testStrikeRows() []exchange.StrikeRow {
 	now := time.Now().UTC()
 	return []exchange.StrikeRow{
-		{TransactionID: "tx-001", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, FeeUSD: 0.50, Status: "Completed"},
-		{TransactionID: "tx-002", Date: now, Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, FeeUSD: 1.00, Status: "Completed"},
-		{TransactionID: "tx-003", Date: now, Type: "Purchase", AmountSat: 10000, AmountBTC: 0.0001, AmountUSD: 6.70, FeeUSD: 0.10, Status: "Pending"},
+		{TransactionID: "tx-001", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, FeeUSD: 0.50},
+		{TransactionID: "tx-002", Date: now, Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, FeeUSD: 1.00},
+		{TransactionID: "tx-003", Date: now, Type: "Receive", AmountSat: 10000, AmountBTC: 0.0001},
 	}
 }
 
@@ -479,8 +479,8 @@ func TestImportStrikeCSV_NonPurchaseNoLot(t *testing.T) {
 	defer d.Close()
 
 	rows := []exchange.StrikeRow{
-		{TransactionID: "tx-w1", Date: time.Now(), Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, Status: "Completed"},
-		{TransactionID: "tx-d1", Date: time.Now(), Type: "Deposit", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 0, Status: "Completed"},
+		{TransactionID: "tx-w1", Date: time.Now(), Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50},
+		{TransactionID: "tx-d1", Date: time.Now(), Type: "Receive", AmountSat: 100000, AmountBTC: 0.001},
 	}
 
 	summary, err := d.ImportStrikeCSV(context.Background(), rows)
@@ -503,7 +503,7 @@ func TestImportStrikeCSV_BuyType(t *testing.T) {
 	defer d.Close()
 
 	rows := []exchange.StrikeRow{
-		{TransactionID: "tx-buy1", Date: time.Now(), Type: "Buy", AmountSat: 50000000, AmountBTC: 0.5, AmountUSD: 33500.00, Status: "Completed"},
+		{TransactionID: "tx-buy1", Date: time.Now(), Type: "Buy", AmountSat: 50000000, AmountBTC: 0.5, AmountUSD: 33500.00, CostBasisUSD: 33500.00},
 	}
 
 	summary, err := d.ImportStrikeCSV(context.Background(), rows)

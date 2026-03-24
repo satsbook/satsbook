@@ -360,19 +360,23 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 
 	// 10MB max upload
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		h.logger.Printf("strike import: failed to parse multipart form: %v", err)
 		h.writeError(w, http.StatusBadRequest, "failed to parse upload: file may be too large (10MB max)")
 		return
 	}
 
-	file, _, err := r.FormFile("file")
+	file, fh, err := r.FormFile("file")
 	if err != nil {
+		h.logger.Printf("strike import: missing file field: %v", err)
 		h.writeError(w, http.StatusBadRequest, "missing 'file' field in upload")
 		return
 	}
 	defer file.Close()
+	h.logger.Printf("strike import: received file %q (%d bytes)", fh.Filename, fh.Size)
 
 	result, err := exchange.ParseStrikeCSV(file)
 	if err != nil {
+		h.logger.Printf("strike import: CSV parse error: %v", err)
 		h.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

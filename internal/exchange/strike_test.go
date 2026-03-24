@@ -5,12 +5,14 @@ import (
 	"testing"
 )
 
-const validCSV = `Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status
-tx-001,2024-06-15T10:30:00Z,Purchase,0.00100000,67.00,0.50,Completed
-tx-002,2024-06-16T12:00:00Z,Withdrawal,0.00050000,33.50,1.00,Completed
-tx-003,2024-06-17T14:00:00Z,Deposit,0.00200000,134.00,0.00,Completed
-tx-004,2024-06-18T09:00:00Z,Purchase,0.00010000,6.70,0.10,Pending
-tx-005,2024-06-19T08:00:00Z,Buy,0.50000000,33500.00,25.00,Completed
+const strikeHeader = "Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note"
+
+const validCSV = strikeHeader + `
+fd217b15-9b68-4a3a-8961-b702fdebb2e2,Jan 01 2026 03:09:55,Receive,,,0.02287023,,,,bc1qgcjf5yva5fzvys6e0c9vfxr3wcj2tgswudz3eu,,658bc49a9865814e87bd9f69a38f68be6b4e7b1c52f28e83ce902f5b70d65cd3,
+2acfbd5b-52cd-4f9c-9cda-8f3660617ae6,Jan 02 2026 08:20:58,Sale,1401.67,11.16,-0.01590447,,88832.26,,,Bill pay to APPLECARD GSBANK,,
+tx-003,Jan 03 2026 10:00:00,Purchase,500.00,3.99,0.00530000,,94339.62,500.00,,,some-hash,
+tx-004,Jan 04 2026 12:00:00,Buy,100.00,0.79,0.00106000,,94339.62,100.00,,,another-hash,
+tx-005,Jan 05 2026 05:11:59,Withdrawal,-110.97,,,,,,,Bill pay to City,,
 `
 
 func TestParseStrikeCSV_Valid(t *testing.T) {
@@ -19,31 +21,52 @@ func TestParseStrikeCSV_Valid(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(result.Rows) != 5 {
-		t.Fatalf("expected 5 rows, got %d", len(result.Rows))
+		t.Fatalf("expected 5 rows, got %d (errors: %v)", len(result.Rows), result.Errors)
 	}
 	if len(result.Errors) != 0 {
 		t.Errorf("expected 0 errors, got %v", result.Errors)
 	}
 
-	// Check first row
+	// Check receive row
 	r := result.Rows[0]
-	if r.TransactionID != "tx-001" {
-		t.Errorf("expected tx-001, got %q", r.TransactionID)
+	if r.TransactionID != "fd217b15-9b68-4a3a-8961-b702fdebb2e2" {
+		t.Errorf("expected fd217b15..., got %q", r.TransactionID)
 	}
-	if r.Type != "Purchase" {
-		t.Errorf("expected Purchase, got %q", r.Type)
+	if r.Type != "Receive" {
+		t.Errorf("expected Receive, got %q", r.Type)
 	}
-	if r.AmountSat != 100000 {
-		t.Errorf("expected 100000 sats (0.001 BTC), got %d", r.AmountSat)
+	if r.AmountSat != 2287023 {
+		t.Errorf("expected 2287023 sats, got %d", r.AmountSat)
 	}
-	if r.AmountUSD != 67.0 {
-		t.Errorf("expected 67.0 USD, got %f", r.AmountUSD)
+	if r.AmountUSD != 0 {
+		t.Errorf("expected 0 USD for receive, got %f", r.AmountUSD)
 	}
-	if r.FeeUSD != 0.5 {
-		t.Errorf("expected 0.5 fee, got %f", r.FeeUSD)
+
+	// Check sale row
+	s := result.Rows[1]
+	if s.Type != "Sale" {
+		t.Errorf("expected Sale, got %q", s.Type)
 	}
-	if r.Status != "Completed" {
-		t.Errorf("expected Completed, got %q", r.Status)
+	if s.AmountUSD != 1401.67 {
+		t.Errorf("expected 1401.67 USD, got %f", s.AmountUSD)
+	}
+	if s.FeeUSD != 11.16 {
+		t.Errorf("expected 11.16 fee, got %f", s.FeeUSD)
+	}
+	if s.BTCPrice != 88832.26 {
+		t.Errorf("expected BTC price 88832.26, got %f", s.BTCPrice)
+	}
+
+	// Check purchase row
+	p := result.Rows[2]
+	if p.Type != "Purchase" {
+		t.Errorf("expected Purchase, got %q", p.Type)
+	}
+	if p.AmountSat != 530000 {
+		t.Errorf("expected 530000 sats, got %d", p.AmountSat)
+	}
+	if p.CostBasisUSD != 500.0 {
+		t.Errorf("expected cost basis 500.0, got %f", p.CostBasisUSD)
 	}
 }
 
@@ -53,25 +76,47 @@ func TestParseStrikeCSV_IsPurchase(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// tx-001: Purchase + Completed = true
-	if !result.Rows[0].IsPurchase() {
-		t.Error("tx-001 should be a purchase")
+	tests := []struct {
+		idx      int
+		typ      string
+		expected bool
+	}{
+		{0, "Receive", false},
+		{1, "Sale", false},
+		{2, "Purchase", true},
+		{3, "Buy", true},
+		{4, "Withdrawal", false},
 	}
-	// tx-002: Withdrawal = false
-	if result.Rows[1].IsPurchase() {
-		t.Error("tx-002 (Withdrawal) should not be a purchase")
+	for _, tt := range tests {
+		if result.Rows[tt.idx].IsPurchase() != tt.expected {
+			t.Errorf("row %d (%s): IsPurchase()=%v, want %v", tt.idx, tt.typ, !tt.expected, tt.expected)
+		}
 	}
-	// tx-003: Deposit = false
-	if result.Rows[2].IsPurchase() {
-		t.Error("tx-003 (Deposit) should not be a purchase")
+}
+
+func TestParseStrikeCSV_IsReceive(t *testing.T) {
+	result, err := ParseStrikeCSV(strings.NewReader(validCSV))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	// tx-004: Purchase + Pending = false
-	if result.Rows[3].IsPurchase() {
-		t.Error("tx-004 (Pending) should not be a purchase")
+	if !result.Rows[0].IsReceive() {
+		t.Error("row 0 should be a receive")
 	}
-	// tx-005: Buy + Completed = true
-	if !result.Rows[4].IsPurchase() {
-		t.Error("tx-005 (Buy) should be a purchase")
+	if result.Rows[1].IsReceive() {
+		t.Error("row 1 (Sale) should not be a receive")
+	}
+}
+
+func TestParseStrikeCSV_IsSale(t *testing.T) {
+	result, err := ParseStrikeCSV(strings.NewReader(validCSV))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Rows[1].IsSale() {
+		t.Error("row 1 should be a sale")
+	}
+	if result.Rows[0].IsSale() {
+		t.Error("row 0 (Receive) should not be a sale")
 	}
 }
 
@@ -89,13 +134,13 @@ func TestParseStrikeCSV_SatConversion(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-1,2024-01-01T00:00:00Z,Purchase," + tt.btc + ",100.00,0.00,Completed\n"
+		csv := strikeHeader + "\ntx-1,Jan 01 2026 00:00:00,Purchase,100.00,0.00," + tt.btc + ",,94000.00,100.00,,,,\n"
 		result, err := ParseStrikeCSV(strings.NewReader(csv))
 		if err != nil {
 			t.Fatalf("unexpected error for %s: %v", tt.btc, err)
 		}
 		if len(result.Rows) != 1 {
-			t.Fatalf("expected 1 row for %s", tt.btc)
+			t.Fatalf("expected 1 row for %s, got %d (errors: %v)", tt.btc, len(result.Rows), result.Errors)
 		}
 		if result.Rows[0].AmountSat != tt.expected {
 			t.Errorf("BTC %s: expected %d sats, got %d", tt.btc, tt.expected, result.Rows[0].AmountSat)
@@ -104,7 +149,7 @@ func TestParseStrikeCSV_SatConversion(t *testing.T) {
 }
 
 func TestParseStrikeCSV_WrongHeader(t *testing.T) {
-	csv := "ID,Date,Kind,BTC,USD,Fee,Status\ntx-1,2024-01-01,Buy,0.001,67,0.5,Done\n"
+	csv := "ID,Date,Kind,USD,Fee,BTC,FeeBTC,Price,Basis,Dest,Desc,Hash,Note\ntx-1,Jan 01 2026 00:00:00,Buy,100,0,0.001,,,,,,,\n"
 	_, err := ParseStrikeCSV(strings.NewReader(csv))
 	if err == nil {
 		t.Fatal("expected error for wrong header")
@@ -125,7 +170,7 @@ func TestParseStrikeCSV_EmptyFile(t *testing.T) {
 }
 
 func TestParseStrikeCSV_HeaderOnly(t *testing.T) {
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\n"
+	csv := strikeHeader + "\n"
 	result, err := ParseStrikeCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -136,13 +181,13 @@ func TestParseStrikeCSV_HeaderOnly(t *testing.T) {
 }
 
 func TestParseStrikeCSV_MalformedRows(t *testing.T) {
-	csv := `Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status
-tx-001,2024-06-15T10:30:00Z,Purchase,0.001,67.00,0.50,Completed
-tx-002,bad-date,Purchase,0.001,67.00,0.50,Completed
-tx-003,2024-06-15T10:30:00Z,Purchase,notanumber,67.00,0.50,Completed
-,2024-06-15T10:30:00Z,Purchase,0.001,67.00,0.50,Completed
-tx-005,2024-06-15T10:30:00Z,Purchase,0.001,bad,0.50,Completed
-tx-006,2024-06-15T10:30:00Z,Purchase,0.001,67.00,bad,Completed
+	csv := strikeHeader + `
+tx-001,Jan 01 2026 10:00:00,Purchase,100.00,1.00,0.001,,94000.00,100.00,,,,
+tx-002,bad-date,Purchase,100.00,1.00,0.001,,94000.00,,,,,
+tx-003,Jan 01 2026 10:00:00,Purchase,100.00,1.00,notanumber,,94000.00,,,,,
+,Jan 01 2026 10:00:00,Purchase,100.00,1.00,0.001,,94000.00,,,,,
+tx-005,Jan 01 2026 10:00:00,Purchase,bad,1.00,0.001,,94000.00,,,,,
+tx-006,Jan 01 2026 10:00:00,Purchase,100.00,bad,0.001,,94000.00,,,,,
 `
 
 	result, err := ParseStrikeCSV(strings.NewReader(csv))
@@ -158,7 +203,7 @@ tx-006,2024-06-15T10:30:00Z,Purchase,0.001,67.00,bad,Completed
 }
 
 func TestParseStrikeCSV_TooFewColumns(t *testing.T) {
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-001,2024-01-01,Purchase\n"
+	csv := strikeHeader + "\ntx-001,Jan 01 2026 00:00:00,Purchase\n"
 	result, err := ParseStrikeCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -168,8 +213,9 @@ func TestParseStrikeCSV_TooFewColumns(t *testing.T) {
 	}
 }
 
-func TestParseStrikeCSV_USDWithSymbols(t *testing.T) {
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-1,2024-01-01T00:00:00Z,Purchase,0.001,\"$1,234.56\",$0.50,Completed\n"
+func TestParseStrikeCSV_EmptyOptionalFields(t *testing.T) {
+	// Receive row with many empty fields — matches real Strike format
+	csv := strikeHeader + "\ntx-1,Jan 01 2026 03:09:55,Receive,,,0.02287023,,,,bc1qaddr,,txhash123,\n"
 	result, err := ParseStrikeCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -177,30 +223,39 @@ func TestParseStrikeCSV_USDWithSymbols(t *testing.T) {
 	if len(result.Rows) != 1 {
 		t.Fatalf("expected 1 row, got %d (errors: %v)", len(result.Rows), result.Errors)
 	}
-	if result.Rows[0].AmountUSD != 1234.56 {
-		t.Errorf("expected 1234.56, got %f", result.Rows[0].AmountUSD)
+	r := result.Rows[0]
+	if r.AmountUSD != 0 {
+		t.Errorf("expected 0 USD for empty field, got %f", r.AmountUSD)
+	}
+	if r.FeeUSD != 0 {
+		t.Errorf("expected 0 fee for empty field, got %f", r.FeeUSD)
+	}
+	if r.Destination != "bc1qaddr" {
+		t.Errorf("expected bc1qaddr, got %q", r.Destination)
+	}
+	if r.TransactionHash != "txhash123" {
+		t.Errorf("expected txhash123, got %q", r.TransactionHash)
 	}
 }
 
-func TestParseStrikeCSV_EmptyUSDFee(t *testing.T) {
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-1,2024-01-01T00:00:00Z,Deposit,0.001,-,-,Completed\n"
+func TestParseStrikeCSV_NegativeAmount(t *testing.T) {
+	csv := strikeHeader + "\ntx-1,Jan 01 2026 00:00:00,Sale,1401.67,11.16,-0.01590447,,88832.26,,,Bill pay,,\n"
 	result, err := ParseStrikeCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d (errors: %v)", len(result.Rows), result.Errors)
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
 	}
-	if result.Rows[0].AmountUSD != 0 {
-		t.Errorf("expected 0 for '-', got %f", result.Rows[0].AmountUSD)
-	}
-	if result.Rows[0].FeeUSD != 0 {
-		t.Errorf("expected 0 for '-', got %f", result.Rows[0].FeeUSD)
+	if result.Rows[0].AmountSat != -1590447 {
+		t.Errorf("expected -1590447 sats, got %d", result.Rows[0].AmountSat)
 	}
 }
 
 func TestParseStrikeCSV_DateFormats(t *testing.T) {
 	formats := []string{
+		"Jan 01 2026 10:30:00",
+		"Jan 1 2026 10:30:00",
 		"2024-06-15T10:30:00Z",
 		"2024-06-15T10:30:00-05:00",
 		"2024-06-15 10:30:00",
@@ -210,7 +265,7 @@ func TestParseStrikeCSV_DateFormats(t *testing.T) {
 	}
 
 	for _, dateStr := range formats {
-		csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-1," + dateStr + ",Purchase,0.001,67.00,0.50,Completed\n"
+		csv := strikeHeader + "\ntx-1," + dateStr + ",Purchase,100.00,1.00,0.001,,94000.00,100.00,,,,\n"
 		result, err := ParseStrikeCSV(strings.NewReader(csv))
 		if err != nil {
 			t.Fatalf("unexpected error for date %q: %v", dateStr, err)
@@ -221,22 +276,8 @@ func TestParseStrikeCSV_DateFormats(t *testing.T) {
 	}
 }
 
-func TestParseStrikeCSV_NegativeAmount(t *testing.T) {
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-1,2024-01-01T00:00:00Z,Withdrawal,-0.001,-67.00,1.00,Completed\n"
-	result, err := ParseStrikeCSV(strings.NewReader(csv))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.Rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(result.Rows))
-	}
-	if result.Rows[0].AmountSat != -100000 {
-		t.Errorf("expected -100000 sats, got %d", result.Rows[0].AmountSat)
-	}
-}
-
 func TestParseStrikeCSV_RawLine(t *testing.T) {
-	csv := "Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status\ntx-1,2024-01-01T00:00:00Z,Purchase,0.001,67.00,0.50,Completed\n"
+	csv := strikeHeader + "\ntx-1,Jan 01 2026 00:00:00,Purchase,100.00,1.00,0.001,,94000.00,100.00,,,,\n"
 	result, err := ParseStrikeCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -247,13 +288,27 @@ func TestParseStrikeCSV_RawLine(t *testing.T) {
 }
 
 func TestParseStrikeCSV_CaseInsensitiveHeader(t *testing.T) {
-	csv := "transaction id,date,type,amount btc,amount usd,fee usd,status\ntx-1,2024-01-01T00:00:00Z,Purchase,0.001,67.00,0.50,Completed\n"
+	csv := "reference,date & time (utc),transaction type,amount usd,fee usd,amount btc,fee btc,btc price,cost basis (usd),destination,description,transaction hash,note\ntx-1,Jan 01 2026 00:00:00,Purchase,100.00,1.00,0.001,,94000.00,100.00,,,,\n"
 	result, err := ParseStrikeCSV(strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(result.Rows) != 1 {
 		t.Errorf("expected 1 row, got %d", len(result.Rows))
+	}
+}
+
+func TestParseStrikeCSV_USDWithSymbols(t *testing.T) {
+	csv := strikeHeader + "\ntx-1,Jan 01 2026 00:00:00,Purchase,\"$1,234.56\",$0.50,0.001,,94000.00,,,,,\n"
+	result, err := ParseStrikeCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d (errors: %v)", len(result.Rows), result.Errors)
+	}
+	if result.Rows[0].AmountUSD != 1234.56 {
+		t.Errorf("expected 1234.56, got %f", result.Rows[0].AmountUSD)
 	}
 }
 
@@ -268,6 +323,7 @@ func TestParseUSD(t *testing.T) {
 		{"-", 0},
 		{"", 0},
 		{"0.00", 0},
+		{"-1401.67", -1401.67},
 	}
 	for _, tt := range tests {
 		got, err := parseUSD(tt.input)
@@ -281,8 +337,31 @@ func TestParseUSD(t *testing.T) {
 	}
 }
 
+func TestParseOptionalFloat(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected float64
+	}{
+		{"0.001", 0.001},
+		{"", 0},
+		{"-", 0},
+		{"-0.015", -0.015},
+		{"94339.62", 94339.62},
+	}
+	for _, tt := range tests {
+		got, err := parseOptionalFloat(tt.input)
+		if err != nil {
+			t.Errorf("parseOptionalFloat(%q): unexpected error: %v", tt.input, err)
+			continue
+		}
+		if got != tt.expected {
+			t.Errorf("parseOptionalFloat(%q) = %f, want %f", tt.input, got, tt.expected)
+		}
+	}
+}
+
 func TestValidateHeader_TooFewColumns(t *testing.T) {
-	err := validateHeader([]string{"Transaction ID", "Date"})
+	err := validateHeader([]string{"Reference", "Date & Time (UTC)"})
 	if err == nil {
 		t.Fatal("expected error for too few columns")
 	}

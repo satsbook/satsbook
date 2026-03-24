@@ -1,5 +1,6 @@
-// Strike CSV format v1 (as of 2026-03)
-// Expected header: Transaction ID,Date,Type,Amount BTC,Amount USD,Fee USD,Status
+// Strike CSV format (as of 2026-03)
+// Expected header: Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,
+//   Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note
 package exchange
 
 import (
@@ -14,15 +15,21 @@ import (
 
 // StrikeRow represents a single parsed row from a Strike CSV export.
 type StrikeRow struct {
-	TransactionID string
-	Date          time.Time
-	Type          string
-	AmountSat     int64
-	AmountBTC     float64
-	AmountUSD     float64
-	FeeUSD        float64
-	Status        string
-	RawLine       string
+	TransactionID   string
+	Date            time.Time
+	Type            string
+	AmountSat       int64
+	AmountBTC       float64
+	AmountUSD       float64
+	FeeUSD          float64
+	FeeBTC          float64
+	BTCPrice        float64
+	CostBasisUSD    float64
+	Destination     string
+	Description     string
+	TransactionHash string
+	Status          string // always "completed" for rows present in export
+	RawLine         string
 }
 
 // StrikeResult holds the result of parsing a Strike CSV.
@@ -31,15 +38,30 @@ type StrikeResult struct {
 	Errors []string
 }
 
-// IsPurchase returns true if the row represents a completed BTC purchase.
+// IsPurchase returns true if the row represents a BTC purchase.
 func (r StrikeRow) IsPurchase() bool {
 	t := strings.ToLower(r.Type)
-	return (t == "purchase" || t == "buy") && strings.EqualFold(r.Status, "completed")
+	return t == "purchase" || t == "buy"
+}
+
+// IsReceive returns true if the row represents an incoming BTC receive.
+func (r StrikeRow) IsReceive() bool {
+	return strings.EqualFold(r.Type, "receive")
+}
+
+// IsSale returns true if the row represents a BTC sale.
+func (r StrikeRow) IsSale() bool {
+	return strings.EqualFold(r.Type, "sale")
 }
 
 var expectedStrikeHeader = []string{
-	"Transaction ID", "Date", "Type", "Amount BTC", "Amount USD", "Fee USD", "Status",
+	"Reference", "Date & Time (UTC)", "Transaction Type",
+	"Amount USD", "Fee USD", "Amount BTC", "Fee BTC",
+	"BTC Price", "Cost Basis (USD)", "Destination",
+	"Description", "Transaction Hash", "Note",
 }
+
+const strikeMinColumns = 13
 
 // ParseStrikeCSV parses a Strike transaction export CSV.
 // It validates the header strictly and parses each data row.
@@ -74,14 +96,15 @@ func ParseStrikeCSV(r io.Reader) (*StrikeResult, error) {
 			continue
 		}
 
-		if len(record) < 7 {
-			result.Errors = append(result.Errors, fmt.Sprintf("row %d: expected 7 columns, got %d", rowNum, len(record)))
+		if len(record) < strikeMinColumns {
+			result.Errors = append(result.Errors, fmt.Sprintf("row %d: expected %d columns, got %d", rowNum, strikeMinColumns, len(record)))
 			continue
 		}
 
+		// Skip rows with empty reference
 		txID := strings.TrimSpace(record[0])
 		if txID == "" {
-			result.Errors = append(result.Errors, fmt.Sprintf("row %d: empty transaction ID", rowNum))
+			result.Errors = append(result.Errors, fmt.Sprintf("row %d: empty reference", rowNum))
 			continue
 		}
 
@@ -99,8 +122,8 @@ func ParseStrikeCSV(r io.Reader) (*StrikeResult, error) {
 }
 
 func validateHeader(header []string) error {
-	if len(header) < 7 {
-		return fmt.Errorf("invalid Strike CSV format: expected %d columns, got %d", len(expectedStrikeHeader), len(header))
+	if len(header) < strikeMinColumns {
+		return fmt.Errorf("invalid Strike CSV format: expected %d columns, got %d", strikeMinColumns, len(header))
 	}
 	for i, expected := range expectedStrikeHeader {
 		got := strings.TrimSpace(header[i])
@@ -113,7 +136,9 @@ func validateHeader(header []string) error {
 
 // strikeTimeFormats lists date formats Strike may use, tried in order.
 var strikeTimeFormats = []string{
-	"2006-01-02T15:04:05Z",
+	"Jan 02 2006 15:04:05",  // Strike's actual format
+	"Jan 2 2006 15:04:05",   // single-digit day
+	"2006-01-02T15:04:05Z",  // ISO 8601
 	"2006-01-02T15:04:05-07:00",
 	time.RFC3339,
 	"2006-01-02 15:04:05",
@@ -126,10 +151,15 @@ func parseStrikeRow(record []string) (StrikeRow, error) {
 	txID := strings.TrimSpace(record[0])
 	dateStr := strings.TrimSpace(record[1])
 	typ := strings.TrimSpace(record[2])
-	btcStr := strings.TrimSpace(record[3])
-	usdStr := strings.TrimSpace(record[4])
-	feeStr := strings.TrimSpace(record[5])
-	status := strings.TrimSpace(record[6])
+	amtUSDStr := strings.TrimSpace(record[3])
+	feeUSDStr := strings.TrimSpace(record[4])
+	amtBTCStr := strings.TrimSpace(record[5])
+	feeBTCStr := strings.TrimSpace(record[6])
+	btcPriceStr := strings.TrimSpace(record[7])
+	costBasisStr := strings.TrimSpace(record[8])
+	destination := strings.TrimSpace(record[9])
+	description := strings.TrimSpace(record[10])
+	txHash := strings.TrimSpace(record[11])
 
 	// Parse date
 	var date time.Time
@@ -144,34 +174,58 @@ func parseStrikeRow(record []string) (StrikeRow, error) {
 		return StrikeRow{}, fmt.Errorf("invalid date %q", dateStr)
 	}
 
-	// Parse BTC amount
-	amountBTC, err := strconv.ParseFloat(btcStr, 64)
+	// Parse BTC amount (can be empty or negative)
+	amountBTC, err := parseOptionalFloat(amtBTCStr)
 	if err != nil {
-		return StrikeRow{}, fmt.Errorf("invalid BTC amount %q", btcStr)
+		return StrikeRow{}, fmt.Errorf("invalid BTC amount %q", amtBTCStr)
 	}
 	amountSat := int64(math.Round(amountBTC * 1e8))
 
-	// Parse USD amount
-	amountUSD, err := parseUSD(usdStr)
+	// Parse USD amount (can be empty or negative)
+	amountUSD, err := parseUSD(amtUSDStr)
 	if err != nil {
-		return StrikeRow{}, fmt.Errorf("invalid USD amount %q", usdStr)
+		return StrikeRow{}, fmt.Errorf("invalid USD amount %q", amtUSDStr)
 	}
 
-	// Parse fee
-	feeUSD, err := parseUSD(feeStr)
+	// Parse fee USD
+	feeUSD, err := parseUSD(feeUSDStr)
 	if err != nil {
-		return StrikeRow{}, fmt.Errorf("invalid fee %q", feeStr)
+		return StrikeRow{}, fmt.Errorf("invalid fee USD %q", feeUSDStr)
+	}
+
+	// Parse fee BTC (optional)
+	feeBTC, err := parseOptionalFloat(feeBTCStr)
+	if err != nil {
+		return StrikeRow{}, fmt.Errorf("invalid fee BTC %q", feeBTCStr)
+	}
+
+	// Parse BTC price (optional)
+	btcPrice, err := parseOptionalFloat(btcPriceStr)
+	if err != nil {
+		return StrikeRow{}, fmt.Errorf("invalid BTC price %q", btcPriceStr)
+	}
+
+	// Parse cost basis (optional)
+	costBasis, err := parseUSD(costBasisStr)
+	if err != nil {
+		return StrikeRow{}, fmt.Errorf("invalid cost basis %q", costBasisStr)
 	}
 
 	return StrikeRow{
-		TransactionID: txID,
-		Date:          date,
-		Type:          typ,
-		AmountSat:     amountSat,
-		AmountBTC:     amountBTC,
-		AmountUSD:     amountUSD,
-		FeeUSD:        feeUSD,
-		Status:        status,
+		TransactionID:   txID,
+		Date:            date,
+		Type:            typ,
+		AmountSat:       amountSat,
+		AmountBTC:       amountBTC,
+		AmountUSD:       amountUSD,
+		FeeUSD:          feeUSD,
+		FeeBTC:          feeBTC,
+		BTCPrice:        btcPrice,
+		CostBasisUSD:    costBasis,
+		Destination:     destination,
+		Description:     description,
+		TransactionHash: txHash,
+		Status:          "completed", // all rows in export are completed
 	}, nil
 }
 
@@ -183,5 +237,14 @@ func parseUSD(s string) (float64, error) {
 	}
 	s = strings.ReplaceAll(s, "$", "")
 	s = strings.ReplaceAll(s, ",", "")
+	return strconv.ParseFloat(s, 64)
+}
+
+// parseOptionalFloat parses a float that may be empty.
+func parseOptionalFloat(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "-" {
+		return 0, nil
+	}
 	return strconv.ParseFloat(s, 64)
 }

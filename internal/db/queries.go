@@ -287,9 +287,13 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 				return nil, fmt.Errorf("check btc_lot %q: %w", row.TransactionID, err)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
-				priceUSD := row.AmountUSD
-				if priceUSD == 0 && row.AmountBTC > 0 {
-					// Fallback: no USD amount, skip lot creation
+				// Prefer cost basis from Strike; fall back to amount USD
+				priceUSD := row.CostBasisUSD
+				if priceUSD == 0 {
+					priceUSD = row.AmountUSD
+				}
+				if priceUSD == 0 {
+					// No cost basis available, skip lot creation
 					continue
 				}
 				_, err = tx.ExecContext(ctx,
