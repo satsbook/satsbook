@@ -290,3 +290,82 @@ func TestForwardingEvents_Empty(t *testing.T) {
 		t.Errorf("expected 0 events, got %d", len(page.Events))
 	}
 }
+
+func TestDailyFees_WithData(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	yesterday := now.AddDate(0, 0, -1)
+	seedForwardingEvents(t, d, []ForwardingEvent{
+		{Timestamp: yesterday, ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 10000, AmtOutMsat: 9000, FeeMsat: 1000},
+		{Timestamp: yesterday.Add(time.Hour), ChanIDIn: 3, ChanIDOut: 4, AmtInMsat: 20000, AmtOutMsat: 18000, FeeMsat: 2000},
+		{Timestamp: now, ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 30000, AmtOutMsat: 27000, FeeMsat: 3000},
+	})
+
+	stats, err := d.DailyFees(context.Background(), now.AddDate(0, 0, -7))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stats) < 1 {
+		t.Fatalf("expected at least 1 day, got %d", len(stats))
+	}
+
+	// Total fees across all days should be 6000
+	var totalFees int64
+	for _, s := range stats {
+		totalFees += s.TotalFeeMsat
+	}
+	if totalFees != 6000 {
+		t.Errorf("expected total fees 6000, got %d", totalFees)
+	}
+}
+
+func TestDailyFees_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	stats, err := d.DailyFees(context.Background(), time.Now().AddDate(0, 0, -7))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stats) != 0 {
+		t.Errorf("expected 0 days, got %d", len(stats))
+	}
+}
+
+func TestLastSyncedAt_NoData(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ts, err := d.LastSyncedAt(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ts.IsZero() {
+		t.Errorf("expected zero time, got %v", ts)
+	}
+}
+
+func TestLastSyncedAt_WithData(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// Insert sync state via RunSync
+	now := time.Now().UTC()
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.SetSyncState("forwarding", now, 100)
+	})
+	if err != nil {
+		t.Fatalf("failed to set sync state: %v", err)
+	}
+
+	ts, err := d.LastSyncedAt(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should be within a second of now
+	if now.Sub(ts).Abs() > time.Second {
+		t.Errorf("expected time close to %v, got %v", now, ts)
+	}
+}

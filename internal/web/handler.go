@@ -19,6 +19,8 @@ type DashboardStore interface {
 	LatestWalletBalance(ctx context.Context) (*db.WalletBalanceSnapshot, error)
 	ChannelStats(ctx context.Context) ([]db.ChannelStat, error)
 	ForwardingEvents(ctx context.Context, from, to time.Time, limit, offset int) (*db.ForwardingPage, error)
+	DailyFees(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error)
+	LastSyncedAt(ctx context.Context) (time.Time, error)
 }
 
 // NodeInfoProvider fetches node info from LND.
@@ -29,23 +31,26 @@ type NodeInfoProvider interface {
 // PriceProvider fetches the current BTC/USD price.
 type PriceProvider interface {
 	GetBTCPrice(ctx context.Context) (float64, error)
+	FetchedAt() time.Time
 }
 
-// Handler serves dashboard API endpoints.
+// Handler serves dashboard API and HTML endpoints.
 type Handler struct {
-	store  DashboardStore
-	node   NodeInfoProvider
-	price  PriceProvider
-	logger *log.Logger
+	store    DashboardStore
+	node     NodeInfoProvider
+	price    PriceProvider
+	logger   *log.Logger
+	renderer *Renderer
 }
 
 // NewHandler creates a new Handler.
 func NewHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider, logger *log.Logger) *Handler {
 	return &Handler{
-		store:  store,
-		node:   node,
-		price:  price,
-		logger: logger,
+		store:    store,
+		node:     node,
+		price:    price,
+		logger:   logger,
+		renderer: NewRenderer(),
 	}
 }
 

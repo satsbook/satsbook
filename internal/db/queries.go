@@ -118,6 +118,74 @@ func (d *DB) ChannelStats(ctx context.Context) ([]ChannelStat, error) {
 	return stats, rows.Err()
 }
 
+// DailyFeeStat holds aggregated fee data for a single day.
+type DailyFeeStat struct {
+	Day          string
+	TotalFeeMsat int64
+	Count        int64
+}
+
+// DailyFees returns fee totals grouped by day since the given time.
+func (d *DB) DailyFees(ctx context.Context, since time.Time) ([]DailyFeeStat, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT SUBSTR(timestamp, 1, 10) AS day, SUM(fee_msat) AS total_fee_msat, COUNT(*) AS count
+		FROM forwarding_events
+		WHERE timestamp >= ?
+		GROUP BY SUBSTR(timestamp, 1, 10)
+		ORDER BY day ASC
+	`, since)
+	if err != nil {
+		return nil, fmt.Errorf("daily fees: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []DailyFeeStat
+	for rows.Next() {
+		var s DailyFeeStat
+		if err := rows.Scan(&s.Day, &s.TotalFeeMsat, &s.Count); err != nil {
+			return nil, fmt.Errorf("scan daily fee: %w", err)
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
+}
+
+// LastSyncedAt returns the most recent sync timestamp across all sources.
+// Returns zero time if no syncs have occurred.
+func (d *DB) LastSyncedAt(ctx context.Context) (time.Time, error) {
+	var s sql.NullString
+	err := d.db.QueryRowContext(ctx,
+		`SELECT MAX(last_synced_at) FROM sync_state`,
+	).Scan(&s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("last synced at: %w", err)
+	}
+	if !s.Valid || s.String == "" {
+		return time.Time{}, nil
+	}
+	// Try multiple time formats — the SQLite driver stores Go time values
+	// in Go's default format, not RFC3339.
+	formats := []string{
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05.999999999 +0000 UTC",
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02T15:04:05Z",
+	}
+	var t time.Time
+	var parseErr error
+	for _, f := range formats {
+		t, parseErr = time.Parse(f, s.String)
+		if parseErr == nil {
+			break
+		}
+	}
+	if parseErr != nil {
+		return time.Time{}, fmt.Errorf("parse last synced time %q: %w", s.String, parseErr)
+	}
+	return t, nil
+}
+
 // ForwardingPage holds a page of forwarding events with total count.
 type ForwardingPage struct {
 	Events []ForwardingEvent

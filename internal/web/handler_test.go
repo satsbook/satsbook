@@ -23,6 +23,8 @@ type mockStore struct {
 	latestWalletFn      func(ctx context.Context) (*db.WalletBalanceSnapshot, error)
 	channelStatsFn      func(ctx context.Context) ([]db.ChannelStat, error)
 	forwardingEventsFn  func(ctx context.Context, from, to time.Time, limit, offset int) (*db.ForwardingPage, error)
+	dailyFeesFn         func(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error)
+	lastSyncedAtFn      func(ctx context.Context) (time.Time, error)
 }
 
 func (m *mockStore) FeeSummary(ctx context.Context, since time.Time) (int64, int64, error) {
@@ -40,6 +42,18 @@ func (m *mockStore) ChannelStats(ctx context.Context) ([]db.ChannelStat, error) 
 func (m *mockStore) ForwardingEvents(ctx context.Context, from, to time.Time, limit, offset int) (*db.ForwardingPage, error) {
 	return m.forwardingEventsFn(ctx, from, to, limit, offset)
 }
+func (m *mockStore) DailyFees(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error) {
+	if m.dailyFeesFn != nil {
+		return m.dailyFeesFn(ctx, since)
+	}
+	return nil, nil
+}
+func (m *mockStore) LastSyncedAt(ctx context.Context) (time.Time, error) {
+	if m.lastSyncedAtFn != nil {
+		return m.lastSyncedAtFn(ctx)
+	}
+	return time.Time{}, nil
+}
 
 type mockNodeInfo struct {
 	info *lnd.NodeInfo
@@ -51,12 +65,16 @@ func (m *mockNodeInfo) GetInfo(ctx context.Context) (*lnd.NodeInfo, error) {
 }
 
 type mockPrice struct {
-	price float64
-	err   error
+	price     float64
+	err       error
+	fetchedAt time.Time
 }
 
 func (m *mockPrice) GetBTCPrice(ctx context.Context) (float64, error) {
 	return m.price, m.err
+}
+func (m *mockPrice) FetchedAt() time.Time {
+	return m.fetchedAt
 }
 
 func newTestHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider) *Handler {

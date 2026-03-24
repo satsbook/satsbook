@@ -1,0 +1,40 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook{{if .NodeAlias}} — {{.NodeAlias}}{{end}}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <a class="logo" href="/">Satsbook</a>
+      <div class="node-info-bar">
+        {{if .NodeAlias}}
+          <strong>{{.NodeAlias}}</strong> &middot;
+          <span class="truncate" title="{{.NodePubKey}}">{{.NodePubKey}}</span> &middot;
+          {{if .NodeSynced}}<span class="synced">synced</span>{{else}}<span class="not-synced">not synced</span>{{end}}
+          &middot; block {{.BlockHeight}} &middot; LND {{.LNDVersion}}
+        {{else}}
+          <span class="not-synced">node unreachable</span>
+        {{end}}
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    {{template "content" .}}
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Last synced: {{timeAgo .LastSyncedAt}}</span>
+      <span>
+        {{if .BTCPriceUSD}}BTC {{formatUSD .BTCPriceUSD}} (mempool.space, {{timeAgo .PriceFetchedAt}}){{else}}BTC price unavailable{{end}}
+      </span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}
