@@ -113,6 +113,14 @@ func (c *Cache) fetch(ctx context.Context) (float64, error) {
 	return prices.USD, nil
 }
 
+// FetchedAt returns the time the price was last successfully fetched.
+// Returns zero time if never fetched.
+func (c *Cache) FetchedAt() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.fetchedAt
+}
+
 // MsatToUSD converts millisatoshis to USD given a BTC price.
 func MsatToUSD(msat int64, btcPrice float64) float64 {
 	return (float64(msat) / 100_000_000_000.0) * btcPrice

@@ -1,0 +1,40 @@
+{{define "channel_table"}}
+{{if eq (len .) 0}}
+  <div class="chart-empty">No channels found</div>
+{{else}}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Channel ID</th>
+        <th>Peer</th>
+        <th>Balance</th>
+        <th>Local / Remote</th>
+        <th>Fees (all time)</th>
+        <th>Fees (30d)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .}}
+      <tr>
+        <td>
+          {{if .Active}}<span class="status-dot status-active" title="Active"></span>{{else}}<span class="status-dot status-inactive" title="Inactive"></span>{{end}}
+        </td>
+        <td><span class="truncate" title="{{.ChanID}}">{{.ChanID}}</span></td>
+        <td><span class="truncate" title="{{.RemotePubKey}}">{{.RemotePubKey}}</span></td>
+        <td>
+          <div class="balance-bar">
+            <div class="balance-local" style="width: {{pctOf .LocalBalance (add64 .LocalBalance .RemoteBalance)}}%"></div>
+          </div>
+        </td>
+        <td>{{formatSats .LocalBalance}} / {{formatSats .RemoteBalance}}</td>
+        <td>{{formatSats (msatToSat .FeesEarnedAllTimeMsat)}} sats</td>
+        <td>{{formatSats (msatToSat .FeesEarned30dMsat)}} sats</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
