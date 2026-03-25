@@ -237,6 +237,68 @@ func (d *DB) ForwardingEvents(ctx context.Context, from, to time.Time, limit, of
 	return &ForwardingPage{Events: events, Total: total}, nil
 }
 
+// ExchangeSummaryResult holds aggregated exchange activity for a period.
+type ExchangeSummaryResult struct {
+	PurchasedSats        int64
+	ReceivedSats         int64
+	SoldSats             int64   // positive value (absolute)
+	SentSats             int64   // positive value (absolute)
+	TotalCostBasisUSD    float64 // USD spent on purchases
+	TotalSaleProceedsUSD float64 // USD received from sales
+	FeesPaidUSD          float64
+}
+
+// ExchangeSummary returns aggregated BTC in/out and USD cost/proceeds
+// for a given exchange source since the given time.
+func (d *DB) ExchangeSummary(ctx context.Context, source string, since time.Time) (*ExchangeSummaryResult, error) {
+	sinceStr := ""
+	args := []interface{}{source}
+	dateFilter := ""
+	if !since.IsZero() {
+		sinceStr = since.UTC().Format(time.RFC3339)
+		dateFilter = `AND json_extract(raw_data, '$.Date') >= ?`
+		args = append(args, sinceStr)
+	}
+
+	query := `SELECT
+		COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) IN ('purchase', 'buy')
+			THEN json_extract(raw_data, '$.AmountBTC') ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) = 'receive'
+			THEN json_extract(raw_data, '$.AmountBTC') ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) = 'sale'
+			THEN ABS(json_extract(raw_data, '$.AmountBTC')) ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) = 'send'
+			THEN ABS(json_extract(raw_data, '$.AmountBTC')) ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) IN ('purchase', 'buy')
+			THEN ABS(COALESCE(json_extract(raw_data, '$.CostBasisUSD'), json_extract(raw_data, '$.AmountUSD'), 0)) ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) = 'sale'
+			THEN ABS(COALESCE(json_extract(raw_data, '$.AmountUSD'), 0)) ELSE 0 END), 0),
+		COALESCE(SUM(ABS(COALESCE(json_extract(raw_data, '$.FeeUSD'), 0))), 0)
+	FROM exchange_imports
+	WHERE source = ? ` + dateFilter
+
+	var purchBTC, recvBTC, soldBTC, sentBTC float64
+	var costBasis, saleProceeds, fees float64
+
+	err := d.db.QueryRowContext(ctx, query, args...).Scan(
+		&purchBTC, &recvBTC, &soldBTC, &sentBTC,
+		&costBasis, &saleProceeds, &fees,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("exchange summary for %s: %w", source, err)
+	}
+
+	return &ExchangeSummaryResult{
+		PurchasedSats:        int64(math.Round(purchBTC * 1e8)),
+		ReceivedSats:         int64(math.Round(recvBTC * 1e8)),
+		SoldSats:             int64(math.Round(soldBTC * 1e8)),
+		SentSats:             int64(math.Round(sentBTC * 1e8)),
+		TotalCostBasisUSD:    costBasis,
+		TotalSaleProceedsUSD: saleProceeds,
+		FeesPaidUSD:          fees,
+	}, nil
+}
+
 // ImportSummary holds the result of an exchange CSV import.
 type ImportSummary struct {
 	Total        int

@@ -1,0 +1,81 @@
+{{define "pl_content"}}
+<!-- Disclaimer -->
+<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem; color: var(--text-muted);">
+  This summary is for informational purposes only and does not constitute tax, legal, or financial advice.
+</div>
+
+<!-- Period Selector -->
+<div style="display: flex; gap: 8px; margin-bottom: 24px;">
+  {{range .Periods}}
+  <a href="/pl?period={{.Value}}"
+     style="padding: 6px 16px; border-radius: var(--radius); text-decoration: none; font-size: 0.85rem;
+            {{if .Active}}background: var(--accent); color: #000; font-weight: 600;{{else}}background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border);{{end}}">
+    {{.Label}}
+  </a>
+  {{end}}
+</div>
+
+<!-- Income Section -->
+<h2 style="font-size: 1rem; color: var(--text-muted); margin-bottom: 12px;">Income</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Routing Fee Income</div>
+    <div class="card-value">{{formatSats .RoutingFeeSats}} <small>sats</small></div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .RoutingFeeUSD}}</div>{{end}}
+    <div class="card-breakdown">
+      <span>{{formatSats .RoutedCount}} payments routed</span>
+    </div>
+  </div>
+</div>
+
+<!-- Exchange Activity Section -->
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Strike Activity <span style="font-size: 0.75em;">(from CSV import)</span></h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">BTC Purchased</div>
+    <div class="card-value">{{formatSats .PurchasedSats}} <small>sats</small></div>
+    <div class="card-sub">Cost basis: {{formatUSD .TotalCostBasisUSD}}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">BTC Received</div>
+    <div class="card-value">{{formatSats .ReceivedSats}} <small>sats</small></div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">BTC Sold</div>
+    <div class="card-value">{{formatSats .SoldSats}} <small>sats</small></div>
+    <div class="card-sub">Proceeds: {{formatUSD .TotalSaleProceedsUSD}}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">BTC Sent</div>
+    <div class="card-value">{{formatSats .SentSats}} <small>sats</small></div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Fees Paid (Strike)</div>
+    <div class="card-value">{{formatUSD .FeesPaidUSD}}</div>
+  </div>
+</div>
+
+<!-- Net Position -->
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Net Position</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Net BTC This Period</div>
+    <div class="card-value">{{formatSats .NetBTCSats}} <small>sats</small></div>
+    <div class="card-breakdown">
+      <span>Routing + Purchased + Received - Sold - Sent</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Net USD Spent</div>
+    <div class="card-value">{{formatUSD .NetUSDSpent}}</div>
+    <div class="card-breakdown">
+      <span>Cost basis - Sale proceeds + Fees</span>
+    </div>
+  </div>
+</div>
+{{end}}

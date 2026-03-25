@@ -23,6 +23,7 @@ type DashboardStore interface {
 	DailyFees(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error)
 	LastSyncedAt(ctx context.Context) (time.Time, error)
 	ExchangeBalance(ctx context.Context, source string) (int64, error)
+	ExchangeSummary(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
 }
 
 // NodeInfoProvider fetches node info from LND.
