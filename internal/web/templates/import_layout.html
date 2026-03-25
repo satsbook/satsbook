@@ -1,0 +1,31 @@
+{{define "import_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Import</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <a class="logo" href="/">Satsbook</a>
+      <nav style="font-size: 0.85rem;">
+        <a href="/" style="color: var(--text-muted); text-decoration: none; margin-right: 16px;">Dashboard</a>
+        <a href="/import" style="color: var(--text); text-decoration: none;">Import</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" style="padding: 24px 16px;">
+    {{template "import_content" .}}
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook</span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}

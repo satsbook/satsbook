@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/satsbook/satsbook/internal/exchange"
 )
 
 func seedForwardingEvents(t *testing.T, d *DB, events []ForwardingEvent) {
@@ -367,5 +369,252 @@ func TestLastSyncedAt_WithData(t *testing.T) {
 	// Should be within a second of now
 	if now.Sub(ts).Abs() > time.Second {
 		t.Errorf("expected time close to %v, got %v", now, ts)
+	}
+}
+
+// --- ImportStrikeCSV tests ---
+
+func testStrikeRows() []exchange.StrikeRow {
+	now := time.Now().UTC()
+	return []exchange.StrikeRow{
+		{TransactionID: "tx-001", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, FeeUSD: 0.50, RawLine: "tx-001,Purchase,0.001,67.00"},
+		{TransactionID: "tx-002", Date: now, Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, FeeUSD: 1.00, RawLine: "tx-002,Withdrawal,0.0005,33.50"},
+		{TransactionID: "tx-003", Date: now, Type: "Receive", AmountSat: 10000, AmountBTC: 0.0001, RawLine: "tx-003,Receive,0.0001"},
+	}
+}
+
+func TestImportStrikeCSV_Basic(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testStrikeRows()
+	summary, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Total != 3 {
+		t.Errorf("expected total 3, got %d", summary.Total)
+	}
+	if summary.NewPurchases != 1 {
+		t.Errorf("expected 1 new purchase (tx-001 completed), got %d", summary.NewPurchases)
+	}
+	if summary.Duplicates != 0 {
+		t.Errorf("expected 0 duplicates, got %d", summary.Duplicates)
+	}
+
+	// Verify exchange_imports has 3 rows
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'strike'").Scan(&count)
+	if count != 3 {
+		t.Errorf("expected 3 exchange_imports rows, got %d", count)
+	}
+
+	// Verify btc_lots has 1 row (only completed purchase)
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'strike'").Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 btc_lots row, got %d", count)
+	}
+
+	// Verify lot details
+	var amountSat int64
+	var priceUSD float64
+	d.db.QueryRow("SELECT amount_sat, price_usd FROM btc_lots WHERE source = 'strike' LIMIT 1").Scan(&amountSat, &priceUSD)
+	if amountSat != 100000 {
+		t.Errorf("expected 100000 sats, got %d", amountSat)
+	}
+	if priceUSD != 67.00 {
+		t.Errorf("expected 67.00 USD, got %f", priceUSD)
+	}
+}
+
+func TestImportStrikeCSV_Dedup(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testStrikeRows()
+
+	// First import
+	_, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import error: %v", err)
+	}
+
+	// Second import — all should be duplicates
+	summary, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import error: %v", err)
+	}
+
+	if summary.Duplicates != 3 {
+		t.Errorf("expected 3 duplicates on re-import, got %d", summary.Duplicates)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 new purchases on re-import, got %d", summary.NewPurchases)
+	}
+
+	// Verify btc_lots still has only 1 row
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'strike'").Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 btc_lots row after re-import, got %d", count)
+	}
+}
+
+func TestImportStrikeCSV_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	summary, err := d.ImportStrikeCSV(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Total != 0 {
+		t.Errorf("expected total 0, got %d", summary.Total)
+	}
+}
+
+func TestImportStrikeCSV_NonPurchaseNoLot(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.StrikeRow{
+		{TransactionID: "tx-w1", Date: time.Now(), Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, RawLine: "tx-w1,Withdrawal,0.0005,33.50"},
+		{TransactionID: "tx-d1", Date: time.Now(), Type: "Receive", AmountSat: 100000, AmountBTC: 0.001, RawLine: "tx-d1,Receive,0.001"},
+	}
+
+	summary, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 purchases for non-purchase types, got %d", summary.NewPurchases)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 btc_lots, got %d", count)
+	}
+}
+
+func TestImportStrikeCSV_BuyType(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.StrikeRow{
+		{TransactionID: "tx-buy1", Date: time.Now(), Type: "Buy", AmountSat: 50000000, AmountBTC: 0.5, AmountUSD: 33500.00, CostBasisUSD: 33500.00, RawLine: "tx-buy1,Buy,0.5,33500.00"},
+	}
+
+	summary, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 1 {
+		t.Errorf("expected 1 purchase for Buy type, got %d", summary.NewPurchases)
+	}
+}
+
+func TestExchangeBalance(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// Empty — should return 0
+	bal, err := d.ExchangeBalance(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bal != 0 {
+		t.Errorf("expected 0 balance before import, got %d", bal)
+	}
+
+	// Import rows with mixed amounts
+	rows := testStrikeRows() // Purchase +0.001, Withdrawal +0.0005 BTC, Receive +0.0001
+	_, err = d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	bal, err = d.ExchangeBalance(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Only rows with non-zero AmountBTC count: 0.001 + 0.0005 + 0.0001 = 0.0016 BTC = 160000 sats
+	if bal != 160000 {
+		t.Errorf("expected 160000 sats, got %d", bal)
+	}
+
+	// Different source should return 0
+	bal, err = d.ExchangeBalance(context.Background(), "river")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bal != 0 {
+		t.Errorf("expected 0 for river, got %d", bal)
+	}
+}
+
+func TestImportStrikeCSV_SameReferenceID(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	// Same reference ID, different transaction types (real Strike behavior)
+	rows := []exchange.StrikeRow{
+		{TransactionID: "76333fda-5647-42a9-a463-5ef618b4fa7b", Date: now, Type: "Withdrawal", AmountSat: 0, AmountBTC: 0, AmountUSD: -475.24, RawLine: "76333fda,Withdrawal,-475.24,,,"},
+		{TransactionID: "76333fda-5647-42a9-a463-5ef618b4fa7b", Date: now, Type: "Sale", AmountSat: -523038, AmountBTC: -0.00523038, AmountUSD: 475.24, BTCPrice: 91584.17, RawLine: "76333fda,Sale,475.24,-0.00523038,,91584.17"},
+	}
+
+	summary, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Both rows should be imported (not deduped)
+	if summary.Duplicates != 0 {
+		t.Errorf("expected 0 duplicates, got %d", summary.Duplicates)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'strike'").Scan(&count)
+	if count != 2 {
+		t.Errorf("expected 2 exchange_imports rows, got %d", count)
+	}
+
+	// Balance should only reflect the Sale (BTC out), not the USD-only Withdrawal
+	bal, err := d.ExchangeBalance(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bal != -523038 {
+		t.Errorf("expected -523038 sats (BTC sold), got %d", bal)
+	}
+}
+
+func TestExchangeBalance_ExcludesUSDOnly(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	rows := []exchange.StrikeRow{
+		{TransactionID: "tx-p1", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, RawLine: "tx-p1,Purchase,0.001,67.00"},
+		{TransactionID: "tx-w1", Date: now, Type: "Withdrawal", AmountSat: 0, AmountBTC: 0, AmountUSD: -500.00, RawLine: "tx-w1,Withdrawal,0,-500.00"},  // USD-only, no BTC
+		{TransactionID: "tx-d1", Date: now, Type: "Deposit", AmountSat: 0, AmountBTC: 0, AmountUSD: 1000.00, RawLine: "tx-d1,Deposit,0,1000.00"},        // USD deposit, no BTC
+	}
+
+	_, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	bal, err := d.ExchangeBalance(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Only the Purchase has BTC: 100000 sats
+	if bal != 100000 {
+		t.Errorf("expected 100000 sats (USD-only rows excluded), got %d", bal)
 	}
 }

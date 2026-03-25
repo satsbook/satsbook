@@ -1,4 +1,4 @@
-.PHONY: build build-lndcheck run test clean
+.PHONY: build build-lndcheck run run-binary run-local run-umbrel test clean
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard .env))
@@ -14,9 +14,21 @@ build:
 build-lndcheck:
 	go build -o lndcheck ./cmd/lndcheck
 
-# Run the application
+# Run the application (via go run, works in any shell)
 run:
 	go run ./cmd/satsbook
+
+# Run the built binary (works in any shell via Make's env export)
+run-binary: build
+	./satsbook
+
+# Run the built binary via bash (explicit env sourcing, works from fish/zsh/bash)
+run-local: build
+	bash -c 'set -a && source .env && ./satsbook'
+
+# Run as Umbrel app (uses Umbrel-injected env vars, no .env file)
+run-umbrel: build
+	./satsbook
 
 # Run tests
 test:

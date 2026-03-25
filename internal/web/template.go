@@ -37,8 +37,11 @@ func NewRenderer() *Renderer {
 		template.New("").Funcs(funcMap).ParseFS(templateFS,
 			"templates/layout.html",
 			"templates/dashboard.html",
+			"templates/import_layout.html",
+			"templates/import.html",
 			"templates/partials/forwarding_table.html",
 			"templates/partials/channel_table.html",
+			"templates/partials/import_result.html",
 		),
 	)
 
