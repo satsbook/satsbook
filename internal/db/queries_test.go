@@ -377,9 +377,9 @@ func TestLastSyncedAt_WithData(t *testing.T) {
 func testStrikeRows() []exchange.StrikeRow {
 	now := time.Now().UTC()
 	return []exchange.StrikeRow{
-		{TransactionID: "tx-001", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, FeeUSD: 0.50},
-		{TransactionID: "tx-002", Date: now, Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, FeeUSD: 1.00},
-		{TransactionID: "tx-003", Date: now, Type: "Receive", AmountSat: 10000, AmountBTC: 0.0001},
+		{TransactionID: "tx-001", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, FeeUSD: 0.50, RawLine: "tx-001,Purchase,0.001,67.00"},
+		{TransactionID: "tx-002", Date: now, Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, FeeUSD: 1.00, RawLine: "tx-002,Withdrawal,0.0005,33.50"},
+		{TransactionID: "tx-003", Date: now, Type: "Receive", AmountSat: 10000, AmountBTC: 0.0001, RawLine: "tx-003,Receive,0.0001"},
 	}
 }
 
@@ -419,7 +419,7 @@ func TestImportStrikeCSV_Basic(t *testing.T) {
 	// Verify lot details
 	var amountSat int64
 	var priceUSD float64
-	d.db.QueryRow("SELECT amount_sat, price_usd FROM btc_lots WHERE external_id = 'tx-001'").Scan(&amountSat, &priceUSD)
+	d.db.QueryRow("SELECT amount_sat, price_usd FROM btc_lots WHERE source = 'strike' LIMIT 1").Scan(&amountSat, &priceUSD)
 	if amountSat != 100000 {
 		t.Errorf("expected 100000 sats, got %d", amountSat)
 	}
@@ -479,8 +479,8 @@ func TestImportStrikeCSV_NonPurchaseNoLot(t *testing.T) {
 	defer d.Close()
 
 	rows := []exchange.StrikeRow{
-		{TransactionID: "tx-w1", Date: time.Now(), Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50},
-		{TransactionID: "tx-d1", Date: time.Now(), Type: "Receive", AmountSat: 100000, AmountBTC: 0.001},
+		{TransactionID: "tx-w1", Date: time.Now(), Type: "Withdrawal", AmountSat: 50000, AmountBTC: 0.0005, AmountUSD: 33.50, RawLine: "tx-w1,Withdrawal,0.0005,33.50"},
+		{TransactionID: "tx-d1", Date: time.Now(), Type: "Receive", AmountSat: 100000, AmountBTC: 0.001, RawLine: "tx-d1,Receive,0.001"},
 	}
 
 	summary, err := d.ImportStrikeCSV(context.Background(), rows)
@@ -503,7 +503,7 @@ func TestImportStrikeCSV_BuyType(t *testing.T) {
 	defer d.Close()
 
 	rows := []exchange.StrikeRow{
-		{TransactionID: "tx-buy1", Date: time.Now(), Type: "Buy", AmountSat: 50000000, AmountBTC: 0.5, AmountUSD: 33500.00, CostBasisUSD: 33500.00},
+		{TransactionID: "tx-buy1", Date: time.Now(), Type: "Buy", AmountSat: 50000000, AmountBTC: 0.5, AmountUSD: 33500.00, CostBasisUSD: 33500.00, RawLine: "tx-buy1,Buy,0.5,33500.00"},
 	}
 
 	summary, err := d.ImportStrikeCSV(context.Background(), rows)
@@ -562,8 +562,8 @@ func TestImportStrikeCSV_SameReferenceID(t *testing.T) {
 	now := time.Now().UTC()
 	// Same reference ID, different transaction types (real Strike behavior)
 	rows := []exchange.StrikeRow{
-		{TransactionID: "76333fda-5647-42a9-a463-5ef618b4fa7b", Date: now, Type: "Withdrawal", AmountSat: 0, AmountBTC: 0, AmountUSD: -475.24},
-		{TransactionID: "76333fda-5647-42a9-a463-5ef618b4fa7b", Date: now, Type: "Sale", AmountSat: -523038, AmountBTC: -0.00523038, AmountUSD: 475.24, BTCPrice: 91584.17},
+		{TransactionID: "76333fda-5647-42a9-a463-5ef618b4fa7b", Date: now, Type: "Withdrawal", AmountSat: 0, AmountBTC: 0, AmountUSD: -475.24, RawLine: "76333fda,Withdrawal,-475.24,,,"},
+		{TransactionID: "76333fda-5647-42a9-a463-5ef618b4fa7b", Date: now, Type: "Sale", AmountSat: -523038, AmountBTC: -0.00523038, AmountUSD: 475.24, BTCPrice: 91584.17, RawLine: "76333fda,Sale,475.24,-0.00523038,,91584.17"},
 	}
 
 	summary, err := d.ImportStrikeCSV(context.Background(), rows)
@@ -598,9 +598,9 @@ func TestExchangeBalance_ExcludesUSDOnly(t *testing.T) {
 
 	now := time.Now().UTC()
 	rows := []exchange.StrikeRow{
-		{TransactionID: "tx-p1", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00},
-		{TransactionID: "tx-w1", Date: now, Type: "Withdrawal", AmountSat: 0, AmountBTC: 0, AmountUSD: -500.00},  // USD-only, no BTC
-		{TransactionID: "tx-d1", Date: now, Type: "Deposit", AmountSat: 0, AmountBTC: 0, AmountUSD: 1000.00},      // USD deposit, no BTC
+		{TransactionID: "tx-p1", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, RawLine: "tx-p1,Purchase,0.001,67.00"},
+		{TransactionID: "tx-w1", Date: now, Type: "Withdrawal", AmountSat: 0, AmountBTC: 0, AmountUSD: -500.00, RawLine: "tx-w1,Withdrawal,0,-500.00"},  // USD-only, no BTC
+		{TransactionID: "tx-d1", Date: now, Type: "Deposit", AmountSat: 0, AmountBTC: 0, AmountUSD: 1000.00, RawLine: "tx-d1,Deposit,0,1000.00"},        // USD deposit, no BTC
 	}
 
 	_, err := d.ImportStrikeCSV(context.Background(), rows)

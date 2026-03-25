@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -256,11 +258,17 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 	for _, row := range rows {
 		rawData, _ := json.Marshal(row)
 
+		// Use content hash for dedup — Strike reference IDs are not unique
+		// (same ref can appear for reversals, multi-part transactions, etc.)
+		h := sha256.Sum256([]byte(row.RawLine))
+		contentHash := hex.EncodeToString(h[:])
+
 		// Insert into exchange_imports (dedup via UNIQUE(source, external_id, tx_type))
+		// external_id is the content hash so re-importing the same CSV is idempotent
 		res, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
 			 VALUES (?, ?, ?, ?)`,
-			"strike", row.TransactionID, row.Type, string(rawData),
+			"strike", contentHash, row.Type, string(rawData),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert exchange import %q: %w", row.TransactionID, err)
@@ -278,14 +286,14 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 
 		// Create btc_lot for completed purchases
 		if row.IsPurchase() && row.AmountSat > 0 {
-			// Dedup check: don't create lot if one already exists for this tx
+			// Dedup check: don't create lot if one already exists for this content hash
 			var exists int
 			err := tx.QueryRowContext(ctx,
 				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
-				"strike", row.TransactionID,
+				"strike", contentHash,
 			).Scan(&exists)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, fmt.Errorf("check btc_lot %q: %w", row.TransactionID, err)
+				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
 				// Prefer cost basis from Strike; fall back to amount USD
@@ -300,10 +308,10 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 				_, err = tx.ExecContext(ctx,
 					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
 					 VALUES (?, ?, ?, ?, ?)`,
-					row.Date, row.AmountSat, priceUSD, "strike", row.TransactionID,
+					row.Date, row.AmountSat, priceUSD, "strike", contentHash,
 				)
 				if err != nil {
-					return nil, fmt.Errorf("insert btc_lot %q: %w", row.TransactionID, err)
+					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
 				}
 				summary.NewPurchases++
 			}
