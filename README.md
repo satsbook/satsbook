@@ -92,11 +92,24 @@ make build
 # Run tests
 make test
 
-# Run the application locally
-make run
-
 # Clean build artifacts
 make clean
+```
+
+### Running
+
+```bash
+# Run via go run (development, any shell)
+make run
+
+# Run the built binary (any shell, Make exports .env vars)
+make run-binary
+
+# Run the built binary via bash (works from fish/zsh/bash)
+make run-local
+
+# Run on Umbrel (no .env file, Umbrel injects env vars)
+make run-umbrel
 ```
 
 ### Smoke Test (requires LND node)

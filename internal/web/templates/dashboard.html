@@ -33,7 +33,7 @@
 
   {{if .StrikeBalanceSats}}
   <div class="card">
-    <div class="card-label">Strike Balance</div>
+    <div class="card-label">Strike Balance <span style="font-size:0.75em;color:#999;">(from CSV import)</span></div>
     <div class="card-value">{{formatSats .StrikeBalanceSats}} <small>sats</small></div>
     {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .StrikeBalanceUSD}}</div>{{end}}
   </div>

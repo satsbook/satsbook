@@ -118,6 +118,30 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_forwarding_events_chan_id_out
 		ON forwarding_events(chan_id_out);
 	`,
+	// Migration 3: Fix exchange_imports unique constraint.
+	// Strike reference IDs are not unique per row — the same reference can have
+	// multiple transaction types (e.g. Sale + Withdrawal for the same operation).
+	// Add transaction_type column and re-key on (source, external_id, tx_type).
+	`
+	CREATE TABLE IF NOT EXISTS exchange_imports_new (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		source      TEXT NOT NULL,
+		external_id TEXT NOT NULL,
+		tx_type     TEXT NOT NULL DEFAULT '',
+		imported_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		raw_data    TEXT NOT NULL,
+		UNIQUE(source, external_id, tx_type)
+	);
+
+	INSERT OR IGNORE INTO exchange_imports_new (id, source, external_id, tx_type, imported_at, raw_data)
+		SELECT id, source, external_id,
+			COALESCE(json_extract(raw_data, '$.Type'), ''),
+			imported_at, raw_data
+		FROM exchange_imports;
+
+	DROP TABLE exchange_imports;
+	ALTER TABLE exchange_imports_new RENAME TO exchange_imports;
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

@@ -256,11 +256,11 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 	for _, row := range rows {
 		rawData, _ := json.Marshal(row)
 
-		// Insert into exchange_imports (dedup via UNIQUE(source, external_id))
+		// Insert into exchange_imports (dedup via UNIQUE(source, external_id, tx_type))
 		res, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO exchange_imports (source, external_id, raw_data)
-			 VALUES (?, ?, ?)`,
-			"strike", row.TransactionID, string(rawData),
+			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
+			 VALUES (?, ?, ?, ?)`,
+			"strike", row.TransactionID, row.Type, string(rawData),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert exchange import %q: %w", row.TransactionID, err)
@@ -318,12 +318,15 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 }
 
 // ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
-// by summing AmountBTC from all imported rows.
+// by summing AmountBTC only from rows that actually move BTC (non-zero AmountBTC).
+// USD-only transactions (e.g. cash withdrawals) are excluded.
 func (d *DB) ExchangeBalance(ctx context.Context, source string) (int64, error) {
 	var totalBTC sql.NullFloat64
 	err := d.db.QueryRowContext(ctx,
 		`SELECT SUM(json_extract(raw_data, '$.AmountBTC'))
-		 FROM exchange_imports WHERE source = ?`, source,
+		 FROM exchange_imports
+		 WHERE source = ?
+		   AND COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0`, source,
 	).Scan(&totalBTC)
 	if err != nil {
 		return 0, fmt.Errorf("exchange balance for %s: %w", source, err)
