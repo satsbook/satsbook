@@ -60,7 +60,7 @@ func main() {
 
 	// Initialize HTTP server
 	httpLogger := log.New(os.Stdout, "[http] ", log.LstdFlags)
-	handler := web.NewHandler(database, lndClient, priceCache, httpLogger)
+	handler := web.NewHandler(database, lndClient, priceCache, database, httpLogger)
 	srv := web.NewServer(handler, cfg.AppPort, httpLogger)
 
 	// Setup graceful shutdown

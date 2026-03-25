@@ -19,7 +19,7 @@ func TestNewServer_RoutesRegistered(t *testing.T) {
 	}
 	price := &mockPrice{err: nil}
 	logger := log.New(os.Stderr, "[test] ", 0)
-	h := NewHandler(store, nil, price, logger)
+	h := NewHandler(store, nil, price, &mockImportStore{}, logger)
 	srv := NewServer(h, 0, logger)
 
 	if srv.httpServer == nil {
@@ -37,7 +37,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 		latestWalletFn:  func(_ context.Context) (*db.WalletBalanceSnapshot, error) { return nil, nil },
 	}
 	logger := log.New(os.Stderr, "[test] ", 0)
-	h := NewHandler(store, nil, &mockPrice{}, logger)
+	h := NewHandler(store, nil, &mockPrice{}, &mockImportStore{}, logger)
 	// Use port 0 to let the OS pick a free port
 	srv := NewServer(h, 0, logger)
 

@@ -34,6 +34,10 @@ type DashboardData struct {
 	WalletBalanceSats int64
 	WalletBalanceUSD  float64
 
+	// Exchange balances
+	StrikeBalanceSats int64
+	StrikeBalanceUSD  float64
+
 	// Price
 	BTCPriceUSD    float64
 	PriceFetchedAt time.Time
@@ -98,6 +102,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		lastSynced             time.Time
 		btcPrice               float64
 		priceFetched           time.Time
+		strikeBalance          int64
 	}
 	var res result
 
@@ -203,6 +208,15 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
+	fetch(func() {
+		bal, err := h.store.ExchangeBalance(ctx, "strike")
+		if err == nil {
+			mu.Lock()
+			res.strikeBalance = bal
+			mu.Unlock()
+		}
+	})
+
 	wg.Wait()
 
 	// Assemble template data
@@ -229,11 +243,14 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.WalletBalanceSats = res.balance.TotalSat
 	}
 
+	data.StrikeBalanceSats = res.strikeBalance
+
 	if res.btcPrice > 0 {
 		data.BTCPriceUSD = res.btcPrice
 		data.PriceFetchedAt = res.priceFetched
 		data.FeesAllTimeUSD = msatToUSD(res.feesAll, res.btcPrice)
 		data.WalletBalanceUSD = float64(data.WalletBalanceSats) / 100_000_000.0 * res.btcPrice
+		data.StrikeBalanceUSD = float64(res.strikeBalance) / 100_000_000.0 * res.btcPrice
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -308,6 +325,14 @@ func (h *Handler) HandleForwardingPartial(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.renderer.Render(w, "forwarding_table", data); err != nil {
 		h.logger.Printf("failed to render forwarding partial: %v", err)
+	}
+}
+
+// HandleImportPage serves GET /import.
+func (h *Handler) HandleImportPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "import_layout", nil); err != nil {
+		h.logger.Printf("failed to render import page: %v", err)
 	}
 }
 

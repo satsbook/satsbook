@@ -2,10 +2,16 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
+
+	"github.com/satsbook/satsbook/internal/exchange"
 )
 
 // FeeSummary returns aggregate fee stats for forwarding events since the given time.
@@ -229,4 +235,112 @@ func (d *DB) ForwardingEvents(ctx context.Context, from, to time.Time, limit, of
 	}
 
 	return &ForwardingPage{Events: events, Total: total}, nil
+}
+
+// ImportSummary holds the result of an exchange CSV import.
+type ImportSummary struct {
+	Total        int
+	NewPurchases int
+	Duplicates   int
+}
+
+// ImportStrikeCSV imports parsed Strike CSV rows into exchange_imports and btc_lots.
+// The entire operation runs in a single transaction.
+func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*ImportSummary, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin import transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	summary := &ImportSummary{Total: len(rows)}
+
+	for _, row := range rows {
+		rawData, _ := json.Marshal(row)
+
+		// Use content hash for dedup — Strike reference IDs are not unique
+		// (same ref can appear for reversals, multi-part transactions, etc.)
+		h := sha256.Sum256([]byte(row.RawLine))
+		contentHash := hex.EncodeToString(h[:])
+
+		// Insert into exchange_imports (dedup via UNIQUE(source, external_id, tx_type))
+		// external_id is the content hash so re-importing the same CSV is idempotent
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
+			 VALUES (?, ?, ?, ?)`,
+			"strike", contentHash, row.Type, string(rawData),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert exchange import %q: %w", row.TransactionID, err)
+		}
+
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected for %q: %w", row.TransactionID, err)
+		}
+
+		if affected == 0 {
+			summary.Duplicates++
+			continue
+		}
+
+		// Create btc_lot for completed purchases
+		if row.IsPurchase() && row.AmountSat > 0 {
+			// Dedup check: don't create lot if one already exists for this content hash
+			var exists int
+			err := tx.QueryRowContext(ctx,
+				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
+				"strike", contentHash,
+			).Scan(&exists)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				// Prefer cost basis from Strike; fall back to amount USD
+				priceUSD := row.CostBasisUSD
+				if priceUSD == 0 {
+					priceUSD = row.AmountUSD
+				}
+				if priceUSD == 0 {
+					// No cost basis available, skip lot creation
+					continue
+				}
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
+					 VALUES (?, ?, ?, ?, ?)`,
+					row.Date, row.AmountSat, priceUSD, "strike", contentHash,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
+				}
+				summary.NewPurchases++
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit import: %w", err)
+	}
+
+	return summary, nil
+}
+
+// ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
+// by summing AmountBTC only from rows that actually move BTC (non-zero AmountBTC).
+// USD-only transactions (e.g. cash withdrawals) are excluded.
+func (d *DB) ExchangeBalance(ctx context.Context, source string) (int64, error) {
+	var totalBTC sql.NullFloat64
+	err := d.db.QueryRowContext(ctx,
+		`SELECT SUM(json_extract(raw_data, '$.AmountBTC'))
+		 FROM exchange_imports
+		 WHERE source = ?
+		   AND COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0`, source,
+	).Scan(&totalBTC)
+	if err != nil {
+		return 0, fmt.Errorf("exchange balance for %s: %w", source, err)
+	}
+	if !totalBTC.Valid {
+		return 0, nil
+	}
+	return int64(math.Round(totalBTC.Float64 * 1e8)), nil
 }
