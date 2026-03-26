@@ -220,3 +220,122 @@ func TestHandleForwardingPartial_Pagination(t *testing.T) {
 }
 
 var errTest = errors.New("test error")
+
+// --- HandlePLPage tests ---
+
+func TestHandlePLPage_Success(t *testing.T) {
+	store := fullMockStore()
+	store.exchangeSummaryFn = func(_ context.Context, _ string, _ time.Time) (*db.ExchangeSummaryResult, error) {
+		return &db.ExchangeSummaryResult{
+			PurchasedSats:        500000,
+			ReceivedSats:         100000,
+			SoldSats:             50000,
+			SentSats:             25000,
+			TotalCostBasisUSD:    335.00,
+			TotalSaleProceedsUSD: 40.00,
+			FeesPaidUSD:          2.50,
+		}, nil
+	}
+	node := &mockNodeInfo{info: &lnd.NodeInfo{
+		Alias: "test-node", PubKey: "02abc", Synced: true, BlockHeight: 800000, Version: "0.17.0",
+	}}
+	price := &mockPrice{price: 67000.0, fetchedAt: time.Now()}
+	h := newTestHandler(store, node, price)
+
+	req := httptest.NewRequest(http.MethodGet, "/pl", nil)
+	w := httptest.NewRecorder()
+	h.HandlePLPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	checks := []string{
+		"informational purposes only",
+		"Routing Fee Income",
+		"BTC Purchased",
+		"BTC Sold",
+		"BTC Received",
+		"BTC Sent",
+		"Net BTC This Period",
+		"Net USD Spent",
+		"30 days",
+		"90 days",
+		"YTD",
+		"All time",
+		"test-node",
+	}
+	for _, check := range checks {
+		if !strings.Contains(body, check) {
+			t.Errorf("expected body to contain %q", check)
+		}
+	}
+}
+
+func TestHandlePLPage_DefaultPeriod(t *testing.T) {
+	store := fullMockStore()
+	h := newTestHandler(store, &mockNodeInfo{info: &lnd.NodeInfo{}}, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/pl", nil)
+	w := httptest.NewRecorder()
+	h.HandlePLPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	// 30d button should be active (has accent background)
+	body := w.Body.String()
+	if !strings.Contains(body, `period=30d`) {
+		t.Error("expected 30d period link")
+	}
+}
+
+func TestHandlePLPage_AllPeriods(t *testing.T) {
+	store := fullMockStore()
+	h := newTestHandler(store, &mockNodeInfo{info: &lnd.NodeInfo{}}, &mockPrice{})
+
+	for _, period := range []string{"30d", "90d", "ytd", "all"} {
+		req := httptest.NewRequest(http.MethodGet, "/pl?period="+period, nil)
+		w := httptest.NewRecorder()
+		h.HandlePLPage(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("period=%s: expected 200, got %d", period, w.Code)
+		}
+	}
+}
+
+func TestHandlePLPage_InvalidPeriodFallsBack(t *testing.T) {
+	store := fullMockStore()
+	h := newTestHandler(store, &mockNodeInfo{info: &lnd.NodeInfo{}}, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/pl?period=invalid", nil)
+	w := httptest.NewRecorder()
+	h.HandlePLPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestHandlePLPage_NodeDown(t *testing.T) {
+	store := fullMockStore()
+	h := newTestHandler(store, &mockNodeInfo{err: errTest}, &mockPrice{err: errTest})
+
+	req := httptest.NewRequest(http.MethodGet, "/pl", nil)
+	w := httptest.NewRecorder()
+	h.HandlePLPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even with node down, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "node unreachable") {
+		t.Error("expected 'node unreachable' when node is down")
+	}
+	if !strings.Contains(body, "price unavailable") {
+		t.Error("expected 'price unavailable' when price fails")
+	}
+}

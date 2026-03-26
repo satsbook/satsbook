@@ -618,3 +618,103 @@ func TestExchangeBalance_ExcludesUSDOnly(t *testing.T) {
 		t.Errorf("expected 100000 sats (USD-only rows excluded), got %d", bal)
 	}
 }
+
+func TestExchangeSummary_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	result, err := d.ExchangeSummary(context.Background(), "strike", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.PurchasedSats != 0 || result.SoldSats != 0 || result.TotalCostBasisUSD != 0 {
+		t.Errorf("expected all zeros for empty DB, got %+v", result)
+	}
+}
+
+func TestExchangeSummary_MixedTypes(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	rows := []exchange.StrikeRow{
+		{TransactionID: "p1", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, FeeUSD: 0.50, RawLine: "p1,Purchase,0.001,67.00,0.50"},
+		{TransactionID: "r1", Date: now, Type: "Receive", AmountSat: 50000, AmountBTC: 0.0005, RawLine: "r1,Receive,0.0005"},
+		{TransactionID: "s1", Date: now, Type: "Sale", AmountSat: -30000, AmountBTC: -0.0003, AmountUSD: 20.10, FeeUSD: 0.25, RawLine: "s1,Sale,-0.0003,20.10,0.25"},
+		{TransactionID: "w1", Date: now, Type: "Send", AmountSat: -20000, AmountBTC: -0.0002, RawLine: "w1,Send,-0.0002"},
+		{TransactionID: "d1", Date: now, Type: "Deposit", AmountSat: 0, AmountBTC: 0, AmountUSD: 500.00, RawLine: "d1,Deposit,0,500.00"},
+	}
+
+	_, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	result, err := d.ExchangeSummary(context.Background(), "strike", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.PurchasedSats != 100000 {
+		t.Errorf("expected 100000 purchased sats, got %d", result.PurchasedSats)
+	}
+	if result.ReceivedSats != 50000 {
+		t.Errorf("expected 50000 received sats, got %d", result.ReceivedSats)
+	}
+	if result.SoldSats != 30000 {
+		t.Errorf("expected 30000 sold sats, got %d", result.SoldSats)
+	}
+	if result.SentSats != 20000 {
+		t.Errorf("expected 20000 sent sats, got %d", result.SentSats)
+	}
+	if result.TotalCostBasisUSD != 67.00 {
+		t.Errorf("expected 67.00 cost basis, got %f", result.TotalCostBasisUSD)
+	}
+	if result.TotalSaleProceedsUSD != 20.10 {
+		t.Errorf("expected 20.10 sale proceeds, got %f", result.TotalSaleProceedsUSD)
+	}
+	// Fees: 0.50 + 0.25 = 0.75
+	if result.FeesPaidUSD != 0.75 {
+		t.Errorf("expected 0.75 fees, got %f", result.FeesPaidUSD)
+	}
+}
+
+func TestExchangeSummary_DateFiltering(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	old := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+	rows := []exchange.StrikeRow{
+		{TransactionID: "old-p", Date: old, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 40.00, CostBasisUSD: 40.00, RawLine: "old-p,Purchase,0.001,40.00"},
+		{TransactionID: "new-p", Date: recent, Type: "Purchase", AmountSat: 200000, AmountBTC: 0.002, AmountUSD: 150.00, CostBasisUSD: 150.00, RawLine: "new-p,Purchase,0.002,150.00"},
+	}
+
+	_, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	// All time
+	all, err := d.ExchangeSummary(context.Background(), "strike", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if all.PurchasedSats != 300000 {
+		t.Errorf("all time: expected 300000, got %d", all.PurchasedSats)
+	}
+
+	// Since 2026
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	filtered, err := d.ExchangeSummary(context.Background(), "strike", since)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if filtered.PurchasedSats != 200000 {
+		t.Errorf("filtered: expected 200000, got %d", filtered.PurchasedSats)
+	}
+	if filtered.TotalCostBasisUSD != 150.00 {
+		t.Errorf("filtered cost basis: expected 150.00, got %f", filtered.TotalCostBasisUSD)
+	}
+}

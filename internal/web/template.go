@@ -42,6 +42,8 @@ func NewRenderer() *Renderer {
 			"templates/partials/forwarding_table.html",
 			"templates/partials/channel_table.html",
 			"templates/partials/import_result.html",
+			"templates/pl_layout.html",
+			"templates/pl.html",
 		),
 	)
 

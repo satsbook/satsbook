@@ -1,9 +1,9 @@
-{{define "layout"}}<!DOCTYPE html>
+{{define "pl_layout"}}<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Satsbook{{if .NodeAlias}} — {{.NodeAlias}}{{end}}</title>
+  <title>Satsbook — P&L</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>
 </head>
@@ -13,9 +13,9 @@
       <div style="display: flex; align-items: center; gap: 24px;">
         <a class="logo" href="/">Satsbook</a>
         <nav style="font-size: 0.85rem;">
-          <a href="/" style="color: var(--text); text-decoration: none; margin-right: 16px;">Dashboard</a>
+          <a href="/" style="color: var(--text-muted); text-decoration: none; margin-right: 16px;">Dashboard</a>
           <a href="/import" style="color: var(--text-muted); text-decoration: none; margin-right: 16px;">Import</a>
-          <a href="/pl" style="color: var(--text-muted); text-decoration: none;">P&L</a>
+          <a href="/pl" style="color: var(--text); text-decoration: none;">P&L</a>
         </nav>
       </div>
       <div class="node-info-bar">
@@ -32,7 +32,7 @@
   </header>
 
   <main class="container">
-    {{template "content" .}}
+    {{template "pl_content" .}}
   </main>
 
   <footer>

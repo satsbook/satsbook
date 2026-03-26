@@ -22,6 +22,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	// HTML routes
 	mux.HandleFunc("/", handler.HandleDashboard)
 	mux.HandleFunc("/import", handler.HandleImportPage)
+	mux.HandleFunc("/pl", handler.HandlePLPage)
 	mux.HandleFunc("/partials/forwarding", handler.HandleForwardingPartial)
 
 	// Static assets (embedded)
