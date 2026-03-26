@@ -30,6 +30,7 @@ type mockStore struct {
 	dailyFeesFn         func(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error)
 	lastSyncedAtFn      func(ctx context.Context) (time.Time, error)
 	exchangeBalanceFn   func(ctx context.Context, source string) (int64, error)
+	exchangeSummaryFn   func(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
 }
 
 func (m *mockStore) FeeSummary(ctx context.Context, since time.Time) (int64, int64, error) {
@@ -64,6 +65,12 @@ func (m *mockStore) ExchangeBalance(ctx context.Context, source string) (int64, 
 		return m.exchangeBalanceFn(ctx, source)
 	}
 	return 0, nil
+}
+func (m *mockStore) ExchangeSummary(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error) {
+	if m.exchangeSummaryFn != nil {
+		return m.exchangeSummaryFn(ctx, source, since)
+	}
+	return &db.ExchangeSummaryResult{}, nil
 }
 
 type mockNodeInfo struct {
