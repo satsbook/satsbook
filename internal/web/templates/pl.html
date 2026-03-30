@@ -29,7 +29,7 @@
 </div>
 
 <!-- Exchange Activity Section -->
-<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Strike Activity <span style="font-size: 0.75em;">(from CSV import)</span></h2>
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Exchange Activity <span style="font-size: 0.75em;">(from CSV import)</span></h2>
 <div class="cards">
   <div class="card">
     <div class="card-label">BTC Purchased</div>
@@ -54,8 +54,14 @@
   </div>
 
   <div class="card">
-    <div class="card-label">Fees Paid (Strike)</div>
+    <div class="card-label">Fees Paid</div>
     <div class="card-value">{{formatUSD .FeesPaidUSD}}</div>
+    {{if or .StrikeFeesPaidUSD .RiverFeesPaidUSD}}
+    <div style="margin-top: 8px; font-size: 0.8em; color: #999;">
+      {{if .StrikeFeesPaidUSD}}<div>Strike: {{formatUSD .StrikeFeesPaidUSD}}</div>{{end}}
+      {{if .RiverFeesPaidUSD}}<div>River: {{formatUSD .RiverFeesPaidUSD}}</div>{{end}}
+    </div>
+    {{end}}
   </div>
 </div>
 

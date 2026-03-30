@@ -390,6 +390,8 @@ type PLPageData struct {
 	TotalCostBasisUSD    float64
 	TotalSaleProceedsUSD float64
 	FeesPaidUSD          float64
+	StrikeFeesPaidUSD    float64
+	RiverFeesPaidUSD     float64
 
 	// Net position
 	NetBTCSats int64
@@ -534,6 +536,12 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 			data.TotalSaleProceedsUSD += s.TotalSaleProceedsUSD
 			data.FeesPaidUSD += s.FeesPaidUSD
 		}
+	}
+	if res.strikeSummary != nil {
+		data.StrikeFeesPaidUSD = res.strikeSummary.FeesPaidUSD
+	}
+	if res.riverSummary != nil {
+		data.RiverFeesPaidUSD = res.riverSummary.FeesPaidUSD
 	}
 
 	// Net BTC = routing fees + purchased + received - sold - sent
