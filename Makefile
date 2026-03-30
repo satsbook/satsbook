@@ -1,4 +1,4 @@
-.PHONY: build build-lndcheck run run-binary run-local run-umbrel test clean
+.PHONY: build build-lndcheck run run-binary run-local run-umbrel test clean docker docker-multiarch
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard .env))
@@ -33,6 +33,14 @@ run-umbrel: build
 # Run tests
 test:
 	go test -v ./...
+
+# Build Docker image (local platform)
+docker:
+	docker build -t satsbook:latest .
+
+# Build multi-arch Docker image (amd64 + arm64 for Umbrel/Raspberry Pi)
+docker-multiarch:
+	docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/satsbook/satsbook:latest .
 
 # Clean build artifacts
 clean:
