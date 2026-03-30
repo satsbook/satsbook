@@ -1,11 +1,15 @@
 {{define "import_content"}}
 <h1 style="margin-bottom: 24px; font-size: 1.25rem;">Import Transactions</h1>
 
-<div class="card" style="max-width: 600px;">
+<div style="display: flex; gap: 16px; margin-bottom: 16px;">
+  <button class="filter-form" id="tab-strike" onclick="showTab('strike')" style="display: inline-block;">Strike</button>
+  <button class="filter-form" id="tab-river" onclick="showTab('river')" style="display: inline-block; opacity: 0.6;">River</button>
+</div>
+
+<div id="panel-strike" class="card" style="max-width: 600px;">
   <div class="card-label">Upload Strike CSV</div>
   <p class="card-sub" style="margin-bottom: 16px;">
-    Import your Strike transaction history. Supported format: Strike CSV export
-    (Transaction ID, Date, Type, Amount BTC, Amount USD, Fee USD, Status).
+    Import your Strike transaction history. Export from Strike app: Profile &gt; Account &gt; Transaction History &gt; Download CSV.
   </p>
 
   <form hx-post="/api/import/strike"
@@ -24,5 +28,36 @@
   </form>
 </div>
 
+<div id="panel-river" class="card" style="max-width: 600px; display: none;">
+  <div class="card-label">Upload River CSV</div>
+  <p class="card-sub" style="margin-bottom: 16px;">
+    Import your River Financial transaction history. Export from River app: Settings &gt; Account &gt; Download Activity.
+  </p>
+
+  <form hx-post="/api/import/river"
+        hx-target="#import-result"
+        hx-swap="innerHTML"
+        hx-encoding="multipart/form-data"
+        hx-indicator="#import-loading-river">
+    <div style="margin-bottom: 12px;">
+      <input type="file" name="file" accept=".csv" required
+             style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
+    </div>
+    <button type="submit" class="filter-form" style="display: inline-block;">
+      Upload
+    </button>
+    <span id="import-loading-river" class="htmx-indicator">Importing...</span>
+  </form>
+</div>
+
 <div id="import-result" style="margin-top: 20px;"></div>
+
+<script>
+function showTab(name) {
+  document.getElementById('panel-strike').style.display = name === 'strike' ? 'block' : 'none';
+  document.getElementById('panel-river').style.display = name === 'river' ? 'block' : 'none';
+  document.getElementById('tab-strike').style.opacity = name === 'strike' ? '1' : '0.6';
+  document.getElementById('tab-river').style.opacity = name === 'river' ? '1' : '0.6';
+}
+</script>
 {{end}}

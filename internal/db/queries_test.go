@@ -718,3 +718,186 @@ func TestExchangeSummary_DateFiltering(t *testing.T) {
 		t.Errorf("filtered cost basis: expected 150.00, got %f", filtered.TotalCostBasisUSD)
 	}
 }
+
+// --- River CSV import tests ---
+
+func testRiverRows() []exchange.RiverRow {
+	return []exchange.RiverRow{
+		{
+			Date:         time.Date(2024, 9, 26, 19, 59, 41, 0, time.UTC),
+			Type:         "buy",
+			AmountBTC:    0.00006093,
+			AmountSat:    6093,
+			AmountUSD:    3.96,
+			FeeUSD:       0.04,
+			CostBasisUSD: 3.96,
+			RawLine:      "2024-09-26 19:59:41,3.96,USD,0.00006093,BTC,0.04,USD,Buy",
+		},
+		{
+			Date:         time.Date(2024, 10, 3, 20, 0, 2, 0, time.UTC),
+			Type:         "buy",
+			AmountBTC:    0.00006536,
+			AmountSat:    6536,
+			AmountUSD:    4.00,
+			CostBasisUSD: 4.00,
+			RawLine:      "2024-10-03 20:00:02,4.00,USD,0.00006536,BTC,,,Buy",
+		},
+		{
+			Date:      time.Date(2024, 11, 27, 0, 36, 42, 0, time.UTC),
+			Type:      "send",
+			AmountBTC: -0.00482484,
+			AmountSat: -482484,
+			FeeBTC:    0.00000242,
+			RawLine:   "2024-11-27 00:36:42,0.00482484,BTC,,,0.00000242,BTC,",
+		},
+	}
+}
+
+func TestImportRiverCSV_Basic(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testRiverRows()
+	summary, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Total != 3 {
+		t.Errorf("expected total 3, got %d", summary.Total)
+	}
+	if summary.NewPurchases != 2 {
+		t.Errorf("expected 2 new purchases, got %d", summary.NewPurchases)
+	}
+	if summary.Duplicates != 0 {
+		t.Errorf("expected 0 duplicates, got %d", summary.Duplicates)
+	}
+
+	// Verify exchange_imports has 3 rows
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'river'").Scan(&count)
+	if count != 3 {
+		t.Errorf("expected 3 exchange_imports rows, got %d", count)
+	}
+
+	// Verify btc_lots has 2 rows (only purchases)
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'river'").Scan(&count)
+	if count != 2 {
+		t.Errorf("expected 2 btc_lots rows, got %d", count)
+	}
+}
+
+func TestImportRiverCSV_Dedup(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testRiverRows()
+
+	// First import
+	_, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import error: %v", err)
+	}
+
+	// Second import — all should be duplicates
+	summary, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import error: %v", err)
+	}
+	if summary.Duplicates != 3 {
+		t.Errorf("expected 3 duplicates, got %d", summary.Duplicates)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 new purchases, got %d", summary.NewPurchases)
+	}
+}
+
+func TestImportRiverCSV_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	summary, err := d.ImportRiverCSV(context.Background(), []exchange.RiverRow{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Total != 0 {
+		t.Errorf("expected total 0, got %d", summary.Total)
+	}
+}
+
+func TestImportRiverCSV_SendNoLot(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.RiverRow{
+		{
+			Date:      time.Date(2024, 11, 27, 0, 36, 42, 0, time.UTC),
+			Type:      "send",
+			AmountBTC: -0.00482484,
+			AmountSat: -482484,
+			RawLine:   "2024-11-27 00:36:42,0.00482484,BTC,,,,,Withdrawal",
+		},
+	}
+
+	summary, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 new purchases for send, got %d", summary.NewPurchases)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'river'").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 btc_lots for send, got %d", count)
+	}
+}
+
+func TestRiverExchangeBalance(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testRiverRows()
+	_, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	bal, err := d.ExchangeBalance(context.Background(), "river")
+	if err != nil {
+		t.Fatalf("balance error: %v", err)
+	}
+
+	// 6093 + 6536 - 482484 = -469855
+	expected := int64(-469855)
+	if bal != expected {
+		t.Errorf("expected balance %d sats, got %d", expected, bal)
+	}
+}
+
+func TestRiverExchangeSummary(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testRiverRows()
+	_, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	summary, err := d.ExchangeSummary(context.Background(), "river", time.Time{})
+	if err != nil {
+		t.Fatalf("summary error: %v", err)
+	}
+
+	if summary.PurchasedSats != 12629 {
+		t.Errorf("expected purchased 12629 sats, got %d", summary.PurchasedSats)
+	}
+	if summary.SentSats != 482484 {
+		t.Errorf("expected sent 482484 sats, got %d", summary.SentSats)
+	}
+	if summary.TotalCostBasisUSD != 7.96 {
+		t.Errorf("expected cost basis 7.96, got %f", summary.TotalCostBasisUSD)
+	}
+}

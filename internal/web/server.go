@@ -35,6 +35,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/forwarding", handler.HandleForwarding)
 	mux.HandleFunc("/api/node", handler.HandleNode)
 	mux.HandleFunc("/api/import/strike", handler.HandleStrikeImport)
+	mux.HandleFunc("/api/import/river", handler.HandleRiverImport)
 
 	return &Server{
 		httpServer: &http.Server{
