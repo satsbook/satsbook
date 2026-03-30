@@ -1,0 +1,7 @@
+.git
+.env
+*.db
+coverage.*
+bin/
+scripts/
+CLAUDE.MD

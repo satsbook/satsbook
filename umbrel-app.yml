@@ -1,0 +1,27 @@
+manifestVersion: 1
+id: satsbook
+category: bitcoin
+name: Satsbook
+version: "0.1.0"
+tagline: Bitcoin node analytics and accounting for Lightning operators
+description: >-
+  Track routing fees, manage cost basis from exchange imports, and view
+  profit & loss — all on your own hardware. Satsbook connects to your
+  LND node and provides a privacy-first dashboard with fee analytics,
+  Strike CSV import, and a basic P&L view. No cloud services required.
+developer: satsbook
+website: https://github.com/satsbook/satsbook
+repo: https://github.com/satsbook/satsbook
+support: https://github.com/satsbook/satsbook/issues
+dependencies:
+  - lightning
+port: 3000
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+releaseNotes: >-
+  Initial release. Fee analytics dashboard, Strike CSV import,
+  basic P&L view with period selectors.
+submitter: brewgator
+submission: ""
