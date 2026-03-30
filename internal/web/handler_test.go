@@ -97,11 +97,19 @@ func (m *mockPrice) FetchedAt() time.Time {
 
 type mockImportStore struct {
 	importStrikeFn func(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+	importRiverFn  func(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error)
 }
 
 func (m *mockImportStore) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
 	if m.importStrikeFn != nil {
 		return m.importStrikeFn(ctx, rows)
+	}
+	return &db.ImportSummary{}, nil
+}
+
+func (m *mockImportStore) ImportRiverCSV(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error) {
+	if m.importRiverFn != nil {
+		return m.importRiverFn(ctx, rows)
 	}
 	return &db.ImportSummary{}, nil
 }
