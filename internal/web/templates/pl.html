@@ -57,7 +57,7 @@
     <div class="card-label">Fees Paid</div>
     <div class="card-value">{{formatUSD .FeesPaidUSD}}</div>
     {{if or .StrikeFeesPaidUSD .RiverFeesPaidUSD}}
-    <div style="margin-top: 8px; font-size: 0.8em; color: #999;">
+    <div style="margin-top: 8px; font-size: 0.8em; color: var(--text-muted);">
       {{if .StrikeFeesPaidUSD}}<div>Strike: {{formatUSD .StrikeFeesPaidUSD}}</div>{{end}}
       {{if .RiverFeesPaidUSD}}<div>River: {{formatUSD .RiverFeesPaidUSD}}</div>{{end}}
     </div>
