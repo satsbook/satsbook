@@ -4,6 +4,7 @@
 <div style="display: flex; gap: 16px; margin-bottom: 16px;">
   <button class="filter-form" id="tab-strike" onclick="showTab('strike')" style="display: inline-block;">Strike</button>
   <button class="filter-form" id="tab-river" onclick="showTab('river')" style="display: inline-block; opacity: 0.6;">River</button>
+  <button class="filter-form" id="tab-coinbase" onclick="showTab('coinbase')" style="display: inline-block; opacity: 0.6;">Coinbase</button>
 </div>
 
 <div id="panel-strike" class="card" style="max-width: 600px;">
@@ -50,14 +51,38 @@
   </form>
 </div>
 
+<div id="panel-coinbase" class="card" style="max-width: 600px; display: none;">
+  <div class="card-label">Upload Coinbase CSV</div>
+  <p class="card-sub" style="margin-bottom: 16px;">
+    Import your Coinbase transaction history (BTC only). Export from Coinbase: Reports &gt; Generate Report &gt; Transaction History &gt; Download CSV.
+  </p>
+
+  <form hx-post="/api/import/coinbase"
+        hx-target="#import-result"
+        hx-swap="innerHTML"
+        hx-encoding="multipart/form-data"
+        hx-indicator="#import-loading-coinbase">
+    <div style="margin-bottom: 12px;">
+      <input type="file" name="file" accept=".csv" required
+             style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
+    </div>
+    <button type="submit" class="filter-form" style="display: inline-block;">
+      Upload
+    </button>
+    <span id="import-loading-coinbase" class="htmx-indicator">Importing...</span>
+  </form>
+</div>
+
 <div id="import-result" style="margin-top: 20px;"></div>
 
 <script>
 function showTab(name) {
   document.getElementById('panel-strike').style.display = name === 'strike' ? 'block' : 'none';
   document.getElementById('panel-river').style.display = name === 'river' ? 'block' : 'none';
+  document.getElementById('panel-coinbase').style.display = name === 'coinbase' ? 'block' : 'none';
   document.getElementById('tab-strike').style.opacity = name === 'strike' ? '1' : '0.6';
   document.getElementById('tab-river').style.opacity = name === 'river' ? '1' : '0.6';
+  document.getElementById('tab-coinbase').style.opacity = name === 'coinbase' ? '1' : '0.6';
 }
 </script>
 {{end}}

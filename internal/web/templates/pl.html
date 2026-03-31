@@ -56,10 +56,11 @@
   <div class="card">
     <div class="card-label">Fees Paid</div>
     <div class="card-value">{{formatUSD .FeesPaidUSD}}</div>
-    {{if or .StrikeFeesPaidUSD .RiverFeesPaidUSD}}
+    {{if or .StrikeFeesPaidUSD .RiverFeesPaidUSD .CoinbaseFeesPaidUSD}}
     <div style="margin-top: 8px; font-size: 0.8em; color: var(--text-muted);">
       {{if .StrikeFeesPaidUSD}}<div>Strike: {{formatUSD .StrikeFeesPaidUSD}}</div>{{end}}
       {{if .RiverFeesPaidUSD}}<div>River: {{formatUSD .RiverFeesPaidUSD}}</div>{{end}}
+      {{if .CoinbaseFeesPaidUSD}}<div>Coinbase: {{formatUSD .CoinbaseFeesPaidUSD}}</div>{{end}}
     </div>
     {{end}}
   </div>

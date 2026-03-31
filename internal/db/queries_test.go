@@ -901,3 +901,183 @@ func TestRiverExchangeSummary(t *testing.T) {
 		t.Errorf("expected cost basis 7.96, got %f", summary.TotalCostBasisUSD)
 	}
 }
+
+// --- Coinbase CSV DB tests ---
+
+func testCoinbaseRows() []exchange.CoinbaseRow {
+	return []exchange.CoinbaseRow{
+		{
+			Date:         time.Date(2023, 8, 1, 19, 50, 7, 0, time.UTC),
+			Type:         "buy",
+			AmountBTC:    0.001,
+			AmountSat:    100000,
+			AmountUSD:    29.24,
+			FeeUSD:       1.00,
+			CostBasisUSD: 30.24,
+			RawLine:      "abc123,2023-08-01 19:50:07 UTC,Buy,BTC,0.001,USD,$29244.04,$29.24,$30.24,$1.00,Bought BTC",
+		},
+		{
+			Date:         time.Date(2023, 8, 1, 19, 50, 7, 0, time.UTC),
+			Type:         "buy",
+			AmountBTC:    0.002,
+			AmountSat:    200000,
+			AmountUSD:    58.48,
+			FeeUSD:       2.00,
+			CostBasisUSD: 60.48,
+			RawLine:      "abc456,2023-08-01 19:50:07 UTC,Buy,BTC,0.002,USD,$29244.04,$58.48,$60.48,$2.00,Bought BTC",
+		},
+		{
+			Date:      time.Date(2023, 8, 1, 19, 50, 7, 0, time.UTC),
+			Type:      "send",
+			AmountBTC: -0.006132,
+			AmountSat: -613200,
+			RawLine:   "def789,2023-08-01 19:50:07 UTC,Send,BTC,-0.006132,USD,$29244.04,-$179.32,-$179.32,$0.00,Sent BTC",
+		},
+	}
+}
+
+func TestImportCoinbaseCSV_Basic(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testCoinbaseRows()
+	summary, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Total != 3 {
+		t.Errorf("expected total 3, got %d", summary.Total)
+	}
+	if summary.NewPurchases != 2 {
+		t.Errorf("expected 2 new purchases, got %d", summary.NewPurchases)
+	}
+	if summary.Duplicates != 0 {
+		t.Errorf("expected 0 duplicates, got %d", summary.Duplicates)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'coinbase'").Scan(&count)
+	if count != 3 {
+		t.Errorf("expected 3 exchange_imports rows, got %d", count)
+	}
+
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'coinbase'").Scan(&count)
+	if count != 2 {
+		t.Errorf("expected 2 btc_lots rows, got %d", count)
+	}
+}
+
+func TestImportCoinbaseCSV_Dedup(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testCoinbaseRows()
+	_, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import error: %v", err)
+	}
+
+	summary, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import error: %v", err)
+	}
+	if summary.Duplicates != 3 {
+		t.Errorf("expected 3 duplicates, got %d", summary.Duplicates)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 new purchases, got %d", summary.NewPurchases)
+	}
+}
+
+func TestImportCoinbaseCSV_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	summary, err := d.ImportCoinbaseCSV(context.Background(), []exchange.CoinbaseRow{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Total != 0 {
+		t.Errorf("expected total 0, got %d", summary.Total)
+	}
+}
+
+func TestImportCoinbaseCSV_SendNoLot(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.CoinbaseRow{
+		{
+			Date:      time.Date(2023, 8, 1, 19, 50, 7, 0, time.UTC),
+			Type:      "send",
+			AmountBTC: -0.006132,
+			AmountSat: -613200,
+			RawLine:   "def789,2023-08-01 19:50:07 UTC,Send,BTC,-0.006132,USD,$29244.04,-$179.32,-$179.32,$0.00,Sent BTC",
+		},
+	}
+
+	summary, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 new purchases for send, got %d", summary.NewPurchases)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'coinbase'").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 btc_lots for send, got %d", count)
+	}
+}
+
+func TestCoinbaseExchangeBalance(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testCoinbaseRows()
+	_, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	bal, err := d.ExchangeBalance(context.Background(), "coinbase")
+	if err != nil {
+		t.Fatalf("balance error: %v", err)
+	}
+
+	// 100000 + 200000 - 613200 = -313200
+	if bal != -313200 {
+		t.Errorf("expected balance -313200, got %d", bal)
+	}
+}
+
+func TestCoinbaseExchangeSummary(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testCoinbaseRows()
+	_, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	summary, err := d.ExchangeSummary(context.Background(), "coinbase", time.Time{})
+	if err != nil {
+		t.Fatalf("summary error: %v", err)
+	}
+
+	if summary.PurchasedSats != 300000 {
+		t.Errorf("expected purchased 300000 sats, got %d", summary.PurchasedSats)
+	}
+	if summary.SentSats != 613200 {
+		t.Errorf("expected sent 613200 sats, got %d", summary.SentSats)
+	}
+	if summary.TotalCostBasisUSD != 90.72 {
+		t.Errorf("expected cost basis 90.72, got %f", summary.TotalCostBasisUSD)
+	}
+	if summary.FeesPaidUSD != 3.00 {
+		t.Errorf("expected fees 3.00, got %f", summary.FeesPaidUSD)
+	}
+}

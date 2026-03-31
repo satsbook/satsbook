@@ -37,10 +37,12 @@ type DashboardData struct {
 	// Exchange balances
 	StrikeBalanceSats   int64
 	StrikeBalanceUSD    float64
-	RiverBalanceSats    int64
-	RiverBalanceUSD     float64
-	ExchangeBalanceSats int64
-	ExchangeBalanceUSD  float64
+	RiverBalanceSats      int64
+	RiverBalanceUSD       float64
+	CoinbaseBalanceSats   int64
+	CoinbaseBalanceUSD    float64
+	ExchangeBalanceSats   int64
+	ExchangeBalanceUSD    float64
 
 	// Price
 	BTCPriceUSD    float64
@@ -108,6 +110,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		priceFetched           time.Time
 		strikeBalance          int64
 		riverBalance           int64
+		coinbaseBalance        int64
 	}
 	var res result
 
@@ -231,6 +234,15 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
+	fetch(func() {
+		bal, err := h.store.ExchangeBalance(ctx, "coinbase")
+		if err == nil {
+			mu.Lock()
+			res.coinbaseBalance = bal
+			mu.Unlock()
+		}
+	})
+
 	wg.Wait()
 
 	// Assemble template data
@@ -259,7 +271,8 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data.StrikeBalanceSats = res.strikeBalance
 	data.RiverBalanceSats = res.riverBalance
-	data.ExchangeBalanceSats = res.strikeBalance + res.riverBalance
+	data.CoinbaseBalanceSats = res.coinbaseBalance
+	data.ExchangeBalanceSats = res.strikeBalance + res.riverBalance + res.coinbaseBalance
 
 	if res.btcPrice > 0 {
 		data.BTCPriceUSD = res.btcPrice
@@ -268,6 +281,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.WalletBalanceUSD = float64(data.WalletBalanceSats) / 100_000_000.0 * res.btcPrice
 		data.StrikeBalanceUSD = float64(res.strikeBalance) / 100_000_000.0 * res.btcPrice
 		data.RiverBalanceUSD = float64(res.riverBalance) / 100_000_000.0 * res.btcPrice
+		data.CoinbaseBalanceUSD = float64(res.coinbaseBalance) / 100_000_000.0 * res.btcPrice
 		data.ExchangeBalanceUSD = float64(data.ExchangeBalanceSats) / 100_000_000.0 * res.btcPrice
 	}
 
@@ -392,6 +406,7 @@ type PLPageData struct {
 	FeesPaidUSD          float64
 	StrikeFeesPaidUSD    float64
 	RiverFeesPaidUSD     float64
+	CoinbaseFeesPaidUSD  float64
 
 	// Net position
 	NetBTCSats int64
@@ -438,8 +453,9 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 		feesMsat       int64
 		routedCount    int64
 		strikeSummary  *db.ExchangeSummaryResult
-		riverSummary   *db.ExchangeSummaryResult
-		nodeInfo       *lnd.NodeInfo
+		riverSummary    *db.ExchangeSummaryResult
+		coinbaseSummary *db.ExchangeSummaryResult
+		nodeInfo        *lnd.NodeInfo
 		lastSynced     time.Time
 		btcPrice       float64
 		priceFetched   time.Time
@@ -478,6 +494,15 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			mu.Lock()
 			res.riverSummary = summary
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		summary, err := h.store.ExchangeSummary(ctx, "coinbase", since)
+		if err == nil {
+			mu.Lock()
+			res.coinbaseSummary = summary
 			mu.Unlock()
 		}
 	})
@@ -526,7 +551,7 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 	data.RoutedCount = res.routedCount
 
 	// Aggregate exchange summaries across all sources
-	for _, s := range []*db.ExchangeSummaryResult{res.strikeSummary, res.riverSummary} {
+	for _, s := range []*db.ExchangeSummaryResult{res.strikeSummary, res.riverSummary, res.coinbaseSummary} {
 		if s != nil {
 			data.PurchasedSats += s.PurchasedSats
 			data.ReceivedSats += s.ReceivedSats
@@ -542,6 +567,9 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if res.riverSummary != nil {
 		data.RiverFeesPaidUSD = res.riverSummary.FeesPaidUSD
+	}
+	if res.coinbaseSummary != nil {
+		data.CoinbaseFeesPaidUSD = res.coinbaseSummary.FeesPaidUSD
 	}
 
 	// Net BTC = routing fees + purchased + received - sold - sent
