@@ -96,8 +96,9 @@ func (m *mockPrice) FetchedAt() time.Time {
 }
 
 type mockImportStore struct {
-	importStrikeFn func(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
-	importRiverFn  func(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error)
+	importStrikeFn   func(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+	importRiverFn    func(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error)
+	importCoinbaseFn func(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error)
 }
 
 func (m *mockImportStore) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
@@ -110,6 +111,13 @@ func (m *mockImportStore) ImportStrikeCSV(ctx context.Context, rows []exchange.S
 func (m *mockImportStore) ImportRiverCSV(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error) {
 	if m.importRiverFn != nil {
 		return m.importRiverFn(ctx, rows)
+	}
+	return &db.ImportSummary{}, nil
+}
+
+func (m *mockImportStore) ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error) {
+	if m.importCoinbaseFn != nil {
+		return m.importCoinbaseFn(ctx, rows)
 	}
 	return &db.ImportSummary{}, nil
 }

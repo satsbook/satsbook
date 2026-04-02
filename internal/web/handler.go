@@ -41,6 +41,7 @@ type PriceProvider interface {
 type ImportStore interface {
 	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
 	ImportRiverCSV(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error)
+	ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error)
 }
 
 // Handler serves dashboard API and HTML endpoints.
@@ -472,6 +473,65 @@ func (h *Handler) HandleRiverImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// HTMX request — render partial
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := h.renderer.Render(w, "import_result", resp); err != nil {
+			h.logger.Printf("failed to render import result: %v", err)
+		}
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, resp)
+}
+
+// HandleCoinbaseImport serves POST /api/import/coinbase.
+func (h *Handler) HandleCoinbaseImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		h.logger.Printf("coinbase import: failed to parse multipart form: %v", err)
+		h.writeError(w, http.StatusBadRequest, "failed to parse upload: file may be too large (10MB max)")
+		return
+	}
+
+	file, fh, err := r.FormFile("file")
+	if err != nil {
+		h.logger.Printf("coinbase import: missing file field: %v", err)
+		h.writeError(w, http.StatusBadRequest, "missing 'file' field in upload")
+		return
+	}
+	defer file.Close()
+	h.logger.Printf("coinbase import: received file %q (%d bytes)", fh.Filename, fh.Size)
+
+	result, err := exchange.ParseCoinbaseCSV(file)
+	if err != nil {
+		h.logger.Printf("coinbase import: CSV parse error: %v", err)
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if len(result.Rows) == 0 {
+		h.writeError(w, http.StatusBadRequest, "CSV contains no BTC transactions")
+		return
+	}
+
+	summary, err := h.importStore.ImportCoinbaseCSV(r.Context(), result.Rows)
+	if err != nil {
+		h.logger.Printf("coinbase import failed: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
+		return
+	}
+
+	resp := importResponse{
+		Total:        summary.Total,
+		NewPurchases: summary.NewPurchases,
+		Duplicates:   summary.Duplicates,
+		ParseErrors:  result.Errors,
+	}
+
 	if r.Header.Get("HX-Request") == "true" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := h.renderer.Render(w, "import_result", resp); err != nil {
