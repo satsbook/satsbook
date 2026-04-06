@@ -1,4 +1,88 @@
 {{define "content"}}
+
+{{if .ShowOnboarding}}
+<!-- Onboarding checklist (no data yet) -->
+<div class="card" style="max-width: 720px; margin-bottom: 24px;">
+  <div class="card-label">Welcome to Satsbook</div>
+  <p class="card-sub" style="margin: 8px 0 16px;">
+    Track your full Bitcoin position — node income, exchange purchases, and net holdings — all in one place.
+  </p>
+  <ul style="list-style: none; padding: 0; margin: 0; line-height: 1.9;">
+    <li>
+      {{if .LNDConnected}}
+        <span style="color: var(--success, #4ade80);">●</span>
+        LND node connected{{if not .NodeSynced}} <span style="color: var(--text-muted);">(syncing…)</span>{{end}}
+      {{else}}
+        <span style="color: var(--text-muted);">○</span>
+        <span style="color: var(--text-muted);">LND node not connected — check your config</span>
+      {{end}}
+    </li>
+    <li>
+      <span style="color: var(--text-muted);">○</span>
+      <a href="/import" style="color: var(--accent, #f7931a);">Import your exchange history →</a>
+      <span style="color: var(--text-muted); font-size: 0.85em;"> (Strike, River, Coinbase)</span>
+    </li>
+    <li style="color: var(--text-muted); font-size: 0.9em;">
+      Routing fees will appear automatically as your node forwards payments.
+    </li>
+  </ul>
+</div>
+{{end}}
+
+{{if .ShowImportBanner}}
+<div class="card" style="max-width: 720px; margin-bottom: 16px; border-left: 3px solid var(--accent, #f7931a);">
+  <div style="font-size: 0.9em;">
+    <strong>Track your full position:</strong>
+    <a href="/import" style="color: var(--accent, #f7931a);">Import your exchange CSVs →</a>
+    to see node income alongside your BTC purchases.
+  </div>
+</div>
+{{end}}
+
+{{if .ShowLNDBanner}}
+<div class="card" style="max-width: 720px; margin-bottom: 16px; border-left: 3px solid var(--warn, #fbbf24);">
+  <div style="font-size: 0.9em;">
+    <strong>LND not connected:</strong> connect your Lightning node to track routing income alongside your exchange activity.
+  </div>
+</div>
+{{end}}
+
+{{if or .HasFeeHistory .HasExchangeImports}}
+<!-- Headline: Net BTC Position -->
+<div class="card" style="margin-bottom: 24px; padding: 24px;">
+  <div class="card-label">Net BTC Position</div>
+  <div style="font-size: 2.25rem; font-weight: 600; margin: 8px 0 4px;">
+    {{formatSats .TotalBTCSats}} <small style="font-size: 0.5em; color: var(--text-muted);">sats</small>
+  </div>
+  {{if .BTCPriceUSD}}<div style="font-size: 1.1rem; color: var(--text-muted);">{{formatUSD .TotalBTCUSD}}</div>{{end}}
+  <div style="margin-top: 12px; font-size: 0.85em; color: var(--text-muted); display: flex; gap: 16px; flex-wrap: wrap;">
+    <span>Routing fees: {{formatSats .FeesAllTimeSats}} sats</span>
+    {{if .StrikeBalanceSats}}<span>Strike: {{formatSats .StrikeBalanceSats}}</span>{{end}}
+    {{if .RiverBalanceSats}}<span>River: {{formatSats .RiverBalanceSats}}</span>{{end}}
+    {{if .CoinbaseBalanceSats}}<span>Coinbase: {{formatSats .CoinbaseBalanceSats}}</span>{{end}}
+  </div>
+</div>
+
+<!-- YTD strip -->
+<div class="cards" style="margin-bottom: 24px;">
+  <div class="card">
+    <div class="card-label">YTD Routing Fees</div>
+    <div class="card-value">{{formatSats .YTDRoutingFeesSats}} <small>sats</small></div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .YTDRoutingFeesUSD}}</div>{{end}}
+  </div>
+  <div class="card">
+    <div class="card-label">YTD Purchased</div>
+    <div class="card-value">{{formatSats .YTDPurchasedSats}} <small>sats</small></div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .YTDPurchasedUSD}}</div>{{end}}
+  </div>
+  <div class="card">
+    <div class="card-label">YTD Net Change</div>
+    <div class="card-value">{{formatSats .YTDNetChangeSats}} <small>sats</small></div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .YTDNetChangeUSD}}</div>{{end}}
+  </div>
+</div>
+{{end}}
+
 <!-- Summary Cards -->
 <div class="cards">
   <div class="card">
