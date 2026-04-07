@@ -17,8 +17,12 @@ import (
 	"github.com/satsbook/satsbook/internal/web"
 )
 
+// version is set at build time via -ldflags "-X main.version=<tag>".
+// Defaults to "dev" for local builds.
+var version = "dev"
+
 func main() {
-	fmt.Println("satsbook - Bitcoin node analytics and accounting")
+	fmt.Printf("satsbook %s - Bitcoin node analytics and accounting\n", version)
 
 	// Load configuration
 	cfg, err := config.Load()

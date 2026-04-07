@@ -1,0 +1,144 @@
+name: Release
+
+# Triggered by pushing a semver tag (e.g. v0.2.0). The full pipeline:
+#   1. Build & push multi-arch Docker image to ghcr.io
+#   2. Cross-compile linux/amd64 + linux/arm64 binaries
+#   3. Create a GitHub Release with auto-generated notes + binaries
+#   4. Update satsbook/umbrel-app-store with the new version
+#
+# Required secrets:
+#   GITHUB_TOKEN     — automatic, used for ghcr.io push and release creation
+#   UMBREL_STORE_PAT — fine-grained PAT with contents:write on
+#                      satsbook/umbrel-app-store, added as a repo secret
+#
+# Required one-time setup after the first push:
+#   - Make the ghcr.io/satsbook/satsbook package public in package settings.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # create releases
+  packages: write   # push to ghcr.io
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    name: Build, publish, release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so release notes can diff against previous tag
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Cross-compile release binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags "$LDFLAGS" -o dist/satsbook-linux-amd64 ./cmd/satsbook
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -ldflags "$LDFLAGS" -o dist/satsbook-linux-arm64 ./cmd/satsbook
+          ls -lh dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/satsbook-linux-amd64
+            dist/satsbook-linux-arm64
+
+      - name: Update Umbrel app store
+        env:
+          UMBREL_STORE_PAT: ${{ secrets.UMBREL_STORE_PAT }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${UMBREL_STORE_PAT}" ]; then
+            echo "::error::UMBREL_STORE_PAT secret is not set — skipping app store update"
+            exit 1
+          fi
+
+          git config --global user.name  "satsbook-release-bot"
+          git config --global user.email "release-bot@satsbook.invalid"
+
+          REPO_DIR="$(mktemp -d)"
+          git clone --depth 1 \
+            "https://x-access-token:${UMBREL_STORE_PAT}@github.com/satsbook/umbrel-app-store.git" \
+            "$REPO_DIR"
+
+          cd "$REPO_DIR"
+
+          APP_FILE="satsbook-satsbook/umbrel-app.yml"
+          COMPOSE_FILE="satsbook-satsbook/docker-compose.yml"
+
+          # Bump the `version:` line in umbrel-app.yml (anchored at line start).
+          sed -i -E "s|^version:.*|version: \"${VERSION}\"|" "$APP_FILE"
+
+          # Bump the image tag in docker-compose.yml.
+          sed -i -E \
+            "s|image: ghcr.io/satsbook/satsbook:[^[:space:]]+|image: ghcr.io/satsbook/satsbook:${VERSION}|" \
+            "$COMPOSE_FILE"
+
+          echo "--- updated $APP_FILE ---"
+          grep '^version:' "$APP_FILE"
+          echo "--- updated $COMPOSE_FILE ---"
+          grep 'image: ghcr.io/satsbook/satsbook:' "$COMPOSE_FILE"
+
+          if git diff --quiet; then
+            echo "No changes to umbrel-app-store — already at v${VERSION}?"
+            exit 0
+          fi
+
+          git add "$APP_FILE" "$COMPOSE_FILE"
+          git commit -m "chore: bump satsbook to v${VERSION}"
+          git push origin main
