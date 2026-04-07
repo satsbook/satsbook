@@ -48,6 +48,113 @@ func fullMockStore() *mockStore {
 				Total: 1,
 			}, nil
 		},
+		portfolioPositionFn: func(_ context.Context, since time.Time) (*db.PortfolioPositionResult, error) {
+			if since.IsZero() {
+				return &db.PortfolioPositionResult{
+					BySource: map[string]db.SourceBalance{
+						"strike": {Source: "strike", NetSats: 100000, PurchasedSats: 100000},
+					},
+					ExchangeNetSats: 100000,
+					PurchasedSats:   100000,
+					RoutingFeesSats: 6, // 6000 msat
+					RoutedCount:     3,
+				}, nil
+			}
+			return &db.PortfolioPositionResult{
+				BySource:        map[string]db.SourceBalance{},
+				ExchangeNetSats: 50000,
+				PurchasedSats:   50000,
+				RoutingFeesSats: 3,
+				RoutedCount:     2,
+			}, nil
+		},
+	}
+}
+
+func TestHandleDashboard_OnboardingFlags(t *testing.T) {
+	tests := []struct {
+		name                string
+		portfolio           *db.PortfolioPositionResult
+		nodeErr             error
+		wantOnboarding      bool
+		wantImportBanner    bool
+		wantLNDBanner       bool
+	}{
+		{
+			name: "empty state shows onboarding",
+			portfolio: &db.PortfolioPositionResult{
+				BySource: map[string]db.SourceBalance{},
+			},
+			wantOnboarding: true,
+		},
+		{
+			name: "fees only shows import banner",
+			portfolio: &db.PortfolioPositionResult{
+				BySource:        map[string]db.SourceBalance{},
+				RoutingFeesSats: 5000,
+			},
+			wantImportBanner: true,
+		},
+		{
+			name: "exchange only without LND shows LND banner",
+			portfolio: &db.PortfolioPositionResult{
+				BySource:        map[string]db.SourceBalance{"strike": {NetSats: 100000}},
+				ExchangeNetSats: 100000,
+			},
+			nodeErr:       errTest,
+			wantLNDBanner: true,
+		},
+		{
+			name: "everything connected — no banners",
+			portfolio: &db.PortfolioPositionResult{
+				BySource:        map[string]db.SourceBalance{"strike": {NetSats: 100000}},
+				ExchangeNetSats: 100000,
+				RoutingFeesSats: 5000,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &mockStore{
+				feeSummaryFn:    func(_ context.Context, _ time.Time) (int64, int64, error) { return 0, 0, nil },
+				activeChannelFn: func(_ context.Context) (int, error) { return 0, nil },
+				latestWalletFn:  func(_ context.Context) (*db.WalletBalanceSnapshot, error) { return nil, nil },
+				channelStatsFn:  func(_ context.Context) ([]db.ChannelStat, error) { return nil, nil },
+				forwardingEventsFn: func(_ context.Context, _, _ time.Time, _, _ int) (*db.ForwardingPage, error) {
+					return &db.ForwardingPage{}, nil
+				},
+				portfolioPositionFn: func(_ context.Context, _ time.Time) (*db.PortfolioPositionResult, error) {
+					return tc.portfolio, nil
+				},
+			}
+			node := &mockNodeInfo{info: &lnd.NodeInfo{Alias: "n"}, err: tc.nodeErr}
+			price := &mockPrice{price: 67000}
+			h := newTestHandler(store, node, price)
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			w := httptest.NewRecorder()
+			h.HandleDashboard(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			body := w.Body.String()
+
+			hasOnboarding := strings.Contains(body, "Welcome to Satsbook")
+			hasImportBanner := strings.Contains(body, "Track your full position")
+			hasLNDBanner := strings.Contains(body, "LND not connected:")
+
+			if hasOnboarding != tc.wantOnboarding {
+				t.Errorf("onboarding: got %v, want %v", hasOnboarding, tc.wantOnboarding)
+			}
+			if hasImportBanner != tc.wantImportBanner {
+				t.Errorf("import banner: got %v, want %v", hasImportBanner, tc.wantImportBanner)
+			}
+			if hasLNDBanner != tc.wantLNDBanner {
+				t.Errorf("LND banner: got %v, want %v", hasLNDBanner, tc.wantLNDBanner)
+			}
+		})
 	}
 }
 

@@ -535,6 +535,84 @@ func (d *DB) ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow)
 	return summary, nil
 }
 
+// SourceBalance holds per-source aggregated balances for the portfolio view.
+type SourceBalance struct {
+	Source        string
+	NetSats       int64 // signed: purchases + receives - sales - sends
+	PurchasedSats int64 // for "purchased in period" stats
+}
+
+// PortfolioPositionResult holds the aggregated portfolio position across all sources.
+type PortfolioPositionResult struct {
+	BySource        map[string]SourceBalance
+	ExchangeNetSats int64 // sum of NetSats across all sources
+	PurchasedSats   int64 // sum of PurchasedSats across all sources (for YTD purchased stat)
+	RoutingFeesSats int64 // routing fees from forwarding_events in the period
+	RoutedCount     int64 // number of routed payments in the period
+}
+
+// PortfolioPosition aggregates exchange balances per source and routing fees in a single
+// pair of queries. Pass zero time for all-time stats.
+//
+// This collapses what was previously 3 ExchangeBalance + 1 FeeSummary calls into 2 round-trips.
+func (d *DB) PortfolioPosition(ctx context.Context, since time.Time) (*PortfolioPositionResult, error) {
+	result := &PortfolioPositionResult{
+		BySource: make(map[string]SourceBalance),
+	}
+
+	// Query 1: aggregate exchange_imports by source.
+	exchArgs := []interface{}{}
+	dateFilter := ""
+	if !since.IsZero() {
+		dateFilter = `WHERE json_extract(raw_data, '$.Date') >= ?`
+		exchArgs = append(exchArgs, since.UTC().Format(time.RFC3339))
+	}
+
+	exchQuery := `
+		SELECT source,
+			COALESCE(SUM(CASE WHEN COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0
+				THEN json_extract(raw_data, '$.AmountBTC') ELSE 0 END), 0) AS net_btc,
+			COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) IN ('purchase', 'buy')
+				THEN json_extract(raw_data, '$.AmountBTC') ELSE 0 END), 0) AS purchased_btc
+		FROM exchange_imports ` + dateFilter + `
+		GROUP BY source`
+
+	rows, err := d.db.QueryContext(ctx, exchQuery, exchArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("portfolio position exchanges: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var source string
+		var netBTC, purchasedBTC float64
+		if err := rows.Scan(&source, &netBTC, &purchasedBTC); err != nil {
+			return nil, fmt.Errorf("scan portfolio source: %w", err)
+		}
+		sb := SourceBalance{
+			Source:        source,
+			NetSats:       int64(math.Round(netBTC * 1e8)),
+			PurchasedSats: int64(math.Round(purchasedBTC * 1e8)),
+		}
+		result.BySource[source] = sb
+		result.ExchangeNetSats += sb.NetSats
+		result.PurchasedSats += sb.PurchasedSats
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("portfolio position rows: %w", err)
+	}
+
+	// Query 2: routing fees from forwarding_events.
+	feeMsat, routedCount, err := d.FeeSummary(ctx, since)
+	if err != nil {
+		return nil, fmt.Errorf("portfolio position fees: %w", err)
+	}
+	result.RoutingFeesSats = feeMsat / 1000
+	result.RoutedCount = routedCount
+
+	return result, nil
+}
+
 // ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
 // by summing AmountBTC only from rows that actually move BTC (non-zero AmountBTC).
 // USD-only transactions (e.g. cash withdrawals) are excluded.

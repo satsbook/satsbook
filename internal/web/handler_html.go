@@ -44,6 +44,26 @@ type DashboardData struct {
 	ExchangeBalanceSats   int64
 	ExchangeBalanceUSD    float64
 
+	// Headline net BTC position (all-time: routing fees + exchange holdings)
+	TotalBTCSats int64
+	TotalBTCUSD  float64
+
+	// YTD section
+	YTDRoutingFeesSats int64
+	YTDRoutingFeesUSD  float64
+	YTDPurchasedSats   int64
+	YTDPurchasedUSD    float64
+	YTDNetChangeSats   int64
+	YTDNetChangeUSD    float64
+
+	// Onboarding state flags
+	LNDConnected       bool
+	HasFeeHistory      bool
+	HasExchangeImports bool
+	ShowOnboarding     bool // !HasFeeHistory && !HasExchangeImports
+	ShowImportBanner   bool // HasFeeHistory && !HasExchangeImports
+	ShowLNDBanner      bool // HasExchangeImports && !LNDConnected
+
 	// Price
 	BTCPriceUSD    float64
 	PriceFetchedAt time.Time
@@ -86,6 +106,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	since30d := now.AddDate(0, 0, -30)
 	since7d := now.AddDate(0, 0, -7)
+	sinceYTD := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 
 	data := DashboardData{
 		DefaultFrom: since30d.Format("2006-01-02"),
@@ -97,20 +118,18 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 
 	type result struct {
-		feesAll, routedAll     int64
-		fees30d, routed30d     int64
-		fees7d, routed7d       int64
-		activeChannels         int
-		balance                *db.WalletBalanceSnapshot
-		channels               []db.ChannelStat
-		dailyFees              []db.DailyFeeStat
-		nodeInfo               *lnd.NodeInfo
-		lastSynced             time.Time
-		btcPrice               float64
-		priceFetched           time.Time
-		strikeBalance          int64
-		riverBalance           int64
-		coinbaseBalance        int64
+		fees30d, routed30d int64
+		fees7d, routed7d   int64
+		activeChannels     int
+		balance            *db.WalletBalanceSnapshot
+		channels           []db.ChannelStat
+		dailyFees          []db.DailyFeeStat
+		nodeInfo           *lnd.NodeInfo
+		lastSynced         time.Time
+		btcPrice           float64
+		priceFetched       time.Time
+		portfolioAll       *db.PortfolioPositionResult
+		portfolioYTD       *db.PortfolioPositionResult
 	}
 	var res result
 
@@ -123,11 +142,21 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fetch(func() {
-		feesAll, routedAll, err := h.store.FeeSummary(ctx, time.Time{})
+		// PortfolioPosition replaces the previous all-time FeeSummary + 3x ExchangeBalance
+		// calls with one query for exchange totals + one for routing fees.
+		p, err := h.store.PortfolioPosition(ctx, time.Time{})
 		if err == nil {
 			mu.Lock()
-			res.feesAll = feesAll
-			res.routedAll = routedAll
+			res.portfolioAll = p
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		p, err := h.store.PortfolioPosition(ctx, sinceYTD)
+		if err == nil {
+			mu.Lock()
+			res.portfolioYTD = p
 			mu.Unlock()
 		}
 	})
@@ -216,33 +245,6 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
-	fetch(func() {
-		bal, err := h.store.ExchangeBalance(ctx, "strike")
-		if err == nil {
-			mu.Lock()
-			res.strikeBalance = bal
-			mu.Unlock()
-		}
-	})
-
-	fetch(func() {
-		bal, err := h.store.ExchangeBalance(ctx, "river")
-		if err == nil {
-			mu.Lock()
-			res.riverBalance = bal
-			mu.Unlock()
-		}
-	})
-
-	fetch(func() {
-		bal, err := h.store.ExchangeBalance(ctx, "coinbase")
-		if err == nil {
-			mu.Lock()
-			res.coinbaseBalance = bal
-			mu.Unlock()
-		}
-	})
-
 	wg.Wait()
 
 	// Assemble template data
@@ -254,10 +256,20 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.LNDVersion = res.nodeInfo.Version
 	}
 
-	data.FeesAllTimeSats = res.feesAll / 1000
+	// All-time fees + per-source balances come from PortfolioPosition.
+	if res.portfolioAll != nil {
+		data.FeesAllTimeSats = res.portfolioAll.RoutingFeesSats
+		data.RoutedAllTime = res.portfolioAll.RoutedCount
+		data.StrikeBalanceSats = res.portfolioAll.BySource["strike"].NetSats
+		data.RiverBalanceSats = res.portfolioAll.BySource["river"].NetSats
+		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
+		data.ExchangeBalanceSats = res.portfolioAll.ExchangeNetSats
+		// Headline: routing fees + net exchange holdings
+		data.TotalBTCSats = res.portfolioAll.RoutingFeesSats + res.portfolioAll.ExchangeNetSats
+	}
+
 	data.Fees30dSats = res.fees30d / 1000
 	data.Fees7dSats = res.fees7d / 1000
-	data.RoutedAllTime = res.routedAll
 	data.Routed30d = res.routed30d
 	data.Routed7d = res.routed7d
 	data.ActiveChannels = res.activeChannels
@@ -269,20 +281,35 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.WalletBalanceSats = res.balance.TotalSat
 	}
 
-	data.StrikeBalanceSats = res.strikeBalance
-	data.RiverBalanceSats = res.riverBalance
-	data.CoinbaseBalanceSats = res.coinbaseBalance
-	data.ExchangeBalanceSats = res.strikeBalance + res.riverBalance + res.coinbaseBalance
+	// YTD section
+	if res.portfolioYTD != nil {
+		data.YTDRoutingFeesSats = res.portfolioYTD.RoutingFeesSats
+		data.YTDPurchasedSats = res.portfolioYTD.PurchasedSats
+		data.YTDNetChangeSats = res.portfolioYTD.RoutingFeesSats + res.portfolioYTD.ExchangeNetSats
+	}
+
+	// Onboarding flags
+	data.LNDConnected = res.nodeInfo != nil
+	data.HasFeeHistory = data.FeesAllTimeSats > 0
+	data.HasExchangeImports = data.ExchangeBalanceSats != 0 ||
+		data.StrikeBalanceSats != 0 || data.RiverBalanceSats != 0 || data.CoinbaseBalanceSats != 0
+	data.ShowOnboarding = !data.HasFeeHistory && !data.HasExchangeImports
+	data.ShowImportBanner = data.HasFeeHistory && !data.HasExchangeImports
+	data.ShowLNDBanner = data.HasExchangeImports && !data.LNDConnected
 
 	if res.btcPrice > 0 {
 		data.BTCPriceUSD = res.btcPrice
 		data.PriceFetchedAt = res.priceFetched
-		data.FeesAllTimeUSD = msatToUSD(res.feesAll, res.btcPrice)
-		data.WalletBalanceUSD = float64(data.WalletBalanceSats) / 100_000_000.0 * res.btcPrice
-		data.StrikeBalanceUSD = float64(res.strikeBalance) / 100_000_000.0 * res.btcPrice
-		data.RiverBalanceUSD = float64(res.riverBalance) / 100_000_000.0 * res.btcPrice
-		data.CoinbaseBalanceUSD = float64(res.coinbaseBalance) / 100_000_000.0 * res.btcPrice
-		data.ExchangeBalanceUSD = float64(data.ExchangeBalanceSats) / 100_000_000.0 * res.btcPrice
+		data.FeesAllTimeUSD = satsToUSD(data.FeesAllTimeSats, res.btcPrice)
+		data.WalletBalanceUSD = satsToUSD(data.WalletBalanceSats, res.btcPrice)
+		data.StrikeBalanceUSD = satsToUSD(data.StrikeBalanceSats, res.btcPrice)
+		data.RiverBalanceUSD = satsToUSD(data.RiverBalanceSats, res.btcPrice)
+		data.CoinbaseBalanceUSD = satsToUSD(data.CoinbaseBalanceSats, res.btcPrice)
+		data.ExchangeBalanceUSD = satsToUSD(data.ExchangeBalanceSats, res.btcPrice)
+		data.TotalBTCUSD = satsToUSD(data.TotalBTCSats, res.btcPrice)
+		data.YTDRoutingFeesUSD = satsToUSD(data.YTDRoutingFeesSats, res.btcPrice)
+		data.YTDPurchasedUSD = satsToUSD(data.YTDPurchasedSats, res.btcPrice)
+		data.YTDNetChangeUSD = satsToUSD(data.YTDNetChangeSats, res.btcPrice)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

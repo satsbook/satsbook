@@ -1081,3 +1081,141 @@ func TestCoinbaseExchangeSummary(t *testing.T) {
 		t.Errorf("expected fees 3.00, got %f", summary.FeesPaidUSD)
 	}
 }
+
+func TestPortfolioPosition_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	result, err := d.PortfolioPosition(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExchangeNetSats != 0 || result.RoutingFeesSats != 0 || result.PurchasedSats != 0 {
+		t.Errorf("expected all zeros for empty DB, got %+v", result)
+	}
+	if len(result.BySource) != 0 {
+		t.Errorf("expected empty BySource, got %d entries", len(result.BySource))
+	}
+}
+
+func TestPortfolioPosition_AggregatesAcrossSources(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+
+	// Strike: +0.001 BTC purchase
+	_, err := d.ImportStrikeCSV(context.Background(), []exchange.StrikeRow{
+		{TransactionID: "s1", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67, CostBasisUSD: 67, RawLine: "s1,Purchase,0.001,67"},
+	})
+	if err != nil {
+		t.Fatalf("strike import: %v", err)
+	}
+
+	// River: +0.002 BTC buy
+	_, err = d.ImportRiverCSV(context.Background(), []exchange.RiverRow{
+		{Date: now, Type: "buy", AmountSat: 200000, AmountBTC: 0.002, AmountUSD: 134, CostBasisUSD: 134, RawLine: "r1,buy,0.002,134"},
+	})
+	if err != nil {
+		t.Fatalf("river import: %v", err)
+	}
+
+	// Coinbase: +0.003 buy and -0.0005 sale
+	_, err = d.ImportCoinbaseCSV(context.Background(), []exchange.CoinbaseRow{
+		{Date: now, Type: "buy", AmountSat: 300000, AmountBTC: 0.003, AmountUSD: 200, CostBasisUSD: 200, RawLine: "c1,buy,0.003,200"},
+		{Date: now, Type: "sale", AmountSat: -50000, AmountBTC: -0.0005, AmountUSD: 35, RawLine: "c2,sale,-0.0005,35"},
+	})
+	if err != nil {
+		t.Fatalf("coinbase import: %v", err)
+	}
+
+	// Routing fees: 5_000_000 msat = 5000 sats
+	seedForwardingEvents(t, d, []ForwardingEvent{
+		{Timestamp: now.Add(-1 * time.Hour), ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 1000000, AmtOutMsat: 995000, FeeMsat: 5_000_000},
+	})
+
+	result, err := d.PortfolioPosition(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Strike: 100000, River: 200000, Coinbase: 300000 - 50000 = 250000
+	// Net exchange: 550000 sats
+	if result.ExchangeNetSats != 550000 {
+		t.Errorf("expected ExchangeNetSats 550000, got %d", result.ExchangeNetSats)
+	}
+	if result.BySource["strike"].NetSats != 100000 {
+		t.Errorf("expected strike net 100000, got %d", result.BySource["strike"].NetSats)
+	}
+	if result.BySource["river"].NetSats != 200000 {
+		t.Errorf("expected river net 200000, got %d", result.BySource["river"].NetSats)
+	}
+	if result.BySource["coinbase"].NetSats != 250000 {
+		t.Errorf("expected coinbase net 250000, got %d", result.BySource["coinbase"].NetSats)
+	}
+
+	// Purchased: strike 100k + river 200k + coinbase 300k = 600k
+	if result.PurchasedSats != 600000 {
+		t.Errorf("expected purchased 600000, got %d", result.PurchasedSats)
+	}
+
+	// Routing fees: 5_000_000 msat → 5000 sats
+	if result.RoutingFeesSats != 5000 {
+		t.Errorf("expected routing fees 5000 sats, got %d", result.RoutingFeesSats)
+	}
+	if result.RoutedCount != 1 {
+		t.Errorf("expected routed count 1, got %d", result.RoutedCount)
+	}
+}
+
+func TestPortfolioPosition_SinceFiltering(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	old := now.Add(-365 * 24 * time.Hour)
+	recent := now.Add(-1 * time.Hour)
+
+	// Old purchase + recent purchase
+	_, err := d.ImportStrikeCSV(context.Background(), []exchange.StrikeRow{
+		{TransactionID: "old", Date: old, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 50, CostBasisUSD: 50, RawLine: "old,Purchase,0.001,50"},
+		{TransactionID: "new", Date: recent, Type: "Purchase", AmountSat: 200000, AmountBTC: 0.002, AmountUSD: 130, CostBasisUSD: 130, RawLine: "new,Purchase,0.002,130"},
+	})
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	// Old fee + recent fee
+	seedForwardingEvents(t, d, []ForwardingEvent{
+		{Timestamp: old, ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 1000, AmtOutMsat: 900, FeeMsat: 100_000},
+		{Timestamp: recent, ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 1000, AmtOutMsat: 900, FeeMsat: 200_000},
+	})
+
+	// All time
+	all, err := d.PortfolioPosition(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("all-time err: %v", err)
+	}
+	if all.ExchangeNetSats != 300000 {
+		t.Errorf("all-time exchange: expected 300000, got %d", all.ExchangeNetSats)
+	}
+	if all.RoutingFeesSats != 300 {
+		t.Errorf("all-time fees: expected 300 sats, got %d", all.RoutingFeesSats)
+	}
+
+	// Last 24h only
+	since := now.Add(-24 * time.Hour)
+	recentOnly, err := d.PortfolioPosition(context.Background(), since)
+	if err != nil {
+		t.Fatalf("since err: %v", err)
+	}
+	if recentOnly.ExchangeNetSats != 200000 {
+		t.Errorf("recent exchange: expected 200000, got %d", recentOnly.ExchangeNetSats)
+	}
+	if recentOnly.RoutingFeesSats != 200 {
+		t.Errorf("recent fees: expected 200 sats, got %d", recentOnly.RoutingFeesSats)
+	}
+	if recentOnly.PurchasedSats != 200000 {
+		t.Errorf("recent purchased: expected 200000, got %d", recentOnly.PurchasedSats)
+	}
+}

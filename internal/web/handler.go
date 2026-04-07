@@ -24,6 +24,7 @@ type DashboardStore interface {
 	LastSyncedAt(ctx context.Context) (time.Time, error)
 	ExchangeBalance(ctx context.Context, source string) (int64, error)
 	ExchangeSummary(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
+	PortfolioPosition(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
 }
 
 // NodeInfoProvider fetches node info from LND.
@@ -353,6 +354,10 @@ func msatToSat(msat int64) int64 {
 
 func msatToUSD(msat int64, btcPrice float64) float64 {
 	return (float64(msat) / 100_000_000_000.0) * btcPrice
+}
+
+func satsToUSD(sats int64, btcPrice float64) float64 {
+	return float64(sats) / 100_000_000.0 * btcPrice
 }
 
 // HandleStrikeImport serves POST /api/import/strike.
