@@ -1,165 +1,147 @@
-# satsbook
+# Satsbook
 
-**Bitcoin node analytics and accounting tool for sovereign Lightning operators.**
+**A general ledger for your Lightning node.**
 
-Track routing fees, manage cost basis, and generate tax reports—all on your own hardware.
+Satsbook turns your self-hosted Bitcoin node into a tiny business you can actually account for: routing income, exchange purchases, cost basis, and a unified net position — all running on your own hardware, no cloud, no data leaving your node.
 
 <img width="512" alt="Satsbook" src="https://github.com/user-attachments/assets/a3af6c3a-58d0-4ab7-9bf1-d37c5f805a74" />
 
-## What is Satsbook?
+---
 
-Satsbook is a privacy-first Lightning node analytics and accounting application designed for operators running Bitcoin infrastructure on their own hardware. It provides real-time insights into routing fees, cost basis tracking for tax purposes, and reporting tools—without requiring cloud services or compromising node privacy.
+## Why Satsbook exists
 
-### Key Features
+If you run your own Lightning node, you already know the gap:
 
-- **Fee Analytics**: Real-time monitoring of routing income and channel statistics
-- **Cost Basis Tracking**: Automated import from Strike and other exchanges
-- **Tax Reports**: Generate year-end reports for tax filing (Pro features)
-- **Privacy-First**: Runs entirely on your hardware, no cloud dependencies
-- **Self-Hosted**: Deploy to Umbrel or run standalone
-- **No CGO**: Pure Go with ARM64 support for Raspberry Pi
+- **ThunderHub / RTL** show you routing events, but not *what you earned this year*.
+- **Koinly / CoinLedger** do crypto taxes, but don't know Lightning exists.
+- **Amboss** targets professional routing operators, not home-lab sovereigns.
+- **Your brokerage's CSV** tells you half the story. Your node tells you the other half. Nothing stitches them together.
 
-## Quick Start
+Satsbook is the missing piece for prosumer Bitcoin operators who take custody seriously and still want to know what their stack is actually doing financially.
 
-### Requirements
+## What you get (free tier)
 
-- **Go 1.23+** (or use the pre-built binary)
-- **LND 0.17+** running locally or on your network
-- **SQLite** (bundled—no external database needed)
+- **Net BTC position** across your LND wallet, Strike, River, and Coinbase — one number, one glance
+- **Routing fee income** — 7d / 30d / YTD / all-time with per-channel breakdown
+- **CSV imports** for Strike, River, and Coinbase (BTC transactions only, de-duped by content hash)
+- **Basic P&L** — purchased vs. received vs. sold, YTD cost basis
+- **Runs entirely on your node** — no accounts, no telemetry, no outbound calls except a single CoinGecko price lookup
+- **One binary, ~27 MB, ARM64 + amd64** — works on a Raspberry Pi
 
-### Installation
+Coming in Pro ($9/mo) and Power ($19/mo) tiers: FIFO/LIFO cost basis, Form 8949 export, on-chain cost basis, Monarch/YNAB sync, Telegram alerts, multi-node. See [pricing](#pricing) below.
 
-#### On Umbrel
-_Satsbook is in development. Umbrel app store support coming in Phase 3._
+## Install
 
-#### Manual Setup
+### On Umbrel (recommended)
+
+```
+Umbrel → App Store → Community App Stores → Add Store
+https://github.com/satsbook/umbrel-app-store
+```
+
+Then install **Satsbook** from the Community tab. It'll auto-detect your Lightning node and start ingesting routing events on the next sync cycle.
+
+### Docker
 
 ```bash
-# Clone the repository
+docker run -d \
+  --name satsbook \
+  -p 3000:3000 \
+  -v satsbook-data:/data \
+  -e LND_IP=<your-lnd-host> \
+  -e LND_GRPC_PORT=10009 \
+  -e LND_MACAROON_PATH=/lnd/readonly.macaroon \
+  -e LND_TLS_CERT_PATH=/lnd/tls.cert \
+  -v /path/to/lnd:/lnd:ro \
+  ghcr.io/satsbook/satsbook:latest
+```
+
+### From source
+
+```bash
 git clone https://github.com/satsbook/satsbook.git
 cd satsbook
-
-# Build the binary
+cp .env.example .env   # fill in LND paths
 make build
-
-# Run the application
 make run
 ```
 
-The application will start on `http://localhost:8080` by default.
+Open http://localhost:3000.
 
-### Configuration
+A **read-only** LND macaroon is sufficient — Satsbook never signs, sends, or modifies anything on your node.
 
-Satsbook uses environment variables for configuration:
+## Screenshots
 
-```bash
-# LND Connection (required)
-LND_IP=localhost
-LND_GRPC_PORT=10009
-LND_MACAROON_PATH=/path/to/admin.macaroon
-LND_TLS_CERT_PATH=/path/to/tls.cert
+_Add once v1.0 ships — dashboard headline, YTD strip, onboarding flow, P&L page, import page with danger zone._
 
-# Application Server
-SATSBOOK_LISTEN_ADDR=:8080
-SATSBOOK_DATA_DIR=./data
-```
+## Pricing
 
-See `.env.example` for all available options.
+| | Free | Pro ($9/mo) | Power ($19/mo) |
+|---|---|---|---|
+| Routing fee dashboard | ✓ | ✓ | ✓ |
+| Exchange CSV imports (Strike, River, Coinbase) | ✓ | ✓ | ✓ |
+| Net BTC position | ✓ | ✓ | ✓ |
+| Basic P&L | ✓ | ✓ | ✓ |
+| Full history export | — | ✓ | ✓ |
+| FIFO / LIFO cost basis | — | ✓ | ✓ |
+| Form 8949 tax export | — | ✓ | ✓ |
+| On-chain cost basis | — | ✓ | ✓ |
+| Monarch / YNAB sync | — | — | ✓ |
+| Telegram alerts | — | — | ✓ |
+| Multi-node support | — | — | ✓ |
+| Lightning-native checkout | — | — | ✓ |
 
-## Development
+Pro/Power tiers are under development. The free tier is genuinely useful on its own — it's not a demo.
 
-### Project Structure
+## Architecture
+
+- **One Go binary**, no CGO, ~27 MB — cross-compiles cleanly to `linux/arm64` for Raspberry Pi
+- **SQLite** via `modernc.org/sqlite` (pure Go) — no external database
+- **HTMX** frontend — server-rendered HTML with embedded templates, no JS framework
+- **Embedded assets** (`embed.FS`) — everything ships in the binary
+- **Incremental syncs** via a `sync_state` cursor — never re-fetches data from LND
+- **Read-only LND access** — the macaroon scope is always read-only
 
 ```
 cmd/
-  satsbook/          # Main application entry point
-  lndcheck/          # LND connection diagnostics tool
+  satsbook/          # main binary
+  lndcheck/          # LND connectivity smoke test
 internal/
-  lnd/               # LND gRPC client wrapper
-  db/                # SQLite database layer
-  config/            # Configuration management
-  exchange/          # CSV parsers (Strike, River, Swan)
-  tax/               # Cost basis and taxable event logic
-  web/               # HTTP handlers and templates
+  lnd/               # LND gRPC client
+  db/                # SQLite + queries
+  exchange/          # Strike / River / Coinbase CSV parsers
+  syncer/            # Background LND polling
+  tax/               # Cost basis (Pro)
+  web/               # HTTP handlers + HTMX templates
+  config/            # Env-var config
+  price/             # BTC price fetch + cache
 ```
 
-### Building & Testing
+## Development
 
 ```bash
-# Build the binary
-make build
-
-# Run tests
-make test
-
-# Clean build artifacts
-make clean
+make build           # build binary
+make test            # run all tests
+make run             # run with .env file
+go vet ./...         # lint
 ```
 
-### Running
+Full development guide in [CLAUDE.md](./CLAUDE.md). Branch workflow: never push to main, open a PR, conventional commits, rebase before merge.
 
-```bash
-# Run via go run (development, any shell)
-make run
+## Feedback and roadmap
 
-# Run the built binary (any shell, Make exports .env vars)
-make run-binary
+- **Bugs and feature requests**: [GitHub Issues](https://github.com/satsbook/satsbook/issues)
+- **Discussion**: [GitHub Discussions](https://github.com/satsbook/satsbook/discussions)
+- **Roadmap / project board**: https://github.com/orgs/satsbook/projects/1
 
-# Run the built binary via bash (works from fish/zsh/bash)
-make run-local
-
-# Run on Umbrel (no .env file, Umbrel injects env vars)
-make run-umbrel
-```
-
-### Smoke Test (requires LND node)
-
-Run the smoke test against a real LND node to verify the full data pipeline.
-The script must be run from the repo root:
-
-```bash
-# With a .env file configured (see .env.example)
-./scripts/smoke-test.sh
-
-# Or pass connection details directly
-./scripts/smoke-test.sh \
-  --macaroon ~/.lnd/data/chain/bitcoin/mainnet/readonly.macaroon \
-  --tls-cert ~/.lnd/tls.cert
-
-# With a prebuilt binary (no Go toolchain needed on the server)
-GOOS=linux GOARCH=amd64 go build -o satsbook ./cmd/satsbook
-scp satsbook scripts/smoke-test.sh yourserver:~/project/
-ssh yourserver 'cd ~/project && ./scripts/smoke-test.sh --binary ./satsbook'
-```
-
-Run `./scripts/smoke-test.sh --help` for all options.
-
-## Architecture Highlights
-
-- **Single Binary**: Compiled Go binary with no runtime dependencies
-- **No CGO**: Uses `modernc.org/sqlite` for cross-platform ARM64 support
-- **Embedded Assets**: All UI and templates bundled in the binary
-- **Incremental Syncs**: Uses `sync_state` table to track processed data
-- **Clean Architecture**: Clear separation between LND integration, database, and web layers
-
-## Contributing
-
-This project is under active development. To contribute:
-
-1. Check the [GitHub project board](https://github.com/orgs/satsbook/projects/1)
-2. Review open issues and discuss before starting work
-3. Ensure tests pass: `make test`
-4. Commit with conventional commits: `feat:`, `fix:`, `refactor:`, etc.
-
-## Support
-
-- **Bug Reports**: [GitHub Issues](https://github.com/satsbook/satsbook/issues)
-- **LND Setup Help**: Check the [lightning-node-tools](https://github.com/satsbook/lightning-node-tools) repository
+If you run a Lightning node and Satsbook doesn't match your mental model of your stack, tell me — that feedback is the whole point of the free tier.
 
 ## License
 
-**Core features** (Phase 0-1): [MIT License](./LICENSE) — free and open-source
+**Core (this repo)**: [MIT](./LICENSE). Fork it, self-host it, audit it, ship your own build.
 
-**Pro features** (Phase 2+): Proprietary — tax export, advanced imports, and monetized features are closed-source
+**Pro / Power features** (Phase 2+): proprietary. The tax engine and cloud sync are not open-source, but the free tier always will be.
 
-This dual-licensing model allows us to keep the foundation open while supporting development of premium features.
+---
+
+**Built by [BrewGator](https://github.com/brewgator) as a side project for sovereign Bitcoiners who want to know what their node is actually earning. Not financial or tax advice.**
