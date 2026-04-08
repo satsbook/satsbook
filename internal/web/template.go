@@ -31,6 +31,20 @@ func NewRenderer() *Renderer {
 		"add":         func(a, b int) int { return a + b },
 		"add64":       func(a, b int64) int64 { return a + b },
 		"seq":         seq,
+		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
+			if len(kv)%2 != 0 {
+				return nil, fmt.Errorf("dict requires even number of args")
+			}
+			m := make(map[string]interface{}, len(kv)/2)
+			for i := 0; i < len(kv); i += 2 {
+				k, ok := kv[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict keys must be strings")
+				}
+				m[k] = kv[i+1]
+			}
+			return m, nil
+		},
 	}
 
 	tmpl := template.Must(
@@ -42,6 +56,8 @@ func NewRenderer() *Renderer {
 			"templates/partials/forwarding_table.html",
 			"templates/partials/channel_table.html",
 			"templates/partials/import_result.html",
+			"templates/partials/clear_import_result.html",
+			"templates/partials/danger_zone.html",
 			"templates/pl_layout.html",
 			"templates/pl.html",
 		),

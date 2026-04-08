@@ -37,6 +37,9 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/import/strike", handler.HandleStrikeImport)
 	mux.HandleFunc("/api/import/river", handler.HandleRiverImport)
 	mux.HandleFunc("/api/import/coinbase", handler.HandleCoinbaseImport)
+	mux.Handle("/api/import/strike/clear", handler.HandleClearImport("strike"))
+	mux.Handle("/api/import/river/clear", handler.HandleClearImport("river"))
+	mux.Handle("/api/import/coinbase/clear", handler.HandleClearImport("coinbase"))
 
 	return &Server{
 		httpServer: &http.Server{

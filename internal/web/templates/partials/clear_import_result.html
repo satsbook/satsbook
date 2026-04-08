@@ -1,0 +1,10 @@
+{{define "clear_import_result"}}
+<div class="card" style="border-left: 3px solid var(--success, #4ade80);">
+  <div class="card-label" style="color: var(--success, #4ade80);">Data Cleared</div>
+  <p style="margin-top: 8px;">
+    Removed <strong>{{.ImportsRemoved}}</strong> imported transaction{{if ne .ImportsRemoved 1}}s{{end}}
+    and <strong>{{.LotsRemoved}}</strong> cost-basis lot{{if ne .LotsRemoved 1}}s{{end}}
+    for <strong>{{.Source}}</strong>.
+  </p>
+</div>
+{{end}}

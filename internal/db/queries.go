@@ -613,6 +613,69 @@ func (d *DB) PortfolioPosition(ctx context.Context, since time.Time) (*Portfolio
 	return result, nil
 }
 
+// validExchangeSources is the allowlist of source names accepted by destructive
+// per-vendor operations. Keep in sync with the import handlers.
+var validExchangeSources = map[string]bool{
+	"strike":   true,
+	"river":    true,
+	"coinbase": true,
+}
+
+// IsValidExchangeSource reports whether the given source is a known vendor.
+func IsValidExchangeSource(source string) bool {
+	return validExchangeSources[source]
+}
+
+// ClearExchangeResult summarises the rows removed by ClearExchangeSource.
+type ClearExchangeResult struct {
+	Source          string
+	ImportsRemoved  int64
+	LotsRemoved     int64
+}
+
+// ClearExchangeSource deletes all imported data for a single exchange source
+// (both exchange_imports and btc_lots) in a single transaction. Other vendors
+// and node-sourced tables are never touched.
+func (d *DB) ClearExchangeSource(ctx context.Context, source string) (*ClearExchangeResult, error) {
+	if !IsValidExchangeSource(source) {
+		return nil, fmt.Errorf("clear exchange: invalid source %q", source)
+	}
+
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("clear exchange: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	lotsRes, err := tx.ExecContext(ctx, `DELETE FROM btc_lots WHERE source = ?`, source)
+	if err != nil {
+		return nil, fmt.Errorf("clear exchange: delete btc_lots: %w", err)
+	}
+	lotsRemoved, err := lotsRes.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("clear exchange: btc_lots rows affected: %w", err)
+	}
+
+	impRes, err := tx.ExecContext(ctx, `DELETE FROM exchange_imports WHERE source = ?`, source)
+	if err != nil {
+		return nil, fmt.Errorf("clear exchange: delete exchange_imports: %w", err)
+	}
+	importsRemoved, err := impRes.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("clear exchange: exchange_imports rows affected: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("clear exchange: commit: %w", err)
+	}
+
+	return &ClearExchangeResult{
+		Source:         source,
+		ImportsRemoved: importsRemoved,
+		LotsRemoved:    lotsRemoved,
+	}, nil
+}
+
 // ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
 // by summing AmountBTC only from rows that actually move BTC (non-zero AmountBTC).
 // USD-only transactions (e.g. cash withdrawals) are excluded.

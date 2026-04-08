@@ -1,0 +1,25 @@
+{{define "danger_zone"}}
+<div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);">
+  <div class="card-label" style="color: var(--danger, #ef4444);">⚠ Danger Zone</div>
+  <p class="card-sub" style="margin: 8px 0 12px;">
+    Permanently delete all imported {{.Label}} transactions and cost-basis lots.
+    This cannot be undone. Your Lightning node data is not affected.
+  </p>
+
+  <form hx-post="/api/import/{{.Vendor}}/clear"
+        hx-target="#clear-result-{{.Vendor}}"
+        hx-swap="innerHTML"
+        hx-indicator="#clear-loading-{{.Vendor}}">
+    <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 0.9em;">
+      <input type="checkbox" name="confirm" value="yes" required>
+      I understand this will permanently delete all {{.Label}} import data.
+    </label>
+    <button type="submit"
+            style="background: var(--danger, #ef4444); color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; font-weight: 600;">
+      Delete all {{.Label}} data
+    </button>
+    <span id="clear-loading-{{.Vendor}}" class="htmx-indicator">Clearing...</span>
+  </form>
+  <div id="clear-result-{{.Vendor}}" style="margin-top: 12px;"></div>
+</div>
+{{end}}
