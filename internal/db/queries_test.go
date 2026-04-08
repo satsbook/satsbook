@@ -1219,3 +1219,73 @@ func TestPortfolioPosition_SinceFiltering(t *testing.T) {
 		t.Errorf("recent purchased: expected 200000, got %d", recentOnly.PurchasedSats)
 	}
 }
+
+// --- ClearExchangeSource tests ---
+
+func TestClearExchangeSource_InvalidSource(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	if _, err := d.ClearExchangeSource(context.Background(), "kraken"); err == nil {
+		t.Fatal("expected error for invalid source, got nil")
+	}
+	if _, err := d.ClearExchangeSource(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty source, got nil")
+	}
+}
+
+func TestClearExchangeSource_EmptyIsNoop(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	res, err := d.ClearExchangeSource(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ImportsRemoved != 0 || res.LotsRemoved != 0 {
+		t.Errorf("expected 0/0, got %d/%d", res.ImportsRemoved, res.LotsRemoved)
+	}
+}
+
+func TestClearExchangeSource_IsolatesVendors(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// Seed strike (3 imports, 1 lot) and river (3 imports, 2 lots).
+	if _, err := d.ImportStrikeCSV(context.Background(), testStrikeRows()); err != nil {
+		t.Fatalf("strike import: %v", err)
+	}
+	if _, err := d.ImportRiverCSV(context.Background(), testRiverRows()); err != nil {
+		t.Fatalf("river import: %v", err)
+	}
+
+	res, err := d.ClearExchangeSource(context.Background(), "strike")
+	if err != nil {
+		t.Fatalf("clear strike: %v", err)
+	}
+	if res.ImportsRemoved != 3 {
+		t.Errorf("expected 3 strike imports removed, got %d", res.ImportsRemoved)
+	}
+	if res.LotsRemoved != 1 {
+		t.Errorf("expected 1 strike lot removed, got %d", res.LotsRemoved)
+	}
+
+	// Strike fully gone.
+	var strikeImports, strikeLots int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'strike'").Scan(&strikeImports)
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'strike'").Scan(&strikeLots)
+	if strikeImports != 0 || strikeLots != 0 {
+		t.Errorf("strike not fully cleared: imports=%d lots=%d", strikeImports, strikeLots)
+	}
+
+	// River untouched.
+	var riverImports, riverLots int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'river'").Scan(&riverImports)
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'river'").Scan(&riverLots)
+	if riverImports != 3 {
+		t.Errorf("river imports should be untouched, got %d", riverImports)
+	}
+	if riverLots != 2 {
+		t.Errorf("river lots should be untouched, got %d", riverLots)
+	}
+}

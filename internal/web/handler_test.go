@@ -106,6 +106,14 @@ type mockImportStore struct {
 	importStrikeFn   func(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
 	importRiverFn    func(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error)
 	importCoinbaseFn func(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error)
+	clearFn          func(ctx context.Context, source string) (*db.ClearExchangeResult, error)
+}
+
+func (m *mockImportStore) ClearExchangeSource(ctx context.Context, source string) (*db.ClearExchangeResult, error) {
+	if m.clearFn != nil {
+		return m.clearFn(ctx, source)
+	}
+	return &db.ClearExchangeResult{Source: source}, nil
 }
 
 func (m *mockImportStore) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
@@ -660,5 +668,78 @@ func TestHandleStrikeImport_HTMXResponse(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "new purchase") {
 		t.Errorf("expected summary in HTML, got: %s", body)
+	}
+}
+
+// --- HandleClearImport tests ---
+
+func TestHandleClearImport_Success(t *testing.T) {
+	importStore := &mockImportStore{
+		clearFn: func(ctx context.Context, source string) (*db.ClearExchangeResult, error) {
+			return &db.ClearExchangeResult{Source: source, ImportsRemoved: 5, LotsRemoved: 2}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike/clear", strings.NewReader("confirm=yes"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.HandleClearImport("strike")(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("HX-Trigger") != "satsbook:data-cleared" {
+		t.Errorf("missing HX-Trigger header")
+	}
+	if !strings.Contains(w.Body.String(), "strike") {
+		t.Errorf("expected body to mention source, got: %s", w.Body.String())
+	}
+}
+
+func TestHandleClearImport_MissingConfirm(t *testing.T) {
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, &mockImportStore{}, log.New(os.Stderr, "[test] ", 0))
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike/clear", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.HandleClearImport("strike")(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleClearImport_NonHTMXRejected(t *testing.T) {
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, &mockImportStore{}, log.New(os.Stderr, "[test] ", 0))
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike/clear", strings.NewReader("confirm=yes"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleClearImport("strike")(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-HTMX, got %d", w.Code)
+	}
+}
+
+func TestHandleClearImport_InvalidSource(t *testing.T) {
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, &mockImportStore{}, log.New(os.Stderr, "[test] ", 0))
+	req := httptest.NewRequest(http.MethodPost, "/api/import/kraken/clear", strings.NewReader("confirm=yes"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.HandleClearImport("kraken")(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid source, got %d", w.Code)
+	}
+}
+
+func TestHandleClearImport_GETRejected(t *testing.T) {
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, &mockImportStore{}, log.New(os.Stderr, "[test] ", 0))
+	req := httptest.NewRequest(http.MethodGet, "/api/import/strike/clear", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.HandleClearImport("strike")(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
 	}
 }

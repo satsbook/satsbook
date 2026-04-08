@@ -43,6 +43,7 @@ type ImportStore interface {
 	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
 	ImportRiverCSV(ctx context.Context, rows []exchange.RiverRow) (*db.ImportSummary, error)
 	ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error)
+	ClearExchangeSource(ctx context.Context, source string) (*db.ClearExchangeResult, error)
 }
 
 // Handler serves dashboard API and HTML endpoints.
@@ -546,4 +547,59 @@ func (h *Handler) HandleCoinbaseImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
+}
+
+type clearImportResponse struct {
+	Source         string `json:"source"`
+	ImportsRemoved int64  `json:"imports_removed"`
+	LotsRemoved    int64  `json:"lots_removed"`
+}
+
+// HandleClearImport serves POST /api/import/{vendor}/clear. It wipes every row
+// in exchange_imports and btc_lots belonging to the given vendor after a
+// `confirm=yes` form field is present. Only HTMX requests are accepted to
+// prevent accidental wipes from stray curl commands.
+func (h *Handler) HandleClearImport(source string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if r.Header.Get("HX-Request") != "true" {
+			h.writeError(w, http.StatusBadRequest, "clear must be invoked from the UI")
+			return
+		}
+		if !db.IsValidExchangeSource(source) {
+			h.writeError(w, http.StatusBadRequest, "invalid source")
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			h.writeError(w, http.StatusBadRequest, "failed to parse form")
+			return
+		}
+		if r.FormValue("confirm") != "yes" {
+			h.writeError(w, http.StatusBadRequest, "confirmation required")
+			return
+		}
+
+		result, err := h.importStore.ClearExchangeSource(r.Context(), source)
+		if err != nil {
+			h.logger.Printf("clear %s: %v", source, err)
+			h.writeError(w, http.StatusInternalServerError, "failed to clear data")
+			return
+		}
+		h.logger.Printf("cleared %s: %d imports, %d lots removed", source, result.ImportsRemoved, result.LotsRemoved)
+
+		resp := clearImportResponse{
+			Source:         result.Source,
+			ImportsRemoved: result.ImportsRemoved,
+			LotsRemoved:    result.LotsRemoved,
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("HX-Trigger", "satsbook:data-cleared")
+		if err := h.renderer.Render(w, "clear_import_result", resp); err != nil {
+			h.logger.Printf("failed to render clear result: %v", err)
+		}
+	}
 }

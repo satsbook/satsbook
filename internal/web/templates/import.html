@@ -27,6 +27,10 @@
     </button>
     <span id="import-loading" class="htmx-indicator">Importing...</span>
   </form>
+
+  {{if .HasStrike}}
+  {{template "danger_zone" (dict "Vendor" "strike" "Label" "Strike")}}
+  {{end}}
 </div>
 
 <div id="panel-river" class="card" style="max-width: 600px; display: none;">
@@ -49,6 +53,10 @@
     </button>
     <span id="import-loading-river" class="htmx-indicator">Importing...</span>
   </form>
+
+  {{if .HasRiver}}
+  {{template "danger_zone" (dict "Vendor" "river" "Label" "River")}}
+  {{end}}
 </div>
 
 <div id="panel-coinbase" class="card" style="max-width: 600px; display: none;">
@@ -71,6 +79,10 @@
     </button>
     <span id="import-loading-coinbase" class="htmx-indicator">Importing...</span>
   </form>
+
+  {{if .HasCoinbase}}
+  {{template "danger_zone" (dict "Vendor" "coinbase" "Label" "Coinbase")}}
+  {{end}}
 </div>
 
 <div id="import-result" style="margin-top: 20px;"></div>
