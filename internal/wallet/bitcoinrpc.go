@@ -136,10 +136,21 @@ func xpubDescriptor(xpub string, branch int, dt DerivationType) string {
 }
 
 // scan calls scantxoutset and returns the total balance in sats.
+// If a previous scan is still running, it aborts it first and retries.
 func (s *BitcoinRPCScanner) scan(ctx context.Context, descriptors []interface{}) (int64, error) {
 	result, err := s.callRPC(ctx, "scantxoutset", []interface{}{"start", descriptors})
 	if err != nil {
-		return 0, err
+		// If a scan is already in progress, abort it and retry once
+		if strings.Contains(err.Error(), "Scan already in progress") {
+			s.logger.Printf("aborting stale scantxoutset scan")
+			s.callRPC(ctx, "scantxoutset", []interface{}{"abort"})
+			result, err = s.callRPC(ctx, "scantxoutset", []interface{}{"start", descriptors})
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			return 0, err
+		}
 	}
 
 	var scanResult struct {
