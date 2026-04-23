@@ -640,6 +640,261 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// WalletsPageData holds data for the /wallets page.
+type WalletsPageData struct {
+	NodeAlias      string
+	NodePubKey     string
+	NodeSynced     bool
+	BlockHeight    uint32
+	LNDVersion     string
+	LastSyncedAt   time.Time
+	BTCPriceUSD    float64
+	PriceFetchedAt time.Time
+
+	Wallets           []db.WatchedWallet
+	TotalBalanceSats  int64
+	TotalBalanceUSD   float64
+	ElectrumAvailable bool
+}
+
+// HandleWalletsPage serves GET /wallets.
+func (h *Handler) HandleWalletsPage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	data := WalletsPageData{
+		ElectrumAvailable: h.walletScanner != nil,
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	fetch := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+
+	if h.walletStore != nil {
+		fetch(func() {
+			wallets, err := h.walletStore.ListWallets(ctx)
+			if err == nil {
+				mu.Lock()
+				data.Wallets = wallets
+				mu.Unlock()
+			}
+		})
+
+		fetch(func() {
+			total, err := h.walletStore.TotalWatchedBalance(ctx)
+			if err == nil {
+				mu.Lock()
+				data.TotalBalanceSats = total
+				mu.Unlock()
+			}
+		})
+	}
+
+	fetch(func() {
+		info, err := h.node.GetInfo(ctx)
+		if err == nil {
+			mu.Lock()
+			data.NodeAlias = info.Alias
+			data.NodePubKey = info.PubKey
+			data.NodeSynced = info.Synced
+			data.BlockHeight = info.BlockHeight
+			data.LNDVersion = info.Version
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		t, err := h.store.LastSyncedAt(ctx)
+		if err == nil {
+			mu.Lock()
+			data.LastSyncedAt = t
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		price, err := h.price.GetBTCPrice(ctx)
+		if err == nil {
+			mu.Lock()
+			data.BTCPriceUSD = price
+			data.PriceFetchedAt = h.price.FetchedAt()
+			mu.Unlock()
+		}
+	})
+
+	wg.Wait()
+
+	if data.BTCPriceUSD > 0 {
+		data.TotalBalanceUSD = satsToUSD(data.TotalBalanceSats, data.BTCPriceUSD)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "wallets_layout", data); err != nil {
+		h.logger.Printf("failed to render wallets page: %v", err)
+	}
+}
+
+// HandleAddWallet handles POST /api/wallets.
+func (h *Handler) HandleAddWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.walletStore == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "wallet tracking not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	label := r.FormValue("label")
+	value := r.FormValue("value")
+
+	if label == "" || value == "" {
+		h.writeError(w, http.StatusBadRequest, "label and value are required")
+		return
+	}
+
+	// Detect wallet type and derivation
+	walletType := "address"
+	derivationType := "bip84"
+
+	if len(value) > 100 {
+		// Likely an extended public key
+		walletType = "xpub"
+		if len(value) >= 4 {
+			switch value[:4] {
+			case "zpub":
+				derivationType = "bip84"
+			case "ypub":
+				derivationType = "bip49"
+			case "xpub":
+				derivationType = "bip44"
+			}
+		}
+	}
+
+	_, err := h.walletStore.AddWallet(r.Context(), label, walletType, value, derivationType)
+	if err != nil {
+		h.logger.Printf("add wallet failed: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "failed to add wallet")
+		return
+	}
+
+	// Redirect back to wallets page (HTMX or standard)
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/wallets")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+}
+
+// HandleRemoveWallet handles POST /api/wallets/delete.
+func (h *Handler) HandleRemoveWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.walletStore == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "wallet tracking not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	idStr := r.FormValue("id")
+	id := int64(parseIntParam(r, "id", 0))
+	if id <= 0 {
+		h.writeError(w, http.StatusBadRequest, "invalid wallet id: "+idStr)
+		return
+	}
+
+	if err := h.walletStore.RemoveWallet(r.Context(), id); err != nil {
+		h.logger.Printf("remove wallet %d failed: %v", id, err)
+		h.writeError(w, http.StatusInternalServerError, "failed to remove wallet")
+		return
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/wallets")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+}
+
+// HandleRefreshWallet handles POST /api/wallets/refresh.
+func (h *Handler) HandleRefreshWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.walletStore == nil || h.walletScanner == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "wallet scanning not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	id := int64(parseIntParam(r, "id", 0))
+	if id <= 0 {
+		h.writeError(w, http.StatusBadRequest, "invalid wallet id")
+		return
+	}
+
+	ctx := r.Context()
+	wallet, err := h.walletStore.GetWallet(ctx, id)
+	if err != nil || wallet == nil {
+		h.writeError(w, http.StatusNotFound, "wallet not found")
+		return
+	}
+
+	var balance int64
+	switch wallet.Type {
+	case "address":
+		balance, err = h.walletScanner.ScanAddress(ctx, wallet.Value)
+	case "xpub":
+		balance, err = h.walletScanner.ScanXpub(ctx, wallet.Value, wallet.DerivationType)
+	default:
+		h.writeError(w, http.StatusBadRequest, "unknown wallet type")
+		return
+	}
+
+	if err != nil {
+		h.logger.Printf("scan wallet %d failed: %v", id, err)
+		h.writeError(w, http.StatusInternalServerError, "scan failed: "+err.Error())
+		return
+	}
+
+	if err := h.walletStore.UpdateWalletBalance(ctx, id, balance); err != nil {
+		h.logger.Printf("update wallet balance %d failed: %v", id, err)
+		h.writeError(w, http.StatusInternalServerError, "failed to save balance")
+		return
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/wallets")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+}
+
 // parseDateParam parses a "YYYY-MM-DD" query parameter.
 func parseDateParam(r *http.Request, key string, defaultVal time.Time) (time.Time, error) {
 	v := r.URL.Query().Get(key)

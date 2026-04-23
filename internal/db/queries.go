@@ -676,6 +676,105 @@ func (d *DB) ClearExchangeSource(ctx context.Context, source string) (*ClearExch
 	}, nil
 }
 
+// AddWallet inserts a new watched wallet. Returns the ID of the new row.
+func (d *DB) AddWallet(ctx context.Context, label, walletType, value, derivationType string) (int64, error) {
+	res, err := d.db.ExecContext(ctx,
+		`INSERT INTO watched_wallets (label, type, value, derivation_type) VALUES (?, ?, ?, ?)`,
+		label, walletType, value, derivationType,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("add wallet: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// RemoveWallet deletes a watched wallet by ID.
+func (d *DB) RemoveWallet(ctx context.Context, id int64) error {
+	res, err := d.db.ExecContext(ctx, `DELETE FROM watched_wallets WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("remove wallet %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("remove wallet %d rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("wallet %d not found", id)
+	}
+	return nil
+}
+
+// ListWallets returns all watched wallets ordered by label.
+func (d *DB) ListWallets(ctx context.Context) ([]WatchedWallet, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, label, type, value, derivation_type, balance_sats, last_checked_at, created_at
+		 FROM watched_wallets ORDER BY label ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list wallets: %w", err)
+	}
+	defer rows.Close()
+
+	var wallets []WatchedWallet
+	for rows.Next() {
+		var w WatchedWallet
+		var lastChecked sql.NullTime
+		if err := rows.Scan(&w.ID, &w.Label, &w.Type, &w.Value, &w.DerivationType,
+			&w.BalanceSats, &lastChecked, &w.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan wallet: %w", err)
+		}
+		if lastChecked.Valid {
+			w.LastCheckedAt = &lastChecked.Time
+		}
+		wallets = append(wallets, w)
+	}
+	return wallets, rows.Err()
+}
+
+// GetWallet returns a single watched wallet by ID.
+func (d *DB) GetWallet(ctx context.Context, id int64) (*WatchedWallet, error) {
+	var w WatchedWallet
+	var lastChecked sql.NullTime
+	err := d.db.QueryRowContext(ctx,
+		`SELECT id, label, type, value, derivation_type, balance_sats, last_checked_at, created_at
+		 FROM watched_wallets WHERE id = ?`, id,
+	).Scan(&w.ID, &w.Label, &w.Type, &w.Value, &w.DerivationType,
+		&w.BalanceSats, &lastChecked, &w.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get wallet %d: %w", id, err)
+	}
+	if lastChecked.Valid {
+		w.LastCheckedAt = &lastChecked.Time
+	}
+	return &w, nil
+}
+
+// UpdateWalletBalance updates the balance and last_checked_at for a wallet.
+func (d *DB) UpdateWalletBalance(ctx context.Context, id int64, balanceSats int64) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE watched_wallets SET balance_sats = ?, last_checked_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		balanceSats, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update wallet balance %d: %w", id, err)
+	}
+	return nil
+}
+
+// TotalWatchedBalance returns the sum of all watched wallet balances.
+func (d *DB) TotalWatchedBalance(ctx context.Context) (int64, error) {
+	var total int64
+	err := d.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(balance_sats), 0) FROM watched_wallets`,
+	).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("total watched balance: %w", err)
+	}
+	return total, nil
+}
+
 // ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
 // by summing AmountBTC only from rows that actually move BTC (non-zero AmountBTC).
 // USD-only transactions (e.g. cash withdrawals) are excluded.

@@ -61,6 +61,18 @@ type WalletBalanceSnapshot struct {
 	UnconfirmedSat  int64
 }
 
+// WatchedWallet represents a tracked wallet (single address or xpub).
+type WatchedWallet struct {
+	ID             int64
+	Label          string
+	Type           string // "address" or "xpub"
+	Value          string
+	DerivationType string // "bip44", "bip49", "bip84"
+	BalanceSats    int64
+	LastCheckedAt  *time.Time
+	CreatedAt      time.Time
+}
+
 // dbSyncTx provides transactional sync operations for a SQL transaction.
 type dbSyncTx struct {
 	tx  *sql.Tx

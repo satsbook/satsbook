@@ -28,6 +28,13 @@ func NewRenderer() *Renderer {
 		"pctOf":       pctOf,
 		"feeChart":    feeChart,
 		"sub":         func(a, b int) int { return a - b },
+		"subtract":    func(a, b int) int { return a - b },
+		"timeAgoPtr":  func(t *time.Time) string {
+			if t == nil {
+				return "never"
+			}
+			return timeAgo(*t)
+		},
 		"add":         func(a, b int) int { return a + b },
 		"add64":       func(a, b int64) int64 { return a + b },
 		"seq":         seq,
@@ -60,6 +67,7 @@ func NewRenderer() *Renderer {
 			"templates/partials/danger_zone.html",
 			"templates/pl_layout.html",
 			"templates/pl.html",
+			"templates/wallets_layout.html",
 		),
 	)
 

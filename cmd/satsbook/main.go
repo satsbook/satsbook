@@ -14,6 +14,7 @@ import (
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/price"
 	"github.com/satsbook/satsbook/internal/syncer"
+	"github.com/satsbook/satsbook/internal/wallet"
 	"github.com/satsbook/satsbook/internal/web"
 )
 
@@ -65,6 +66,23 @@ func main() {
 	// Initialize HTTP server
 	httpLogger := log.New(os.Stdout, "[http] ", log.LstdFlags)
 	handler := web.NewHandler(database, lndClient, priceCache, database, httpLogger)
+
+	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum)
+	handler.SetWalletStore(database)
+	if cfg.ElectrumHost != "" {
+		walletLogger := log.New(os.Stdout, "[wallet] ", log.LstdFlags)
+		electrumClient, err := wallet.NewElectrumClient(context.Background(), cfg.ElectrumHost, cfg.ElectrumPort)
+		if err != nil {
+			walletLogger.Printf("Electrum not available (%s:%d): %v — wallet scanning disabled",
+				cfg.ElectrumHost, cfg.ElectrumPort, err)
+		} else {
+			defer electrumClient.Close()
+			walletLogger.Printf("connected to Electrum at %s:%d", cfg.ElectrumHost, cfg.ElectrumPort)
+			scanner := wallet.NewScanner(electrumClient, wallet.WithLogger(walletLogger))
+			handler.SetWalletScanner(wallet.NewScannerAdapter(scanner))
+		}
+	}
+
 	srv := web.NewServer(handler, cfg.AppPort, httpLogger)
 
 	// Setup graceful shutdown

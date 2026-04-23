@@ -22,6 +22,11 @@ type Config struct {
 	SyncInterval   time.Duration
 	MaxHistoryDays int
 
+	// Electrum settings (for wallet tracking)
+	ElectrumHost            string
+	ElectrumPort            int
+	WalletRefreshInterval   time.Duration
+
 	// Application settings
 	AppPort     int
 	LogLevel    string
@@ -45,6 +50,11 @@ func Load() (*Config, error) {
 		// Syncer defaults
 		SyncInterval:   getEnvAsDuration("SATSBOOK_SYNC_INTERVAL", 5*time.Minute),
 		MaxHistoryDays: getEnvAsInt("SATSBOOK_MAX_HISTORY_DAYS", 90),
+
+		// Electrum defaults - for cold storage / xpub tracking
+		ElectrumHost:          getEnv("SATSBOOK_ELECTRUM_HOST", getEnv("APP_ELECTRS_NODE_IP", "")),
+		ElectrumPort:          getEnvAsInt("SATSBOOK_ELECTRUM_PORT", getEnvAsInt("APP_ELECTRS_NODE_PORT", 50001)),
+		WalletRefreshInterval: getEnvAsDuration("SATSBOOK_WALLET_REFRESH_INTERVAL", 10*time.Minute),
 
 		// Application defaults
 		AppPort:     getEnvAsInt("SATSBOOK_APP_PORT", 8080),

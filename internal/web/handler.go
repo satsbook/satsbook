@@ -38,6 +38,16 @@ type PriceProvider interface {
 	FetchedAt() time.Time
 }
 
+// WalletStore defines operations for wallet tracking.
+type WalletStore interface {
+	AddWallet(ctx context.Context, label, walletType, value, derivationType string) (int64, error)
+	RemoveWallet(ctx context.Context, id int64) error
+	ListWallets(ctx context.Context) ([]db.WatchedWallet, error)
+	GetWallet(ctx context.Context, id int64) (*db.WatchedWallet, error)
+	UpdateWalletBalance(ctx context.Context, id int64, balanceSats int64) error
+	TotalWatchedBalance(ctx context.Context) (int64, error)
+}
+
 // ImportStore defines operations for importing exchange data.
 type ImportStore interface {
 	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
@@ -46,14 +56,22 @@ type ImportStore interface {
 	ClearExchangeSource(ctx context.Context, source string) (*db.ClearExchangeResult, error)
 }
 
+// WalletScanner scans wallet/xpub balances.
+type WalletScanner interface {
+	ScanAddress(ctx context.Context, address string) (int64, error)
+	ScanXpub(ctx context.Context, xpub string, derivationType string) (int64, error)
+}
+
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
-	store       DashboardStore
-	node        NodeInfoProvider
-	price       PriceProvider
-	importStore ImportStore
-	logger      *log.Logger
-	renderer    *Renderer
+	store         DashboardStore
+	node          NodeInfoProvider
+	price         PriceProvider
+	importStore   ImportStore
+	walletStore   WalletStore
+	walletScanner WalletScanner
+	logger        *log.Logger
+	renderer      *Renderer
 }
 
 // NewHandler creates a new Handler.
@@ -66,6 +84,16 @@ func NewHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider
 		logger:      logger,
 		renderer:    NewRenderer(),
 	}
+}
+
+// SetWalletStore sets the wallet store (optional, may not be available without Electrum).
+func (h *Handler) SetWalletStore(ws WalletStore) {
+	h.walletStore = ws
+}
+
+// SetWalletScanner sets the wallet scanner (optional, requires Electrum).
+func (h *Handler) SetWalletScanner(ws WalletScanner) {
+	h.walletScanner = ws
 }
 
 // --- JSON response types ---

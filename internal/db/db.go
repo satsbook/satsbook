@@ -118,7 +118,21 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_forwarding_events_chan_id_out
 		ON forwarding_events(chan_id_out);
 	`,
-	// Migration 3: Fix exchange_imports unique constraint.
+	// Migration 3: Watched wallets for cold storage / xpub tracking
+	`
+	CREATE TABLE IF NOT EXISTS watched_wallets (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		label           TEXT NOT NULL,
+		type            TEXT NOT NULL CHECK(type IN ('address', 'xpub')),
+		value           TEXT NOT NULL,
+		derivation_type TEXT NOT NULL DEFAULT 'bip84',
+		balance_sats    INTEGER NOT NULL DEFAULT 0,
+		last_checked_at DATETIME,
+		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(type, value)
+	);
+	`,
+	// Migration 4: Fix exchange_imports unique constraint.
 	// Strike reference IDs are not unique per row — the same reference can have
 	// multiple transaction types (e.g. Sale + Withdrawal for the same operation).
 	// Add transaction_type column and re-key on (source, external_id, tx_type).

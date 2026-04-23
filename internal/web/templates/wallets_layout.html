@@ -1,0 +1,118 @@
+{{define "wallets_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Wallets</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <a class="logo" href="/">Satsbook</a>
+      <nav style="font-size: 0.85rem;">
+        <a href="/" style="color: var(--text-muted); text-decoration: none; margin-right: 16px;">Dashboard</a>
+        <a href="/import" style="color: var(--text-muted); text-decoration: none; margin-right: 16px;">Import</a>
+        <a href="/wallets" style="color: var(--text); text-decoration: none; margin-right: 16px;">Wallets</a>
+        <a href="/pl" style="color: var(--text-muted); text-decoration: none;">P&L</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" style="padding: 24px 16px;">
+    <h2 style="margin-bottom: 8px;">Cold Storage Wallets</h2>
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 24px;">
+      Track Bitcoin addresses and extended public keys (xpub/ypub/zpub) from hardware wallets and cold storage.
+    </p>
+
+    {{if not .ElectrumAvailable}}
+    <div style="background: var(--warning-bg, #fef3cd); border: 1px solid var(--warning-border, #ffc107); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem;">
+      Electrum server not detected. Install <strong>electrs</strong> on your Umbrel for private balance lookups. Without it, wallet scanning is unavailable.
+    </div>
+    {{end}}
+
+    <!-- Total balance card -->
+    {{if .Wallets}}
+    <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px;">
+      <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Total Cold Storage</div>
+      <div style="font-size: 1.5rem; font-weight: 700; margin-top: 4px;">{{formatSats .TotalBalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span></div>
+      {{if gt .BTCPriceUSD 0.0}}
+      <div style="color: var(--text-muted); font-size: 0.85rem;">{{formatUSD .TotalBalanceUSD}}</div>
+      {{end}}
+    </div>
+    {{end}}
+
+    <!-- Wallet list -->
+    {{if .Wallets}}
+    <div style="margin-bottom: 24px;">
+      {{range .Wallets}}
+      <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div>
+          <div style="font-weight: 600;">{{.Label}}</div>
+          <div style="color: var(--text-muted); font-size: 0.75rem; font-family: monospace; word-break: break-all; max-width: 400px;">
+            {{if eq .Type "xpub"}}{{slice .Value 0 12}}...{{slice .Value (sub (len .Value) 8)}}{{else}}{{.Value}}{{end}}
+          </div>
+          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+            <span style="background: var(--border); border-radius: 4px; padding: 1px 6px;">{{.Type}}</span>
+            {{if eq .Type "xpub"}}<span style="background: var(--border); border-radius: 4px; padding: 1px 6px; margin-left: 4px;">{{.DerivationType}}</span>{{end}}
+            {{if .LastCheckedAt}}<span style="margin-left: 8px;">checked {{timeAgoPtr .LastCheckedAt}}</span>{{else}}<span style="margin-left: 8px;">not scanned yet</span>{{end}}
+          </div>
+        </div>
+        <div style="text-align: right; display: flex; align-items: center; gap: 8px;">
+          <div>
+            <div style="font-weight: 600;">{{formatSats .BalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span></div>
+          </div>
+          <div style="display: flex; gap: 4px;">
+            <form method="post" action="/api/wallets/refresh" hx-post="/api/wallets/refresh" hx-swap="none" style="margin: 0;">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" style="background: var(--border); border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 0.75rem;" title="Refresh balance">Scan</button>
+            </form>
+            <form method="post" action="/api/wallets/delete" hx-post="/api/wallets/delete" hx-swap="none" hx-confirm="Remove this wallet?" style="margin: 0;">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" style="background: var(--danger-bg, #f8d7da); color: var(--danger, #dc3545); border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 0.75rem;" title="Remove wallet">Remove</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div style="text-align: center; padding: 40px 16px; color: var(--text-muted); font-size: 0.9rem;">
+      No wallets tracked yet. Add an address or xpub below.
+    </div>
+    {{end}}
+
+    <!-- Add wallet form -->
+    {{if .ElectrumAvailable}}
+    <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-top: 16px;">
+      <h3 style="margin: 0 0 12px 0; font-size: 1rem;">Add Wallet</h3>
+      <form method="post" action="/api/wallets" hx-post="/api/wallets" hx-swap="none" style="display: flex; flex-direction: column; gap: 12px;">
+        <div>
+          <label for="label" style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">Label</label>
+          <input type="text" name="label" id="label" placeholder="e.g. Coldcard Main" required
+                 style="width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.9rem; box-sizing: border-box;">
+        </div>
+        <div>
+          <label for="value" style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">Address or Extended Public Key</label>
+          <input type="text" name="value" id="value" placeholder="bc1q... or zpub... or xpub..." required
+                 style="width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.9rem; font-family: monospace; box-sizing: border-box;">
+          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">
+            Supports single addresses (bc1q..., 1..., 3...) and extended public keys (zpub, ypub, xpub).
+          </div>
+        </div>
+        <button type="submit" style="align-self: flex-start; padding: 8px 20px; background: var(--accent, #f7931a); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+          Add Wallet
+        </button>
+      </form>
+    </div>
+    {{end}}
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook</span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}
