@@ -47,20 +47,24 @@
 </div>
 {{end}}
 
-{{if or .HasFeeHistory .HasExchangeImports}}
-<!-- Headline: Net BTC Position -->
+{{if or .HasFeeHistory .HasExchangeImports .TotalBTCSats}}
+<!-- Headline: Total BTC Position -->
 <div class="card" style="margin-bottom: 24px; padding: 24px;">
-  <div class="card-label">Net BTC Position</div>
+  <div class="card-label">Total BTC Position</div>
   <div style="font-size: 2.25rem; font-weight: 600; margin: 8px 0 4px;">
     {{formatSats .TotalBTCSats}} <small style="font-size: 0.5em; color: var(--text-muted);">sats</small>
   </div>
   {{if .BTCPriceUSD}}<div style="font-size: 1.1rem; color: var(--text-muted);">{{formatUSD .TotalBTCUSD}}</div>{{end}}
   <div style="margin-top: 12px; font-size: 0.85em; color: var(--text-muted); display: flex; gap: 16px; flex-wrap: wrap;">
-    <span>Routing fees: {{formatSats .FeesAllTimeSats}} sats</span>
-    {{if .StrikeBalanceSats}}<span>Strike: {{formatSats .StrikeBalanceSats}}</span>{{end}}
-    {{if .RiverBalanceSats}}<span>River: {{formatSats .RiverBalanceSats}}</span>{{end}}
-    {{if .CoinbaseBalanceSats}}<span>Coinbase: {{formatSats .CoinbaseBalanceSats}}</span>{{end}}
+    <span>On-chain: {{formatSats .WalletBalanceSats}}</span>
+    <span>Channels: {{formatSats .ChannelLocalBalanceSats}}</span>
+    {{if .ExchangeBalanceSats}}<span>Exchange: {{formatSats .ExchangeBalanceSats}}</span>{{end}}
   </div>
+  {{if .FeesAllTimeSats}}
+  <div style="margin-top: 6px; font-size: 0.8em; color: var(--text-muted);">
+    Routing fees earned: {{formatSats .FeesAllTimeSats}} sats (all-time)
+  </div>
+  {{end}}
 </div>
 
 <!-- YTD strip -->

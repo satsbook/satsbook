@@ -30,9 +30,11 @@ type DashboardData struct {
 	Routed7d      int64
 
 	// Other stats
-	ActiveChannels    int
-	WalletBalanceSats int64
-	WalletBalanceUSD  float64
+	ActiveChannels          int
+	WalletBalanceSats       int64
+	WalletBalanceUSD        float64
+	ChannelLocalBalanceSats int64
+	ChannelLocalBalanceUSD  float64
 
 	// Exchange balances
 	StrikeBalanceSats   int64
@@ -44,7 +46,7 @@ type DashboardData struct {
 	ExchangeBalanceSats   int64
 	ExchangeBalanceUSD    float64
 
-	// Headline net BTC position (all-time: routing fees + exchange holdings)
+	// Headline: total BTC under control (wallet + channels + exchange)
 	TotalBTCSats int64
 	TotalBTCUSD  float64
 
@@ -264,8 +266,6 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.RiverBalanceSats = res.portfolioAll.BySource["river"].NetSats
 		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
 		data.ExchangeBalanceSats = res.portfolioAll.ExchangeNetSats
-		// Headline: routing fees + net exchange holdings
-		data.TotalBTCSats = res.portfolioAll.RoutingFeesSats + res.portfolioAll.ExchangeNetSats
 	}
 
 	data.Fees30dSats = res.fees30d / 1000
@@ -280,6 +280,14 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	if res.balance != nil {
 		data.WalletBalanceSats = res.balance.TotalSat
 	}
+
+	// Sum channel local balances
+	for _, ch := range res.channels {
+		data.ChannelLocalBalanceSats += ch.LocalBalance
+	}
+
+	// Headline: total BTC = wallet + channel local + exchange (routing fees already in channels)
+	data.TotalBTCSats = data.WalletBalanceSats + data.ChannelLocalBalanceSats + data.ExchangeBalanceSats
 
 	// YTD section
 	if res.portfolioYTD != nil {
@@ -302,6 +310,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.PriceFetchedAt = res.priceFetched
 		data.FeesAllTimeUSD = satsToUSD(data.FeesAllTimeSats, res.btcPrice)
 		data.WalletBalanceUSD = satsToUSD(data.WalletBalanceSats, res.btcPrice)
+		data.ChannelLocalBalanceUSD = satsToUSD(data.ChannelLocalBalanceSats, res.btcPrice)
 		data.StrikeBalanceUSD = satsToUSD(data.StrikeBalanceSats, res.btcPrice)
 		data.RiverBalanceUSD = satsToUSD(data.RiverBalanceSats, res.btcPrice)
 		data.CoinbaseBalanceUSD = satsToUSD(data.CoinbaseBalanceSats, res.btcPrice)
