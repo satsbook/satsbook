@@ -64,9 +64,12 @@
             <div style="font-weight: 600;">{{formatSats .BalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span></div>
           </div>
           <div style="display: flex; gap: 4px;">
-            <form method="post" action="/api/wallets/refresh" hx-post="/api/wallets/refresh" hx-swap="none" style="margin: 0;">
+            <form method="post" action="/api/wallets/refresh" hx-post="/api/wallets/refresh" hx-swap="none" hx-indicator="#scan-spinner-{{.ID}}" style="margin: 0;">
               <input type="hidden" name="id" value="{{.ID}}">
-              <button type="submit" style="background: var(--border); border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 0.75rem;" title="Refresh balance">Scan</button>
+              <button type="submit" class="scan-btn" style="background: var(--border); border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 0.75rem;" title="Refresh balance">
+                <span class="scan-label">Scan</span>
+                <span id="scan-spinner-{{.ID}}" class="htmx-indicator scan-spinner"></span>
+              </button>
             </form>
             <form method="post" action="/api/wallets/delete" hx-post="/api/wallets/delete" hx-swap="none" hx-confirm="Remove this wallet?" style="margin: 0;">
               <input type="hidden" name="id" value="{{.ID}}">

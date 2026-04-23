@@ -254,6 +254,22 @@ tr:hover { background: var(--bg-hover); }
 }
 .htmx-request .htmx-indicator { display: inline; }
 
+/* Scan button spinner */
+.scan-spinner {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text-muted);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+.htmx-request .scan-spinner { display: inline-block; }
+.htmx-request .scan-label { display: none; }
+.scan-btn { min-width: 44px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Responsive */
 @media (max-width: 768px) {
   .cards { grid-template-columns: 1fr 1fr; }
