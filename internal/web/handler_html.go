@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -864,7 +865,8 @@ func (h *Handler) HandleRefreshWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := int64(parseIntParam(r, "id", 0))
+	idStr := r.FormValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id <= 0 {
 		h.writeError(w, http.StatusBadRequest, "invalid wallet id")
 		return
