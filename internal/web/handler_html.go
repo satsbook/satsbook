@@ -829,7 +829,7 @@ func (h *Handler) HandleRemoveWallet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	idStr := r.FormValue("id")
-	id := int64(parseIntParam(r, "id", 0))
+	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id <= 0 {
 		h.writeError(w, http.StatusBadRequest, "invalid wallet id: "+idStr)
 		return
