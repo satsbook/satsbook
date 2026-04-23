@@ -60,6 +60,7 @@ type ImportStore interface {
 type WalletScanner interface {
 	ScanAddress(ctx context.Context, address string) (int64, error)
 	ScanXpub(ctx context.Context, xpub string, derivationType string) (int64, error)
+	ScanDescriptor(ctx context.Context, descriptor string) (int64, error)
 }
 
 // Handler serves dashboard API and HTML endpoints.

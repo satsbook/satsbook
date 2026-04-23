@@ -113,6 +113,15 @@ func (s *BitcoinRPCScanner) ScanXpub(ctx context.Context, key string, derivation
 	return s.scan(ctx, descriptors)
 }
 
+// ScanDescriptor returns the total balance in sats for a raw output descriptor.
+// The descriptor is passed directly to scantxoutset with a range of 1000.
+func (s *BitcoinRPCScanner) ScanDescriptor(ctx context.Context, descriptor string) (int64, error) {
+	descriptors := []interface{}{
+		map[string]interface{}{"desc": descriptor, "range": 1000},
+	}
+	return s.scan(ctx, descriptors)
+}
+
 // xpubDescriptor builds the output descriptor for scantxoutset.
 func xpubDescriptor(xpub string, branch int, dt DerivationType) string {
 	path := fmt.Sprintf("%s/%d/*", xpub, branch)

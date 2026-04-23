@@ -35,7 +35,13 @@ func NewRenderer() *Renderer {
 			}
 			return timeAgo(*t)
 		},
-		"add":         func(a, b int) int { return a + b },
+		"truncate": func(s string, n int) string {
+			if len(s) <= n {
+				return s
+			}
+			return s[:n]
+		},
+		"add": func(a, b int) int { return a + b },
 		"add64":       func(a, b int64) int64 { return a + b },
 		"seq":         seq,
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {

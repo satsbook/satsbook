@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -776,7 +777,10 @@ func (h *Handler) HandleAddWallet(w http.ResponseWriter, r *http.Request) {
 	walletType := "address"
 	derivationType := "bip84"
 
-	if len(value) > 100 {
+	if isDescriptor(value) {
+		walletType = "descriptor"
+		derivationType = ""
+	} else if len(value) > 100 {
 		// Likely an extended public key
 		walletType = "xpub"
 		if len(value) >= 4 {
@@ -879,6 +883,8 @@ func (h *Handler) HandleRefreshWallet(w http.ResponseWriter, r *http.Request) {
 		balance, err = h.walletScanner.ScanAddress(ctx, wallet.Value)
 	case "xpub":
 		balance, err = h.walletScanner.ScanXpub(ctx, wallet.Value, wallet.DerivationType)
+	case "descriptor":
+		balance, err = h.walletScanner.ScanDescriptor(ctx, wallet.Value)
 	default:
 		h.writeError(w, http.StatusBadRequest, "unknown wallet type")
 		return
@@ -902,6 +908,20 @@ func (h *Handler) HandleRefreshWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+}
+
+// isDescriptor returns true if the value looks like a Bitcoin output descriptor.
+func isDescriptor(v string) bool {
+	prefixes := []string{
+		"wpkh(", "sh(", "wsh(", "pk(", "pkh(", "combo(",
+		"multi(", "sortedmulti(", "tr(", "addr(", "raw(",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(v, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseDateParam parses a "YYYY-MM-DD" query parameter.

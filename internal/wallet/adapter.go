@@ -49,3 +49,8 @@ func (a *ScannerAdapter) ScanXpub(ctx context.Context, key string, derivationTyp
 
 	return result.BalanceSats, nil
 }
+
+// ScanDescriptor is not supported via Electrum — descriptors require Bitcoin Core RPC.
+func (a *ScannerAdapter) ScanDescriptor(ctx context.Context, descriptor string) (int64, error) {
+	return 0, fmt.Errorf("descriptor scanning requires Bitcoin Core RPC (not available via Electrum)")
+}

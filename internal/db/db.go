@@ -156,6 +156,27 @@ var migrations = []string{
 	DROP TABLE exchange_imports;
 	ALTER TABLE exchange_imports_new RENAME TO exchange_imports;
 	`,
+	// Migration 5: Allow 'descriptor' wallet type for multisig / raw descriptor tracking.
+	`
+	CREATE TABLE IF NOT EXISTS watched_wallets_new (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		label           TEXT NOT NULL,
+		type            TEXT NOT NULL CHECK(type IN ('address', 'xpub', 'descriptor')),
+		value           TEXT NOT NULL,
+		derivation_type TEXT NOT NULL DEFAULT 'bip84',
+		balance_sats    INTEGER NOT NULL DEFAULT 0,
+		last_checked_at DATETIME,
+		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(type, value)
+	);
+
+	INSERT OR IGNORE INTO watched_wallets_new (id, label, type, value, derivation_type, balance_sats, last_checked_at, created_at)
+		SELECT id, label, type, value, derivation_type, balance_sats, last_checked_at, created_at
+		FROM watched_wallets;
+
+	DROP TABLE watched_wallets;
+	ALTER TABLE watched_wallets_new RENAME TO watched_wallets;
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

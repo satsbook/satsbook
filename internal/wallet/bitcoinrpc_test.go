@@ -261,6 +261,43 @@ func TestBitcoinRPCMethodNotFound(t *testing.T) {
 	}
 }
 
+func TestBitcoinRPCScanDescriptor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req rpcRequest
+		json.Unmarshal(body, &req)
+
+		if req.Method != "scantxoutset" {
+			t.Errorf("expected method scantxoutset, got %s", req.Method)
+		}
+
+		// Verify descriptor is passed through
+		params := req.Params[1].([]interface{})
+		d := params[0].(map[string]interface{})
+		desc := d["desc"].(string)
+		if !strings.Contains(desc, "sortedmulti") {
+			t.Errorf("expected sortedmulti in descriptor, got %s", desc)
+		}
+
+		w.Write([]byte(`{"result":{"success":true,"total_amount":1.50000000},"error":null}`))
+	}))
+	defer srv.Close()
+
+	parts := strings.SplitN(strings.TrimPrefix(srv.URL, "http://"), ":", 2)
+	host := parts[0]
+	var port int
+	fmt.Sscanf(parts[1], "%d", &port)
+
+	scanner := NewBitcoinRPCScanner(host, port, WithUserPassAuth("user", "pass"))
+	got, err := scanner.ScanDescriptor(context.Background(), "wsh(sortedmulti(2,xpub1.../0/*,xpub2.../0/*,xpub3.../0/*))")
+	if err != nil {
+		t.Fatalf("ScanDescriptor: %v", err)
+	}
+	if got != 150000000 {
+		t.Errorf("ScanDescriptor = %d, want 150000000", got)
+	}
+}
+
 func TestBitcoinRPCContextCancellation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Slow response — should be cancelled
