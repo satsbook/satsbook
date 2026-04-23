@@ -23,9 +23,16 @@ type Config struct {
 	MaxHistoryDays int
 
 	// Electrum settings (for wallet tracking)
-	ElectrumHost            string
-	ElectrumPort            int
-	WalletRefreshInterval   time.Duration
+	ElectrumHost          string
+	ElectrumPort          int
+	WalletRefreshInterval time.Duration
+
+	// Bitcoin Core RPC settings (fallback for wallet scanning on pruned nodes)
+	BitcoinRPCHost       string
+	BitcoinRPCPort       int
+	BitcoinRPCUser       string
+	BitcoinRPCPassword   string
+	BitcoinRPCCookiePath string
 
 	// Application settings
 	AppPort     int
@@ -55,6 +62,13 @@ func Load() (*Config, error) {
 		ElectrumHost:          getEnv("SATSBOOK_ELECTRUM_HOST", getEnv("APP_ELECTRS_NODE_IP", "")),
 		ElectrumPort:          getEnvAsInt("SATSBOOK_ELECTRUM_PORT", getEnvAsInt("APP_ELECTRS_NODE_PORT", 50001)),
 		WalletRefreshInterval: getEnvAsDuration("SATSBOOK_WALLET_REFRESH_INTERVAL", 10*time.Minute),
+
+		// Bitcoin Core RPC defaults (fallback for pruned nodes)
+		BitcoinRPCHost:       getEnv("SATSBOOK_BITCOIN_RPC_HOST", getEnv("BITCOIN_HOST", "")),
+		BitcoinRPCPort:       getEnvAsInt("SATSBOOK_BITCOIN_RPC_PORT", getEnvAsInt("BITCOIN_RPC_PORT", 8332)),
+		BitcoinRPCUser:       getEnv("SATSBOOK_BITCOIN_RPC_USER", ""),
+		BitcoinRPCPassword:   getEnv("SATSBOOK_BITCOIN_RPC_PASSWORD", ""),
+		BitcoinRPCCookiePath: getEnv("SATSBOOK_BITCOIN_RPC_COOKIE_PATH", getEnv("BITCOIN_COOKIE_PATH", "")),
 
 		// Application defaults
 		AppPort:     getEnvAsInt("SATSBOOK_APP_PORT", 8080),
@@ -115,6 +129,11 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// BitcoinRPCConfigured returns true if Bitcoin Core RPC is configured.
+func (c *Config) BitcoinRPCConfigured() bool {
+	return c.BitcoinRPCHost != "" && (c.BitcoinRPCCookiePath != "" || (c.BitcoinRPCUser != "" && c.BitcoinRPCPassword != ""))
 }
 
 // getEnv retrieves an environment variable or returns a default value.

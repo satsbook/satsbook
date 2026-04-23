@@ -27,7 +27,7 @@
     </p>
 
     {{if not .ElectrumAvailable}}
-    <div style="background: var(--warning-bg, #fef3cd); border: 1px solid var(--warning-border, #ffc107); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem;">
+    <div style="background: var(--warning-bg, #fef3cd); border: 1px solid var(--warning-border, #ffc107); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem; color: #856404;">
       Electrum server not detected. Install <strong>electrs</strong> on your Umbrel for private balance lookups. Without it, wallet scanning is unavailable.
     </div>
     {{end}}

@@ -67,20 +67,43 @@ func main() {
 	httpLogger := log.New(os.Stdout, "[http] ", log.LstdFlags)
 	handler := web.NewHandler(database, lndClient, priceCache, database, httpLogger)
 
-	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum)
+	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)
+	walletLogger := log.New(os.Stdout, "[wallet] ", log.LstdFlags)
+	var walletScannerSet bool
+
+	// Try Electrum first (preferred — fast per-address lookups)
 	if cfg.ElectrumHost != "" {
-		walletLogger := log.New(os.Stdout, "[wallet] ", log.LstdFlags)
 		electrumClient, err := wallet.NewElectrumClient(context.Background(), cfg.ElectrumHost, cfg.ElectrumPort)
 		if err != nil {
-			walletLogger.Printf("Electrum not available (%s:%d): %v — wallet scanning disabled",
+			walletLogger.Printf("Electrum not available (%s:%d): %v",
 				cfg.ElectrumHost, cfg.ElectrumPort, err)
 		} else {
 			defer electrumClient.Close()
 			walletLogger.Printf("connected to Electrum at %s:%d", cfg.ElectrumHost, cfg.ElectrumPort)
 			scanner := wallet.NewScanner(electrumClient, wallet.WithLogger(walletLogger))
 			handler.SetWalletScanner(wallet.NewScannerAdapter(scanner))
+			walletScannerSet = true
 		}
+	}
+
+	// Fall back to Bitcoin Core RPC (works on pruned nodes, but slower)
+	if !walletScannerSet && cfg.BitcoinRPCConfigured() {
+		opts := []wallet.BitcoinRPCOption{wallet.WithRPCLogger(walletLogger)}
+		if cfg.BitcoinRPCCookiePath != "" {
+			opts = append(opts, wallet.WithCookieAuth(cfg.BitcoinRPCCookiePath))
+		} else {
+			opts = append(opts, wallet.WithUserPassAuth(cfg.BitcoinRPCUser, cfg.BitcoinRPCPassword))
+		}
+		rpcScanner := wallet.NewBitcoinRPCScanner(cfg.BitcoinRPCHost, cfg.BitcoinRPCPort, opts...)
+		handler.SetWalletScanner(rpcScanner)
+		walletScannerSet = true
+		walletLogger.Printf("using Bitcoin Core RPC at %s:%d for wallet scanning (scantxoutset)",
+			cfg.BitcoinRPCHost, cfg.BitcoinRPCPort)
+	}
+
+	if !walletScannerSet {
+		walletLogger.Printf("wallet scanning disabled (no Electrum or Bitcoin RPC configured)")
 	}
 
 	srv := web.NewServer(handler, cfg.AppPort, httpLogger)
