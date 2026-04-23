@@ -58,6 +58,7 @@
   <div style="margin-top: 12px; font-size: 0.85em; color: var(--text-muted); display: flex; gap: 16px; flex-wrap: wrap;">
     <span>On-chain: {{formatSats .WalletBalanceSats}}</span>
     <span>Channels: {{formatSats .ChannelLocalBalanceSats}}</span>
+    {{if .ColdStorageSats}}<span>Cold storage: {{formatSats .ColdStorageSats}}</span>{{end}}
     {{if .ExchangeBalanceSats}}<span>Exchange: {{formatSats .ExchangeBalanceSats}}</span>{{end}}
   </div>
   {{if .FeesAllTimeSats}}

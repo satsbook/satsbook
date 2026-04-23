@@ -41,6 +41,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/wallets", handler.HandleAddWallet)
 	mux.HandleFunc("/api/wallets/delete", handler.HandleRemoveWallet)
 	mux.HandleFunc("/api/wallets/refresh", handler.HandleRefreshWallet)
+	mux.HandleFunc("/api/wallets/refresh-all", handler.HandleRefreshAll)
 	mux.Handle("/api/import/strike/clear", handler.HandleClearImport("strike"))
 	mux.Handle("/api/import/river/clear", handler.HandleClearImport("river"))
 	mux.Handle("/api/import/coinbase/clear", handler.HandleClearImport("coinbase"))
@@ -50,7 +51,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 			Addr:         fmt.Sprintf(":%d", port),
 			Handler:      requestLogger(mux, logger),
 			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
+			WriteTimeout: 5 * time.Minute,
 			IdleTimeout:  60 * time.Second,
 		},
 		logger: logger,

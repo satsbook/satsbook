@@ -34,11 +34,21 @@
 
     <!-- Total balance card -->
     {{if .Wallets}}
-    <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px;">
-      <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Total Cold Storage</div>
-      <div style="font-size: 1.5rem; font-weight: 700; margin-top: 4px;">{{formatSats .TotalBalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span></div>
-      {{if gt .BTCPriceUSD 0.0}}
-      <div style="color: var(--text-muted); font-size: 0.85rem;">{{formatUSD .TotalBalanceUSD}}</div>
+    <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+      <div>
+        <div style="color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;">Total Cold Storage</div>
+        <div style="font-size: 1.5rem; font-weight: 700; margin-top: 4px;">{{formatSats .TotalBalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span></div>
+        {{if gt .BTCPriceUSD 0.0}}
+        <div style="color: var(--text-muted); font-size: 0.85rem;">{{formatUSD .TotalBalanceUSD}}</div>
+        {{end}}
+      </div>
+      {{if .ElectrumAvailable}}
+      <form method="post" action="/api/wallets/refresh-all" hx-post="/api/wallets/refresh-all" hx-swap="none" style="margin: 0;">
+        <button type="submit" class="scan-btn" style="background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 0.8rem; font-weight: 600;">
+          <span class="scan-label">Scan All</span>
+          <span class="htmx-indicator scan-spinner" style="border-top-color: #fff;"></span>
+        </button>
+      </form>
       {{end}}
     </div>
     {{end}}
@@ -64,11 +74,11 @@
             <div style="font-weight: 600;">{{formatSats .BalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span></div>
           </div>
           <div style="display: flex; gap: 4px;">
-            <form method="post" action="/api/wallets/refresh" hx-post="/api/wallets/refresh" hx-swap="none" hx-indicator="#scan-spinner-{{.ID}}" style="margin: 0;">
+            <form method="post" action="/api/wallets/refresh" hx-post="/api/wallets/refresh" hx-swap="none" style="margin: 0;">
               <input type="hidden" name="id" value="{{.ID}}">
               <button type="submit" class="scan-btn" style="background: var(--border); border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 0.75rem;" title="Refresh balance">
                 <span class="scan-label">Scan</span>
-                <span id="scan-spinner-{{.ID}}" class="htmx-indicator scan-spinner"></span>
+                <span class="htmx-indicator scan-spinner"></span>
               </button>
             </form>
             <form method="post" action="/api/wallets/delete" hx-post="/api/wallets/delete" hx-swap="none" hx-confirm="Remove this wallet?" style="margin: 0;">
