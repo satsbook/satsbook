@@ -1474,3 +1474,116 @@ func TestTotalWatchedBalance_Empty(t *testing.T) {
 		t.Errorf("total = %d, want 0", total)
 	}
 }
+
+// --- Swan import tests ---
+
+func testSwanRows() []exchange.SwanRow {
+	return []exchange.SwanRow{
+		{
+			Date:         time.Date(2024, 11, 16, 17, 39, 46, 0, time.UTC),
+			Type:         "purchase",
+			AmountBTC:    0.00010975,
+			AmountSat:    10975,
+			AmountUSD:    10.00,
+			CostBasisUSD: 10.00,
+			RawLine:      "11/16/2024 17:36:30,0.00010975,BTC,10.0000000000000000,USD,0.00,USD,\"\"",
+		},
+		{
+			Date:      time.Date(2024, 12, 26, 12, 6, 43, 0, time.UTC),
+			Type:      "deposit",
+			AmountBTC: 0.00098195,
+			AmountSat: 98195,
+			RawLine:   "deposit,2024-12-26 12:06:43+00,UTC,settled,,,,,0.00098195,BTC,,Custodial Transfer,,",
+		},
+		{
+			Date:          time.Date(2024, 11, 27, 4, 41, 25, 0, time.UTC),
+			Type:          "withdrawal",
+			TransactionID: "64d3be26d327c4ca",
+			AmountBTC:     -0.00074465,
+			AmountSat:     -74465,
+			RawLine:       "2024-11-27 00:30:25+00,UTC,64d3be26d327c4ca,2024-11-27 04:41:25+00,,settled,0.00074465,f,108.189.12.201",
+		},
+	}
+}
+
+func TestImportSwanCSV_Basic(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testSwanRows()
+	summary, err := d.ImportSwanCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.Total != 3 {
+		t.Errorf("expected total 3, got %d", summary.Total)
+	}
+	if summary.NewPurchases != 1 {
+		t.Errorf("expected 1 new purchase, got %d", summary.NewPurchases)
+	}
+	if summary.Duplicates != 0 {
+		t.Errorf("expected 0 duplicates, got %d", summary.Duplicates)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'swan'").Scan(&count)
+	if count != 3 {
+		t.Errorf("expected 3 exchange_imports rows, got %d", count)
+	}
+
+	// btc_lots: 1 purchase + 1 deposit + 1 withdrawal = 3 lots
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'swan'").Scan(&count)
+	if count != 3 {
+		t.Errorf("expected 3 btc_lots rows, got %d", count)
+	}
+
+	// Net sats: 10975 + 98195 - 74465 = 34705
+	var totalSats int64
+	d.db.QueryRow("SELECT SUM(amount_sat) FROM btc_lots WHERE source = 'swan'").Scan(&totalSats)
+	if totalSats != 34705 {
+		t.Errorf("expected net 34705 sats, got %d", totalSats)
+	}
+
+	// Only the purchase lot should have a price
+	var priceUSD float64
+	d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'swan' AND amount_sat > 0 AND price_usd > 0").Scan(&priceUSD)
+	if priceUSD != 10.00 {
+		t.Errorf("expected purchase cost basis 10.00, got %f", priceUSD)
+	}
+}
+
+func TestImportSwanCSV_Dedup(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := testSwanRows()
+	_, err := d.ImportSwanCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import error: %v", err)
+	}
+
+	summary, err := d.ImportSwanCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import error: %v", err)
+	}
+	if summary.Duplicates != 3 {
+		t.Errorf("expected 3 duplicates, got %d", summary.Duplicates)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 new purchases, got %d", summary.NewPurchases)
+	}
+}
+
+func TestImportSwanCSV_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	summary, err := d.ImportSwanCSV(context.Background(), []exchange.SwanRow{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Total != 0 {
+		t.Errorf("expected total 0, got %d", summary.Total)
+	}
+}
