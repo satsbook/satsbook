@@ -137,6 +137,10 @@ func (m *mockImportStore) ImportCoinbaseCSV(ctx context.Context, rows []exchange
 	return &db.ImportSummary{}, nil
 }
 
+func (m *mockImportStore) ImportSwanCSV(ctx context.Context, rows []exchange.SwanRow) (*db.ImportSummary, error) {
+	return &db.ImportSummary{}, nil
+}
+
 func newTestHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider) *Handler {
 	return NewHandler(store, node, price, &mockImportStore{}, log.New(os.Stderr, "[test] ", 0))
 }
