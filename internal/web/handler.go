@@ -580,6 +580,8 @@ func (h *Handler) HandleCoinbaseImport(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleSwanImport serves POST /api/import/swan.
+// Accepts up to three files: "trades" (purchases), "transfers" (BTC deposits),
+// and "withdrawals". All are optional — upload whichever you have.
 func (h *Handler) HandleSwanImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -592,28 +594,63 @@ func (h *Handler) HandleSwanImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, fh, err := r.FormFile("file")
-	if err != nil {
-		h.logger.Printf("swan import: missing file field: %v", err)
-		h.writeError(w, http.StatusBadRequest, "missing 'file' field in upload")
-		return
-	}
-	defer file.Close()
-	h.logger.Printf("swan import: received file %q (%d bytes)", fh.Filename, fh.Size)
+	var allRows []exchange.SwanRow
+	var allErrors []string
+	var filesProcessed int
 
-	result, err := exchange.ParseSwanCSV(file)
-	if err != nil {
-		h.logger.Printf("swan import: CSV parse error: %v", err)
-		h.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if len(result.Rows) == 0 {
-		h.writeError(w, http.StatusBadRequest, "CSV contains no valid data rows")
-		return
+	// Parse trades file (purchases)
+	if file, fh, err := r.FormFile("trades"); err == nil {
+		defer file.Close()
+		h.logger.Printf("swan import: trades file %q (%d bytes)", fh.Filename, fh.Size)
+		result, err := exchange.ParseSwanTradesCSV(file)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "Trades CSV: "+err.Error())
+			return
+		}
+		allRows = append(allRows, result.Rows...)
+		allErrors = append(allErrors, result.Errors...)
+		filesProcessed++
 	}
 
-	summary, err := h.importStore.ImportSwanCSV(r.Context(), result.Rows)
+	// Parse transfers file (BTC deposits only)
+	if file, fh, err := r.FormFile("transfers"); err == nil {
+		defer file.Close()
+		h.logger.Printf("swan import: transfers file %q (%d bytes)", fh.Filename, fh.Size)
+		result, err := exchange.ParseSwanTransfersCSV(file)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "Transfers CSV: "+err.Error())
+			return
+		}
+		allRows = append(allRows, result.Rows...)
+		allErrors = append(allErrors, result.Errors...)
+		filesProcessed++
+	}
+
+	// Parse withdrawals file
+	if file, fh, err := r.FormFile("withdrawals"); err == nil {
+		defer file.Close()
+		h.logger.Printf("swan import: withdrawals file %q (%d bytes)", fh.Filename, fh.Size)
+		result, err := exchange.ParseSwanWithdrawalsCSV(file)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "Withdrawals CSV: "+err.Error())
+			return
+		}
+		allRows = append(allRows, result.Rows...)
+		allErrors = append(allErrors, result.Errors...)
+		filesProcessed++
+	}
+
+	if filesProcessed == 0 {
+		h.writeError(w, http.StatusBadRequest, "No files uploaded. Please upload at least one Swan CSV.")
+		return
+	}
+
+	if len(allRows) == 0 {
+		h.writeError(w, http.StatusBadRequest, "CSV files contain no valid data rows")
+		return
+	}
+
+	summary, err := h.importStore.ImportSwanCSV(r.Context(), allRows)
 	if err != nil {
 		h.logger.Printf("swan import failed: %v", err)
 		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
@@ -624,7 +661,7 @@ func (h *Handler) HandleSwanImport(w http.ResponseWriter, r *http.Request) {
 		Total:        summary.Total,
 		NewPurchases: summary.NewPurchases,
 		Duplicates:   summary.Duplicates,
-		ParseErrors:  result.Errors,
+		ParseErrors:  allErrors,
 	}
 
 	if r.Header.Get("HX-Request") == "true" {

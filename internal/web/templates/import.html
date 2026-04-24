@@ -87,9 +87,9 @@
 </div>
 
 <div id="panel-swan" class="card" style="max-width: 600px; display: none;">
-  <div class="card-label">Upload Swan CSV</div>
+  <div class="card-label">Upload Swan CSVs</div>
   <p class="card-sub" style="margin-bottom: 16px;">
-    Import your Swan Bitcoin transaction history. Export from Swan: Documents &gt; Exports &gt; Download deposits and purchases CSV.
+    Import your Swan Bitcoin transaction history. Export all three from Swan: Documents &gt; Exports. Upload whichever files you have.
   </p>
 
   <form hx-post="/api/import/swan"
@@ -98,8 +98,19 @@
         hx-encoding="multipart/form-data"
         hx-indicator="#import-loading-swan">
     <div style="margin-bottom: 12px;">
-      <input type="file" name="file" accept=".csv" required
-             style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
+      <label style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">CoinTracker Tax CSV <span style="opacity: 0.6;">(trades file)</span></label>
+      <input type="file" name="trades" accept=".csv"
+             style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%; box-sizing: border-box;">
+    </div>
+    <div style="margin-bottom: 12px;">
+      <label style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">Deposits &amp; Purchases CSV <span style="opacity: 0.6;">(transfers file)</span></label>
+      <input type="file" name="transfers" accept=".csv"
+             style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%; box-sizing: border-box;">
+    </div>
+    <div style="margin-bottom: 12px;">
+      <label style="display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">Withdrawals CSV</label>
+      <input type="file" name="withdrawals" accept=".csv"
+             style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%; box-sizing: border-box;">
     </div>
     <button type="submit" class="filter-form" style="display: inline-block;">
       Upload

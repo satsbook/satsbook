@@ -577,8 +577,32 @@ func (d *DB) ImportSwanCSV(ctx context.Context, rows []exchange.SwanRow) (*Impor
 			continue
 		}
 
-		// Create btc_lot for completed purchases
-		if row.IsPurchase() && row.AmountSat > 0 {
+		// Create btc_lot for purchases, BTC deposits, and withdrawals
+		shouldCreateLot := false
+		var lotAmount int64
+		var lotPrice float64
+
+		switch {
+		case row.IsPurchase() && row.AmountSat > 0:
+			shouldCreateLot = true
+			lotAmount = row.AmountSat
+			lotPrice = row.CostBasisUSD
+			if lotPrice == 0 {
+				lotPrice = row.AmountUSD
+			}
+		case row.IsDeposit() && row.AmountSat > 0:
+			// BTC deposit (e.g. custodial transfer) — no cost basis
+			shouldCreateLot = true
+			lotAmount = row.AmountSat
+			lotPrice = 0
+		case row.IsWithdrawal() && row.AmountSat < 0:
+			// Withdrawal — negative lot to reduce balance
+			shouldCreateLot = true
+			lotAmount = row.AmountSat // already negative
+			lotPrice = 0
+		}
+
+		if shouldCreateLot && lotAmount != 0 {
 			var exists int
 			err := tx.QueryRowContext(ctx,
 				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
@@ -588,19 +612,17 @@ func (d *DB) ImportSwanCSV(ctx context.Context, rows []exchange.SwanRow) (*Impor
 				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
-				priceUSD := row.AmountUSD
-				if priceUSD == 0 {
-					continue
-				}
 				_, err = tx.ExecContext(ctx,
 					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
 					 VALUES (?, ?, ?, ?, ?)`,
-					row.Date, row.AmountSat, priceUSD, "swan", contentHash,
+					row.Date, lotAmount, lotPrice, "swan", contentHash,
 				)
 				if err != nil {
 					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
 				}
-				summary.NewPurchases++
+				if row.IsPurchase() {
+					summary.NewPurchases++
+				}
 			}
 		}
 	}
