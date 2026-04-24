@@ -122,9 +122,11 @@ CREATE TABLE watched_wallets (
 -- SEED DATA
 -- ============================================================
 
--- Sync state (so syncer thinks it's been running)
+-- Sync state (so dashboard shows "last synced" correctly)
 INSERT INTO sync_state (source, last_synced_at, last_offset) VALUES
-    ('forwarding', datetime('now'), 0);
+    ('forwarding', datetime('now'), 0),
+    ('invoices', datetime('now'), 0),
+    ('payments', datetime('now'), 0);
 
 -- Channels (6 active, 1 inactive)
 INSERT INTO channels (chan_id, remote_pubkey, local_balance, remote_balance, active) VALUES
