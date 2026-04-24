@@ -814,11 +814,37 @@ func (h *Handler) HandleAddWallet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := h.walletStore.AddWallet(r.Context(), label, walletType, value, derivationType)
+	id, err := h.walletStore.AddWallet(r.Context(), label, walletType, value, derivationType)
 	if err != nil {
 		h.logger.Printf("add wallet failed: %v", err)
 		h.writeError(w, http.StatusInternalServerError, "failed to add wallet")
 		return
+	}
+
+	// Trigger an immediate scan if scanner is available
+	if h.walletScanner != nil {
+		ctx := r.Context()
+		var balance int64
+		var scanErr error
+
+		switch walletType {
+		case "address":
+			balance, scanErr = h.walletScanner.ScanAddress(ctx, value)
+		case "xpub":
+			balance, scanErr = h.walletScanner.ScanXpub(ctx, value, derivationType)
+		case "descriptor":
+			balance, scanErr = h.walletScanner.ScanDescriptor(ctx, value)
+		}
+
+		if scanErr != nil {
+			h.logger.Printf("initial scan for wallet %d failed: %v", id, scanErr)
+		} else {
+			if err := h.walletStore.UpdateWalletBalance(ctx, id, balance); err != nil {
+				h.logger.Printf("update wallet %d balance failed: %v", id, err)
+			} else {
+				h.logger.Printf("wallet %d (%s) initial scan: %d sats", id, label, balance)
+			}
+		}
 	}
 
 	// Redirect back to wallets page (HTMX or standard)
