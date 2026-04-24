@@ -366,3 +366,60 @@ func TestValidateHeader_TooFewColumns(t *testing.T) {
 		t.Fatal("expected error for too few columns")
 	}
 }
+
+func TestStrikeBalanceMath(t *testing.T) {
+	// Realistic mix: 2 purchases, 1 receive, 1 sale, 1 withdrawal
+	// Net BTC = purchases + receives - sales
+	// 530000 + 106000 + 2287023 - 1590447 = 1332576
+	csv := strikeHeader + `
+fd217b15-9b68-4a3a-8961-b702fdebb2e2,Jan 01 2026 03:09:55,Receive,,,0.02287023,,,,bc1qaddr,,txhash1,
+2acfbd5b-52cd-4f9c-9cda-8f3660617ae6,Jan 02 2026 08:20:58,Sale,1401.67,11.16,-0.01590447,,88832.26,,,Bill pay,,
+tx-003,Jan 03 2026 10:00:00,Purchase,500.00,3.99,0.00530000,,94339.62,500.00,,,hash3,
+tx-004,Jan 04 2026 12:00:00,Buy,100.00,0.79,0.00106000,,94339.62,100.00,,,hash4,
+tx-005,Jan 05 2026 05:11:59,Withdrawal,-110.97,,,,,,,Bill pay to City,,
+`
+	result, err := ParseStrikeCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var totalSat int64
+	for _, r := range result.Rows {
+		totalSat += r.AmountSat
+	}
+
+	// Withdrawal has 0 BTC, so only BTC rows matter:
+	// 2287023 + (-1590447) + 530000 + 106000 = 1332576
+	if totalSat != 1332576 {
+		t.Errorf("net balance = %d sats, want 1332576", totalSat)
+	}
+}
+
+func TestStrikeCostBasisMath(t *testing.T) {
+	// Verify cost basis sums correctly for purchases only
+	csv := strikeHeader + `
+tx-001,Jan 01 2026 10:00:00,Purchase,500.00,3.99,0.00530000,,94339.62,500.00,,,hash1,
+tx-002,Jan 02 2026 10:00:00,Buy,100.00,0.79,0.00106000,,94339.62,100.00,,,hash2,
+tx-003,Jan 03 2026 10:00:00,Receive,,,0.01000000,,,,bc1qaddr,,hash3,
+`
+	result, err := ParseStrikeCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var totalCostBasis float64
+	var totalPurchaseSat int64
+	for _, r := range result.Rows {
+		if r.IsPurchase() {
+			totalCostBasis += r.CostBasisUSD
+			totalPurchaseSat += r.AmountSat
+		}
+	}
+
+	if totalCostBasis != 600.00 {
+		t.Errorf("total cost basis = %f, want 600.00", totalCostBasis)
+	}
+	if totalPurchaseSat != 636000 {
+		t.Errorf("total purchase sats = %d, want 636000", totalPurchaseSat)
+	}
+}
