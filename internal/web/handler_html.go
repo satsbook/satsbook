@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -684,6 +685,7 @@ type WalletsPageData struct {
 	TotalBalanceSats  int64
 	TotalBalanceUSD   float64
 	ElectrumAvailable bool
+	Toast             string
 }
 
 // HandleWalletsPage serves GET /wallets.
@@ -691,6 +693,7 @@ func (h *Handler) HandleWalletsPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	data := WalletsPageData{
 		ElectrumAvailable: h.walletScanner != nil,
+		Toast:             r.URL.Query().Get("toast"),
 	}
 
 	var mu sync.Mutex
@@ -821,35 +824,14 @@ func (h *Handler) HandleAddWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger an immediate scan if scanner is available
+	// Trigger a background scan if scanner is available
 	if h.walletScanner != nil {
-		ctx := r.Context()
-		var balance int64
-		var scanErr error
-
-		switch walletType {
-		case "address":
-			balance, scanErr = h.walletScanner.ScanAddress(ctx, value)
-		case "xpub":
-			balance, scanErr = h.walletScanner.ScanXpub(ctx, value, derivationType)
-		case "descriptor":
-			balance, scanErr = h.walletScanner.ScanDescriptor(ctx, value)
-		}
-
-		if scanErr != nil {
-			h.logger.Printf("initial scan for wallet %d failed: %v", id, scanErr)
-		} else {
-			if err := h.walletStore.UpdateWalletBalance(ctx, id, balance); err != nil {
-				h.logger.Printf("update wallet %d balance failed: %v", id, err)
-			} else {
-				h.logger.Printf("wallet %d (%s) initial scan: %d sats", id, label, balance)
-			}
-		}
+		go h.scanWallet(id, label, walletType, value, derivationType)
 	}
 
-	// Redirect back to wallets page (HTMX or standard)
+	// Redirect back immediately with a toast notification
 	if r.Header.Get("HX-Request") == "true" {
-		w.Header().Set("HX-Redirect", "/wallets")
+		w.Header().Set("HX-Redirect", "/wallets?toast=scanning")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -916,48 +898,24 @@ func (h *Handler) HandleRefreshWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-	wallet, err := h.walletStore.GetWallet(ctx, id)
+	wallet, err := h.walletStore.GetWallet(r.Context(), id)
 	if err != nil || wallet == nil {
 		h.writeError(w, http.StatusNotFound, "wallet not found")
 		return
 	}
 
-	var balance int64
-	switch wallet.Type {
-	case "address":
-		balance, err = h.walletScanner.ScanAddress(ctx, wallet.Value)
-	case "xpub":
-		balance, err = h.walletScanner.ScanXpub(ctx, wallet.Value, wallet.DerivationType)
-	case "descriptor":
-		balance, err = h.walletScanner.ScanDescriptor(ctx, wallet.Value)
-	default:
-		h.writeError(w, http.StatusBadRequest, "unknown wallet type")
-		return
-	}
-
-	if err != nil {
-		h.logger.Printf("scan wallet %d failed: %v", id, err)
-		h.writeError(w, http.StatusInternalServerError, "scan failed: "+err.Error())
-		return
-	}
-
-	if err := h.walletStore.UpdateWalletBalance(ctx, id, balance); err != nil {
-		h.logger.Printf("update wallet balance %d failed: %v", id, err)
-		h.writeError(w, http.StatusInternalServerError, "failed to save balance")
-		return
-	}
+	go h.scanWallet(wallet.ID, wallet.Label, wallet.Type, wallet.Value, wallet.DerivationType)
 
 	if r.Header.Get("HX-Request") == "true" {
-		w.Header().Set("HX-Redirect", "/wallets")
+		w.Header().Set("HX-Redirect", "/wallets?toast=scanning")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+	http.Redirect(w, r, "/wallets?toast=scanning", http.StatusSeeOther)
 }
 
 // HandleRefreshAll handles POST /api/wallets/refresh-all.
-// Scans all wallets sequentially and updates their balances.
+// Kicks off background scans for all wallets and redirects immediately.
 func (h *Handler) HandleRefreshAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -968,48 +926,63 @@ func (h *Handler) HandleRefreshAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-	wallets, err := h.walletStore.ListWallets(ctx)
+	wallets, err := h.walletStore.ListWallets(r.Context())
 	if err != nil {
 		h.logger.Printf("refresh-all: list wallets failed: %v", err)
 		h.writeError(w, http.StatusInternalServerError, "failed to list wallets")
 		return
 	}
 
-	for _, wlt := range wallets {
-		var balance int64
-		var scanErr error
-
-		switch wlt.Type {
-		case "address":
-			balance, scanErr = h.walletScanner.ScanAddress(ctx, wlt.Value)
-		case "xpub":
-			balance, scanErr = h.walletScanner.ScanXpub(ctx, wlt.Value, wlt.DerivationType)
-		case "descriptor":
-			balance, scanErr = h.walletScanner.ScanDescriptor(ctx, wlt.Value)
-		default:
-			h.logger.Printf("refresh-all: unknown wallet type %q for id %d", wlt.Type, wlt.ID)
-			continue
+	// Scan all wallets sequentially in the background
+	go func() {
+		for _, wlt := range wallets {
+			h.scanWallet(wlt.ID, wlt.Label, wlt.Type, wlt.Value, wlt.DerivationType)
 		}
+		h.logger.Printf("refresh-all: completed scanning %d wallets", len(wallets))
+	}()
 
-		if scanErr != nil {
-			h.logger.Printf("refresh-all: scan wallet %d (%s) failed: %v", wlt.ID, wlt.Label, scanErr)
-			continue
-		}
-
-		if err := h.walletStore.UpdateWalletBalance(ctx, wlt.ID, balance); err != nil {
-			h.logger.Printf("refresh-all: update wallet %d failed: %v", wlt.ID, err)
-		} else {
-			h.logger.Printf("refresh-all: wallet %d (%s) = %d sats", wlt.ID, wlt.Label, balance)
-		}
-	}
+	h.logger.Printf("refresh-all: started background scan for %d wallets", len(wallets))
 
 	if r.Header.Get("HX-Request") == "true" {
-		w.Header().Set("HX-Redirect", "/wallets")
+		w.Header().Set("HX-Redirect", "/wallets?toast=scanning")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+	http.Redirect(w, r, "/wallets?toast=scanning", http.StatusSeeOther)
+}
+
+// scanWallet runs a balance scan for a single wallet in the background.
+// It uses context.Background() so it survives after the HTTP request ends.
+func (h *Handler) scanWallet(id int64, label, walletType, value, derivationType string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	var balance int64
+	var err error
+
+	switch walletType {
+	case "address":
+		balance, err = h.walletScanner.ScanAddress(ctx, value)
+	case "xpub":
+		balance, err = h.walletScanner.ScanXpub(ctx, value, derivationType)
+	case "descriptor":
+		balance, err = h.walletScanner.ScanDescriptor(ctx, value)
+	default:
+		h.logger.Printf("scan %q: unknown wallet type %q", label, walletType)
+		return
+	}
+
+	if err != nil {
+		h.logger.Printf("scan %q: %v", label, err)
+		return
+	}
+
+	if err := h.walletStore.UpdateWalletBalance(context.Background(), id, balance); err != nil {
+		h.logger.Printf("scan %q: failed to save balance: %v", label, err)
+		return
+	}
+
+	h.logger.Printf("scan %q: %d sats", label, balance)
 }
 
 // isDescriptor returns true if the value looks like a Bitcoin output descriptor.

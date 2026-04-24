@@ -21,6 +21,13 @@
   </header>
 
   <main class="container" style="padding: 24px 16px;">
+    {{if eq .Toast "scanning"}}
+    <div id="toast" style="background: var(--accent, #f7931a); color: #fff; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
+      <span>Wallet added — scanning in background. Refresh to see balance.</span>
+      <button onclick="this.parentElement.remove()" style="background: none; border: none; color: #fff; cursor: pointer; font-size: 1.1rem; padding: 0 0 0 12px;">&times;</button>
+    </div>
+    <script>setTimeout(function(){var t=document.getElementById('toast');if(t)t.remove();},8000);</script>
+    {{end}}
     <h2 style="margin-bottom: 8px;">Cold Storage Wallets</h2>
     <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 24px;">
       Track Bitcoin addresses and extended public keys (xpub/ypub/zpub) from hardware wallets and cold storage.
