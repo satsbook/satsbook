@@ -1587,3 +1587,373 @@ func TestImportSwanCSV_Empty(t *testing.T) {
 		t.Errorf("expected total 0, got %d", summary.Total)
 	}
 }
+
+func TestImportSwanCSV_PurchaseFallbackToAmountUSD(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.SwanRow{
+		{
+			Date:         time.Date(2024, 11, 16, 17, 39, 46, 0, time.UTC),
+			Type:         "purchase",
+			AmountBTC:    0.001,
+			AmountSat:    100000,
+			AmountUSD:    95.00, // fallback when CostBasisUSD is 0
+			CostBasisUSD: 0,
+			RawLine:      "swan-fallback-1",
+		},
+	}
+
+	summary, err := d.ImportSwanCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 1 {
+		t.Errorf("expected 1 purchase, got %d", summary.NewPurchases)
+	}
+
+	var priceUSD float64
+	d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'swan'").Scan(&priceUSD)
+	if priceUSD != 95.00 {
+		t.Errorf("expected fallback price 95.00, got %f", priceUSD)
+	}
+}
+
+// --- Import cost basis fallback tests (covers AmountUSD fallback path) ---
+
+func TestImportStrikeCSV_CostBasisFallbackToAmountUSD(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.StrikeRow{
+		{
+			TransactionID: "tx-fb1",
+			Date:          time.Now(),
+			Type:          "Purchase",
+			AmountSat:     50000,
+			AmountBTC:     0.0005,
+			AmountUSD:     47.50, // fallback
+			CostBasisUSD:  0,     // no cost basis
+			RawLine:       "tx-fb1,Purchase,0.0005,47.50,0",
+		},
+	}
+
+	summary, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 1 {
+		t.Errorf("expected 1 purchase, got %d", summary.NewPurchases)
+	}
+
+	var priceUSD float64
+	d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'strike'").Scan(&priceUSD)
+	if priceUSD != 47.50 {
+		t.Errorf("expected fallback price 47.50, got %f", priceUSD)
+	}
+}
+
+func TestImportStrikeCSV_NoCostBasisSkipsLot(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.StrikeRow{
+		{
+			TransactionID: "tx-skip1",
+			Date:          time.Now(),
+			Type:          "Purchase",
+			AmountSat:     50000,
+			AmountBTC:     0.0005,
+			AmountUSD:     0, // no cost basis anywhere
+			CostBasisUSD:  0,
+			RawLine:       "tx-skip1,Purchase,0.0005,0,0",
+		},
+	}
+
+	summary, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 0 {
+		t.Errorf("expected 0 purchases (skipped), got %d", summary.NewPurchases)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'strike'").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 lots (skipped), got %d", count)
+	}
+}
+
+func TestImportRiverCSV_CostBasisFallbackToAmountUSD(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.RiverRow{
+		{
+			Date:         time.Date(2024, 9, 26, 19, 59, 41, 0, time.UTC),
+			Type:         "buy",
+			AmountBTC:    0.001,
+			AmountSat:    100000,
+			AmountUSD:    65.00,
+			CostBasisUSD: 0, // no cost basis
+			RawLine:      "river-fallback-1",
+		},
+	}
+
+	summary, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 1 {
+		t.Errorf("expected 1 purchase, got %d", summary.NewPurchases)
+	}
+
+	var priceUSD float64
+	d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'river'").Scan(&priceUSD)
+	if priceUSD != 65.00 {
+		t.Errorf("expected fallback price 65.00, got %f", priceUSD)
+	}
+}
+
+func TestImportCoinbaseCSV_CostBasisFallbackToAmountUSD(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	rows := []exchange.CoinbaseRow{
+		{
+			Date:         time.Date(2023, 8, 1, 19, 50, 7, 0, time.UTC),
+			Type:         "buy",
+			AmountBTC:    0.001,
+			AmountSat:    100000,
+			AmountUSD:    30.00,
+			CostBasisUSD: 0, // no cost basis
+			RawLine:      "coinbase-fallback-1",
+		},
+	}
+
+	summary, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.NewPurchases != 1 {
+		t.Errorf("expected 1 purchase, got %d", summary.NewPurchases)
+	}
+
+	var priceUSD float64
+	d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'coinbase'").Scan(&priceUSD)
+	if priceUSD != 30.00 {
+		t.Errorf("expected fallback price 30.00, got %f", priceUSD)
+	}
+}
+
+// --- LastSyncedAt monotonic clock stripping ---
+
+func TestLastSyncedAt_MonotonicClockStripped(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// Insert a timestamp with Go's monotonic clock suffix
+	_, err := d.db.Exec(
+		`INSERT INTO sync_state (source, last_synced_at, last_offset) VALUES (?, ?, ?)`,
+		"forwarding", "2026-04-24 14:36:58.876607065 +0000 UTC m=+0.015998844", 0,
+	)
+	if err != nil {
+		t.Fatalf("insert sync_state: %v", err)
+	}
+
+	ts, err := d.LastSyncedAt(context.Background())
+	if err != nil {
+		t.Fatalf("LastSyncedAt: %v", err)
+	}
+	if ts.IsZero() {
+		t.Fatal("expected non-zero time, got zero")
+	}
+	if ts.Year() != 2026 || ts.Month() != 4 || ts.Day() != 24 {
+		t.Errorf("expected 2026-04-24, got %v", ts)
+	}
+}
+
+func TestLastSyncedAt_PlainDatetime(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	_, err := d.db.Exec(
+		`INSERT INTO sync_state (source, last_synced_at, last_offset) VALUES (?, ?, ?)`,
+		"forwarding", "2026-04-10 19:20:33", 0,
+	)
+	if err != nil {
+		t.Fatalf("insert sync_state: %v", err)
+	}
+
+	ts, err := d.LastSyncedAt(context.Background())
+	if err != nil {
+		t.Fatalf("LastSyncedAt: %v", err)
+	}
+	if ts.IsZero() {
+		t.Fatal("expected non-zero time")
+	}
+}
+
+func TestLastSyncedAt_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ts, err := d.LastSyncedAt(context.Background())
+	if err != nil {
+		t.Fatalf("LastSyncedAt: %v", err)
+	}
+	if !ts.IsZero() {
+		t.Errorf("expected zero time for empty sync_state, got %v", ts)
+	}
+}
+
+// --- ClearExchangeSource with Swan data ---
+
+func TestClearExchangeSource_Swan(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	if _, err := d.ImportSwanCSV(context.Background(), testSwanRows()); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	res, err := d.ClearExchangeSource(context.Background(), "swan")
+	if err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if res.ImportsRemoved != 3 {
+		t.Errorf("expected 3 imports removed, got %d", res.ImportsRemoved)
+	}
+	if res.LotsRemoved != 3 {
+		t.Errorf("expected 3 lots removed, got %d", res.LotsRemoved)
+	}
+
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM exchange_imports WHERE source = 'swan'").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 imports after clear, got %d", count)
+	}
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'swan'").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 lots after clear, got %d", count)
+	}
+}
+
+// --- Wallet CRUD coverage ---
+
+func TestWalletCRUD_FullLifecycle(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+
+	// Add
+	id, err := d.AddWallet(ctx, "Test Wallet", "address", "bc1qtest", "")
+	if err != nil {
+		t.Fatalf("AddWallet: %v", err)
+	}
+
+	// Get
+	w, err := d.GetWallet(ctx, id)
+	if err != nil {
+		t.Fatalf("GetWallet: %v", err)
+	}
+	if w.Label != "Test Wallet" {
+		t.Errorf("label = %q, want 'Test Wallet'", w.Label)
+	}
+	if w.BalanceSats != 0 {
+		t.Errorf("initial balance = %d, want 0", w.BalanceSats)
+	}
+
+	// Update balance
+	if err := d.UpdateWalletBalance(ctx, id, 500000); err != nil {
+		t.Fatalf("UpdateWalletBalance: %v", err)
+	}
+
+	// Verify update
+	w, _ = d.GetWallet(ctx, id)
+	if w.BalanceSats != 500000 {
+		t.Errorf("balance = %d, want 500000", w.BalanceSats)
+	}
+	if w.LastCheckedAt == nil {
+		t.Error("expected LastCheckedAt to be set after update")
+	}
+
+	// List
+	wallets, err := d.ListWallets(ctx)
+	if err != nil {
+		t.Fatalf("ListWallets: %v", err)
+	}
+	if len(wallets) != 1 {
+		t.Fatalf("expected 1 wallet, got %d", len(wallets))
+	}
+	if wallets[0].BalanceSats != 500000 {
+		t.Errorf("listed balance = %d, want 500000", wallets[0].BalanceSats)
+	}
+
+	// Total watched balance
+	total, err := d.TotalWatchedBalance(ctx)
+	if err != nil {
+		t.Fatalf("TotalWatchedBalance: %v", err)
+	}
+	if total != 500000 {
+		t.Errorf("total = %d, want 500000", total)
+	}
+
+	// Remove
+	if err := d.RemoveWallet(ctx, id); err != nil {
+		t.Fatalf("RemoveWallet: %v", err)
+	}
+
+	// Verify removed
+	w, _ = d.GetWallet(ctx, id)
+	if w != nil {
+		t.Error("expected nil after removal")
+	}
+}
+
+// --- PortfolioPosition ---
+
+func TestPortfolioPosition_WithSwanData(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	if _, err := d.ImportSwanCSV(context.Background(), testSwanRows()); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	pos, err := d.PortfolioPosition(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatalf("PortfolioPosition: %v", err)
+	}
+
+	swan, ok := pos.BySource["swan"]
+	if !ok {
+		t.Fatal("expected swan in BySource")
+	}
+	// Net: 10975 + 98195 - 74465 = 34705
+	if swan.NetSats != 34705 {
+		t.Errorf("swan net sats = %d, want 34705", swan.NetSats)
+	}
+}
+
+// --- ExchangeBalance for Swan ---
+
+func TestExchangeBalance_Swan(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	if _, err := d.ImportSwanCSV(context.Background(), testSwanRows()); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	bal, err := d.ExchangeBalance(context.Background(), "swan")
+	if err != nil {
+		t.Fatalf("ExchangeBalance: %v", err)
+	}
+	// 0.00010975 + 0.00098195 + (-0.00074465) = 0.00034705 BTC = 34705 sats
+	if bal != 34705 {
+		t.Errorf("swan balance = %d, want 34705", bal)
+	}
+}
