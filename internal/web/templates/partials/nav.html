@@ -1,0 +1,8 @@
+{{define "nav"}}
+<nav style="font-size: 0.85rem;">
+  <a href="/" class="nav-link{{if eq . "dashboard"}} nav-active{{end}}">Dashboard</a>
+  <a href="/import" class="nav-link{{if eq . "import"}} nav-active{{end}}">Import</a>
+  <a href="/wallets" class="nav-link{{if eq . "wallets"}} nav-active{{end}}">Wallets</a>
+  <a href="/pl" class="nav-link{{if eq . "pl"}} nav-active{{end}}">P&L</a>
+</nav>
+{{end}}

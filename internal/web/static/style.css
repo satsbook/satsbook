@@ -38,6 +38,9 @@ header {
   justify-content: space-between;
 }
 .logo { font-size: 1.25rem; font-weight: 700; color: var(--accent); text-decoration: none; }
+.nav-link { color: var(--text-muted); text-decoration: none; margin-right: 16px; }
+.nav-link:last-child { margin-right: 0; }
+.nav-link.nav-active { color: var(--text); font-weight: 600; }
 .node-info-bar { font-size: 0.8rem; color: var(--text-muted); }
 .node-info-bar .synced { color: var(--green); }
 .node-info-bar .not-synced { color: var(--red); }

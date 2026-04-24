@@ -12,12 +12,7 @@
     <div class="container header-inner">
       <div style="display: flex; align-items: center; gap: 24px;">
         <a class="logo" href="/">Satsbook</a>
-        <nav style="font-size: 0.85rem;">
-          <a href="/" style="color: var(--text); text-decoration: none; margin-right: 16px;">Dashboard</a>
-          <a href="/import" style="color: var(--text-muted); text-decoration: none; margin-right: 16px;">Import</a>
-          <a href="/wallets" style="color: var(--text-muted); text-decoration: none; margin-right: 16px;">Wallets</a>
-          <a href="/pl" style="color: var(--text-muted); text-decoration: none;">P&L</a>
-        </nav>
+        {{template "nav" "dashboard"}}
       </div>
       <div class="node-info-bar">
         {{if .NodeAlias}}
