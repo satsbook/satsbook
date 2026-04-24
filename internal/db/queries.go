@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/exchange"
@@ -168,6 +169,10 @@ func (d *DB) LastSyncedAt(ctx context.Context) (time.Time, error) {
 	}
 	if !s.Valid || s.String == "" {
 		return time.Time{}, nil
+	}
+	// Strip Go monotonic clock suffix (e.g. " m=+0.015998844") before parsing.
+	if idx := strings.Index(s.String, " m="); idx != -1 {
+		s.String = s.String[:idx]
 	}
 	// Try multiple time formats — the SQLite driver stores Go time values
 	// in Go's default format, not RFC3339.
