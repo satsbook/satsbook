@@ -541,6 +541,99 @@ func (d *DB) ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow)
 	return summary, nil
 }
 
+// ImportSwanCSV imports parsed Swan CSV rows into exchange_imports and btc_lots.
+// The entire operation runs in a single transaction.
+func (d *DB) ImportSwanCSV(ctx context.Context, rows []exchange.SwanRow) (*ImportSummary, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin import transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	summary := &ImportSummary{Total: len(rows)}
+
+	for _, row := range rows {
+		rawData, _ := json.Marshal(row)
+
+		h := sha256.Sum256([]byte(row.RawLine))
+		contentHash := hex.EncodeToString(h[:])
+
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
+			 VALUES (?, ?, ?, ?)`,
+			"swan", contentHash, row.Type, string(rawData),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert exchange import: %w", err)
+		}
+
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("rows affected: %w", err)
+		}
+
+		if affected == 0 {
+			summary.Duplicates++
+			continue
+		}
+
+		// Create btc_lot for purchases, BTC deposits, and withdrawals
+		shouldCreateLot := false
+		var lotAmount int64
+		var lotPrice float64
+
+		switch {
+		case row.IsPurchase() && row.AmountSat > 0:
+			shouldCreateLot = true
+			lotAmount = row.AmountSat
+			lotPrice = row.CostBasisUSD
+			if lotPrice == 0 {
+				lotPrice = row.AmountUSD
+			}
+		case row.IsDeposit() && row.AmountSat > 0:
+			// BTC deposit (e.g. custodial transfer) — no cost basis
+			shouldCreateLot = true
+			lotAmount = row.AmountSat
+			lotPrice = 0
+		case row.IsWithdrawal() && row.AmountSat < 0:
+			// Withdrawal — negative lot to reduce balance
+			shouldCreateLot = true
+			lotAmount = row.AmountSat // already negative
+			lotPrice = 0
+		}
+
+		if shouldCreateLot && lotAmount != 0 {
+			var exists int
+			err := tx.QueryRowContext(ctx,
+				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
+				"swan", contentHash,
+			).Scan(&exists)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
+					 VALUES (?, ?, ?, ?, ?)`,
+					row.Date, lotAmount, lotPrice, "swan", contentHash,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
+				}
+				if row.IsPurchase() {
+					summary.NewPurchases++
+				}
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit import: %w", err)
+	}
+
+	return summary, nil
+}
+
 // SourceBalance holds per-source aggregated balances for the portfolio view.
 type SourceBalance struct {
 	Source        string
@@ -625,6 +718,7 @@ var validExchangeSources = map[string]bool{
 	"strike":   true,
 	"river":    true,
 	"coinbase": true,
+	"swan":     true,
 }
 
 // IsValidExchangeSource reports whether the given source is a known vendor.

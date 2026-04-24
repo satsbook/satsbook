@@ -280,3 +280,73 @@ func TestCoinbaseRow_IsPurchase(t *testing.T) {
 		}
 	}
 }
+
+func TestCoinbaseBalanceMath(t *testing.T) {
+	// Realistic mix: 2 buys, 1 receive, 1 send, 1 sell, 1 convert-from-BTC
+	// Net sats = buys + receives - sends - sells - converts
+	input := coinbasePreamble(coinbaseHeader + "\n" +
+		"buy1,2023-08-01 19:50:07 UTC,Buy,BTC,0.001,USD,$29244.04,$29.24,$30.24,$1.00,Bought BTC\n" +
+		"buy2,2023-08-15 10:00:00 UTC,Buy,BTC,0.002,USD,$29000.00,$58.00,$59.50,$1.50,Bought BTC\n" +
+		"recv1,2023-08-20 12:00:00 UTC,Receive,BTC,0.00054535,USD,$29215.145,$15.93,$15.93,$0.00,Received\n" +
+		"send1,2023-09-01 14:00:00 UTC,Send,BTC,-0.006132,USD,$29244.04,-$179.32,-$179.32,$0.00,Sent BTC\n" +
+		"sell1,2023-09-15 16:00:00 UTC,Sell,BTC,-0.001,USD,$25955.565,$25.96,$25.46,$0.50,Sold BTC\n" +
+		"conv1,2023-10-01 22:05:37 UTC,Convert,BTC,-0.00332439,USD,$23541.785,$74.32,$76.27,$1.96,Converted\n")
+
+	result, err := ParseCoinbaseCSV(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Rows) != 6 {
+		t.Fatalf("expected 6 rows, got %d (errors: %v)", len(result.Rows), result.Errors)
+	}
+
+	var totalSat int64
+	for _, r := range result.Rows {
+		totalSat += r.AmountSat
+	}
+
+	// 100000 + 200000 + 54535 + (-613200) + (-100000) + (-332439) = -690104 [sic]
+	// Actually: let's verify by BTC amounts * 1e8
+	// 0.001 = 100000, 0.002 = 200000, 0.00054535 = 54535,
+	// -0.006132 = -613200, -0.001 = -100000, -0.00332439 = -332439
+	// Total = 100000 + 200000 + 54535 - 613200 - 100000 - 332439 = -691104
+	expected := int64(100000 + 200000 + 54535 - 613200 - 100000 - 332439)
+	if totalSat != expected {
+		t.Errorf("net balance = %d sats, want %d", totalSat, expected)
+	}
+}
+
+func TestCoinbaseCostBasisMath(t *testing.T) {
+	input := coinbasePreamble(coinbaseHeader + "\n" +
+		"buy1,2023-08-01 19:50:07 UTC,Buy,BTC,0.001,USD,$29244.04,$29.24,$30.24,$1.00,Bought BTC\n" +
+		"buy2,2023-08-15 10:00:00 UTC,Advanced Trade Buy,BTC,0.002,USD,$29000.00,$58.00,$59.50,$1.50,Bought BTC\n" +
+		"send1,2023-09-01 14:00:00 UTC,Send,BTC,-0.006132,USD,$29244.04,-$179.32,-$179.32,$0.00,Sent BTC\n")
+
+	result, err := ParseCoinbaseCSV(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var totalCostBasis float64
+	var totalFeeUSD float64
+	var totalPurchaseSat int64
+	for _, r := range result.Rows {
+		if r.IsPurchase() {
+			totalCostBasis += r.CostBasisUSD
+			totalFeeUSD += r.FeeUSD
+			totalPurchaseSat += r.AmountSat
+		}
+	}
+
+	// Buy1: cost basis = 30.24 (Total), fee = 1.00
+	// Buy2: cost basis = 59.50 (Total), fee = 1.50
+	if math.Abs(totalCostBasis-89.74) > 0.001 {
+		t.Errorf("total cost basis = %f, want 89.74", totalCostBasis)
+	}
+	if math.Abs(totalFeeUSD-2.50) > 0.001 {
+		t.Errorf("total fees = %f, want 2.50", totalFeeUSD)
+	}
+	if totalPurchaseSat != 300000 {
+		t.Errorf("total purchase sats = %d, want 300000", totalPurchaseSat)
+	}
+}

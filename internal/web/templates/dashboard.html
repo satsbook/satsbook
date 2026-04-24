@@ -120,7 +120,7 @@
     {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .WalletBalanceUSD}}</div>{{end}}
   </div>
 
-  {{if or .StrikeBalanceSats .RiverBalanceSats .CoinbaseBalanceSats}}
+  {{if or .StrikeBalanceSats .RiverBalanceSats .CoinbaseBalanceSats .SwanBalanceSats}}
   <div class="card">
     <div class="card-label">Exchange Balance <span style="font-size:0.75em;color:var(--text-muted);">(from CSV import)</span></div>
     <div class="card-value">{{formatSats .ExchangeBalanceSats}} <small>sats</small></div>
@@ -129,6 +129,7 @@
       {{if .StrikeBalanceSats}}<div>Strike: {{formatSats .StrikeBalanceSats}} sats</div>{{end}}
       {{if .RiverBalanceSats}}<div>River: {{formatSats .RiverBalanceSats}} sats</div>{{end}}
       {{if .CoinbaseBalanceSats}}<div>Coinbase: {{formatSats .CoinbaseBalanceSats}} sats</div>{{end}}
+      {{if .SwanBalanceSats}}<div>Swan: {{formatSats .SwanBalanceSats}} sats</div>{{end}}
     </div>
   </div>
   {{end}}

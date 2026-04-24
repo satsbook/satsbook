@@ -46,6 +46,8 @@ type DashboardData struct {
 	RiverBalanceUSD       float64
 	CoinbaseBalanceSats   int64
 	CoinbaseBalanceUSD    float64
+	SwanBalanceSats       int64
+	SwanBalanceUSD        float64
 	ExchangeBalanceSats   int64
 	ExchangeBalanceUSD    float64
 
@@ -285,6 +287,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.StrikeBalanceSats = res.portfolioAll.BySource["strike"].NetSats
 		data.RiverBalanceSats = res.portfolioAll.BySource["river"].NetSats
 		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
+		data.SwanBalanceSats = res.portfolioAll.BySource["swan"].NetSats
 		data.ExchangeBalanceSats = res.portfolioAll.ExchangeNetSats
 	}
 
@@ -320,7 +323,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	data.LNDConnected = res.nodeInfo != nil
 	data.HasFeeHistory = data.FeesAllTimeSats > 0
 	data.HasExchangeImports = data.ExchangeBalanceSats != 0 ||
-		data.StrikeBalanceSats != 0 || data.RiverBalanceSats != 0 || data.CoinbaseBalanceSats != 0
+		data.StrikeBalanceSats != 0 || data.RiverBalanceSats != 0 || data.CoinbaseBalanceSats != 0 || data.SwanBalanceSats != 0
 	data.ShowOnboarding = !data.HasFeeHistory && !data.HasExchangeImports
 	data.ShowImportBanner = data.HasFeeHistory && !data.HasExchangeImports
 	data.ShowLNDBanner = data.HasExchangeImports && !data.LNDConnected
@@ -335,6 +338,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.StrikeBalanceUSD = satsToUSD(data.StrikeBalanceSats, res.btcPrice)
 		data.RiverBalanceUSD = satsToUSD(data.RiverBalanceSats, res.btcPrice)
 		data.CoinbaseBalanceUSD = satsToUSD(data.CoinbaseBalanceSats, res.btcPrice)
+		data.SwanBalanceUSD = satsToUSD(data.SwanBalanceSats, res.btcPrice)
 		data.ExchangeBalanceUSD = satsToUSD(data.ExchangeBalanceSats, res.btcPrice)
 		data.TotalBTCUSD = satsToUSD(data.TotalBTCSats, res.btcPrice)
 		data.YTDRoutingFeesUSD = satsToUSD(data.YTDRoutingFeesSats, res.btcPrice)
@@ -422,6 +426,7 @@ type ImportPageData struct {
 	HasStrike   bool
 	HasRiver    bool
 	HasCoinbase bool
+	HasSwan     bool
 }
 
 // HandleImportPage serves GET /import.
@@ -438,6 +443,9 @@ func (h *Handler) HandleImportPage(w http.ResponseWriter, r *http.Request) {
 		}
 		if s, ok := pos.BySource["coinbase"]; ok && (s.NetSats != 0 || s.PurchasedSats != 0) {
 			data.HasCoinbase = true
+		}
+		if s, ok := pos.BySource["swan"]; ok && (s.NetSats != 0 || s.PurchasedSats != 0) {
+			data.HasSwan = true
 		}
 	} else if err != nil {
 		h.logger.Printf("import page: portfolio position lookup failed: %v", err)

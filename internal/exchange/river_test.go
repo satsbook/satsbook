@@ -256,3 +256,66 @@ func TestParseRiverCSV_ReceiveTransaction(t *testing.T) {
 		t.Errorf("expected AmountSat 500000, got %d", r.AmountSat)
 	}
 }
+
+func TestRiverBalanceMath(t *testing.T) {
+	// Realistic mix: 2 buys, 1 receive, 1 send, 1 withdrawal, 1 sell
+	// Net sats = buys + receives - sends - withdrawals - sells
+	csv := `Date,Sent Amount,Sent Currency,Received Amount,Received Currency,Fee Amount,Fee Currency,Tag
+2024-09-26 19:59:41,3.96,USD,0.00006093,BTC,0.04,USD,Buy
+2024-10-03 20:00:02,4.00,USD,0.00006536,BTC,,,Buy
+2024-11-01 10:00:00,,,0.00500000,BTC,,,Receive
+2024-11-27 00:36:42,0.00482484,BTC,,,0.00000242,BTC,
+2024-12-01 12:00:00,0.001,BTC,65.00,USD,0.50,USD,Sell
+2026-03-16 11:24:47,0.01336638,BTC,,,,,Withdrawal`
+
+	result, err := ParseRiverCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Rows) != 6 {
+		t.Fatalf("expected 6 rows, got %d (errors: %v)", len(result.Rows), result.Errors)
+	}
+
+	var totalSat int64
+	for _, r := range result.Rows {
+		totalSat += r.AmountSat
+	}
+
+	// 6093 + 6536 + 500000 + (-482484) + (-100000) + (-1336638) = -1406493
+	if totalSat != -1406493 {
+		t.Errorf("net balance = %d sats, want -1406493", totalSat)
+	}
+}
+
+func TestRiverCostBasisMath(t *testing.T) {
+	csv := `Date,Sent Amount,Sent Currency,Received Amount,Received Currency,Fee Amount,Fee Currency,Tag
+2024-09-26 19:59:41,3.96,USD,0.00006093,BTC,0.04,USD,Buy
+2024-10-03 20:00:02,4.00,USD,0.00006536,BTC,,,Buy
+2024-11-27 00:36:42,0.00482484,BTC,,,0.00000242,BTC,`
+
+	result, err := ParseRiverCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var totalCostBasis float64
+	var totalFeeUSD float64
+	var totalPurchaseSat int64
+	for _, r := range result.Rows {
+		if r.IsPurchase() {
+			totalCostBasis += r.CostBasisUSD
+			totalFeeUSD += r.FeeUSD
+			totalPurchaseSat += r.AmountSat
+		}
+	}
+
+	if totalCostBasis != 7.96 {
+		t.Errorf("total cost basis = %f, want 7.96", totalCostBasis)
+	}
+	if totalFeeUSD != 0.04 {
+		t.Errorf("total fees = %f, want 0.04", totalFeeUSD)
+	}
+	if totalPurchaseSat != 12629 {
+		t.Errorf("total purchase sats = %d, want 12629", totalPurchaseSat)
+	}
+}
