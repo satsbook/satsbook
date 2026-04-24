@@ -1289,3 +1289,188 @@ func TestClearExchangeSource_IsolatesVendors(t *testing.T) {
 		t.Errorf("river lots should be untouched, got %d", riverLots)
 	}
 }
+
+// --- Watched Wallets tests ---
+
+func TestAddWallet(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	id, err := d.AddWallet(context.Background(), "Cold Storage", "xpub", "xpub6CDEark...", "bip84")
+	if err != nil {
+		t.Fatalf("AddWallet: %v", err)
+	}
+	if id <= 0 {
+		t.Errorf("expected positive ID, got %d", id)
+	}
+}
+
+func TestAddWallet_DuplicateRejected(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	_, err := d.AddWallet(ctx, "Wallet A", "xpub", "xpub123", "bip84")
+	if err != nil {
+		t.Fatalf("first AddWallet: %v", err)
+	}
+
+	_, err = d.AddWallet(ctx, "Wallet B", "xpub", "xpub123", "bip84")
+	if err == nil {
+		t.Fatal("expected error on duplicate xpub")
+	}
+}
+
+func TestListWallets_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	wallets, err := d.ListWallets(context.Background())
+	if err != nil {
+		t.Fatalf("ListWallets: %v", err)
+	}
+	if len(wallets) != 0 {
+		t.Errorf("expected 0 wallets, got %d", len(wallets))
+	}
+}
+
+func TestListWallets_OrderedByLabel(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	d.AddWallet(ctx, "Zulu", "address", "bc1qz...", "bip84")
+	d.AddWallet(ctx, "Alpha", "xpub", "xpub6...", "bip44")
+
+	wallets, err := d.ListWallets(ctx)
+	if err != nil {
+		t.Fatalf("ListWallets: %v", err)
+	}
+	if len(wallets) != 2 {
+		t.Fatalf("expected 2, got %d", len(wallets))
+	}
+	if wallets[0].Label != "Alpha" {
+		t.Errorf("expected Alpha first, got %s", wallets[0].Label)
+	}
+}
+
+func TestRemoveWallet(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	id, _ := d.AddWallet(ctx, "Test", "address", "bc1q...", "bip84")
+
+	if err := d.RemoveWallet(ctx, id); err != nil {
+		t.Fatalf("RemoveWallet: %v", err)
+	}
+
+	wallets, _ := d.ListWallets(ctx)
+	if len(wallets) != 0 {
+		t.Errorf("expected 0 after remove, got %d", len(wallets))
+	}
+}
+
+func TestRemoveWallet_NotFound(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	err := d.RemoveWallet(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected error for non-existent wallet")
+	}
+}
+
+func TestGetWallet(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	id, _ := d.AddWallet(ctx, "Coldcard", "xpub", "xpub6CDEark...", "bip84")
+
+	w, err := d.GetWallet(ctx, id)
+	if err != nil {
+		t.Fatalf("GetWallet: %v", err)
+	}
+	if w == nil {
+		t.Fatal("expected wallet, got nil")
+	}
+	if w.Label != "Coldcard" {
+		t.Errorf("label = %s, want Coldcard", w.Label)
+	}
+	if w.Type != "xpub" {
+		t.Errorf("type = %s, want xpub", w.Type)
+	}
+	if w.DerivationType != "bip84" {
+		t.Errorf("derivation = %s, want bip84", w.DerivationType)
+	}
+	if w.LastCheckedAt != nil {
+		t.Errorf("expected nil LastCheckedAt, got %v", w.LastCheckedAt)
+	}
+}
+
+func TestGetWallet_NotFound(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	w, err := d.GetWallet(context.Background(), 999)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if w != nil {
+		t.Errorf("expected nil, got %+v", w)
+	}
+}
+
+func TestUpdateWalletBalance(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	id, _ := d.AddWallet(ctx, "Test", "address", "bc1q...", "bip84")
+
+	if err := d.UpdateWalletBalance(ctx, id, 500000); err != nil {
+		t.Fatalf("UpdateWalletBalance: %v", err)
+	}
+
+	w, _ := d.GetWallet(ctx, id)
+	if w.BalanceSats != 500000 {
+		t.Errorf("balance = %d, want 500000", w.BalanceSats)
+	}
+	if w.LastCheckedAt == nil {
+		t.Error("expected LastCheckedAt to be set")
+	}
+}
+
+func TestTotalWatchedBalance(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	id1, _ := d.AddWallet(ctx, "W1", "address", "bc1q1...", "bip84")
+	id2, _ := d.AddWallet(ctx, "W2", "address", "bc1q2...", "bip84")
+
+	d.UpdateWalletBalance(ctx, id1, 100000)
+	d.UpdateWalletBalance(ctx, id2, 250000)
+
+	total, err := d.TotalWatchedBalance(ctx)
+	if err != nil {
+		t.Fatalf("TotalWatchedBalance: %v", err)
+	}
+	if total != 350000 {
+		t.Errorf("total = %d, want 350000", total)
+	}
+}
+
+func TestTotalWatchedBalance_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	total, err := d.TotalWatchedBalance(context.Background())
+	if err != nil {
+		t.Fatalf("TotalWatchedBalance: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("total = %d, want 0", total)
+	}
+}

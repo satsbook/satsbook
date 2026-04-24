@@ -1,7 +1,10 @@
 package web
 
 import (
+	"context"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,9 +33,11 @@ type DashboardData struct {
 	Routed7d      int64
 
 	// Other stats
-	ActiveChannels    int
-	WalletBalanceSats int64
-	WalletBalanceUSD  float64
+	ActiveChannels          int
+	WalletBalanceSats       int64
+	WalletBalanceUSD        float64
+	ChannelLocalBalanceSats int64
+	ChannelLocalBalanceUSD  float64
 
 	// Exchange balances
 	StrikeBalanceSats   int64
@@ -44,7 +49,11 @@ type DashboardData struct {
 	ExchangeBalanceSats   int64
 	ExchangeBalanceUSD    float64
 
-	// Headline net BTC position (all-time: routing fees + exchange holdings)
+	// Cold storage (watched wallets)
+	ColdStorageSats int64
+	ColdStorageUSD  float64
+
+	// Headline: total BTC under control (wallet + channels + exchange + cold storage)
 	TotalBTCSats int64
 	TotalBTCUSD  float64
 
@@ -95,7 +104,7 @@ type ForwardingTableData struct {
 	To        string
 }
 
-// HandleDashboard serves GET /.
+// HandleDashboard serves GET / (main dashboard page).
 func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -107,13 +116,12 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	since30d := now.AddDate(0, 0, -30)
 	since7d := now.AddDate(0, 0, -7)
 	sinceYTD := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
-
 	data := DashboardData{
 		DefaultFrom: since30d.Format("2006-01-02"),
 		DefaultTo:   now.Format("2006-01-02"),
 	}
 
-	// Fetch all data concurrently
+	// Fetch all data concurrently for the main dashboard
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -130,6 +138,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		priceFetched       time.Time
 		portfolioAll       *db.PortfolioPositionResult
 		portfolioYTD       *db.PortfolioPositionResult
+		coldStorageSats    int64
 	}
 	var res result
 
@@ -245,9 +254,22 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
+	if h.walletStore != nil {
+		fetch(func() {
+			total, err := h.walletStore.TotalWatchedBalance(ctx)
+			if err == nil {
+				mu.Lock()
+				res.coldStorageSats = total
+				mu.Unlock()
+			}
+		})
+	}
+
 	wg.Wait()
 
-	// Assemble template data
+	// Assemble dashboard template data
+	data.ColdStorageSats = res.coldStorageSats
+
 	if res.nodeInfo != nil {
 		data.NodeAlias = res.nodeInfo.Alias
 		data.NodePubKey = res.nodeInfo.PubKey
@@ -264,8 +286,6 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.RiverBalanceSats = res.portfolioAll.BySource["river"].NetSats
 		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
 		data.ExchangeBalanceSats = res.portfolioAll.ExchangeNetSats
-		// Headline: routing fees + net exchange holdings
-		data.TotalBTCSats = res.portfolioAll.RoutingFeesSats + res.portfolioAll.ExchangeNetSats
 	}
 
 	data.Fees30dSats = res.fees30d / 1000
@@ -280,6 +300,14 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	if res.balance != nil {
 		data.WalletBalanceSats = res.balance.TotalSat
 	}
+
+	// Sum channel local balances
+	for _, ch := range res.channels {
+		data.ChannelLocalBalanceSats += ch.LocalBalance
+	}
+
+	// Headline: total BTC = wallet + channels + exchange + cold storage (routing fees already in channels)
+	data.TotalBTCSats = data.WalletBalanceSats + data.ChannelLocalBalanceSats + data.ExchangeBalanceSats + data.ColdStorageSats
 
 	// YTD section
 	if res.portfolioYTD != nil {
@@ -302,6 +330,8 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.PriceFetchedAt = res.priceFetched
 		data.FeesAllTimeUSD = satsToUSD(data.FeesAllTimeSats, res.btcPrice)
 		data.WalletBalanceUSD = satsToUSD(data.WalletBalanceSats, res.btcPrice)
+		data.ChannelLocalBalanceUSD = satsToUSD(data.ChannelLocalBalanceSats, res.btcPrice)
+		data.ColdStorageUSD = satsToUSD(data.ColdStorageSats, res.btcPrice)
 		data.StrikeBalanceUSD = satsToUSD(data.StrikeBalanceSats, res.btcPrice)
 		data.RiverBalanceUSD = satsToUSD(data.RiverBalanceSats, res.btcPrice)
 		data.CoinbaseBalanceUSD = satsToUSD(data.CoinbaseBalanceSats, res.btcPrice)
@@ -638,6 +668,335 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 	if err := h.renderer.Render(w, "pl_layout", data); err != nil {
 		h.logger.Printf("failed to render P&L page: %v", err)
 	}
+}
+
+// WalletsPageData holds data for the /wallets page.
+type WalletsPageData struct {
+	NodeAlias      string
+	NodePubKey     string
+	NodeSynced     bool
+	BlockHeight    uint32
+	LNDVersion     string
+	LastSyncedAt   time.Time
+	BTCPriceUSD    float64
+	PriceFetchedAt time.Time
+
+	Wallets           []db.WatchedWallet
+	TotalBalanceSats  int64
+	TotalBalanceUSD   float64
+	ElectrumAvailable bool
+	Toast             string
+}
+
+// HandleWalletsPage serves GET /wallets.
+func (h *Handler) HandleWalletsPage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	data := WalletsPageData{
+		ElectrumAvailable: h.walletScanner != nil,
+		Toast:             r.URL.Query().Get("toast"),
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	fetch := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+
+	if h.walletStore != nil {
+		fetch(func() {
+			wallets, err := h.walletStore.ListWallets(ctx)
+			if err == nil {
+				mu.Lock()
+				data.Wallets = wallets
+				mu.Unlock()
+			}
+		})
+
+		fetch(func() {
+			total, err := h.walletStore.TotalWatchedBalance(ctx)
+			if err == nil {
+				mu.Lock()
+				data.TotalBalanceSats = total
+				mu.Unlock()
+			}
+		})
+	}
+
+	fetch(func() {
+		info, err := h.node.GetInfo(ctx)
+		if err == nil {
+			mu.Lock()
+			data.NodeAlias = info.Alias
+			data.NodePubKey = info.PubKey
+			data.NodeSynced = info.Synced
+			data.BlockHeight = info.BlockHeight
+			data.LNDVersion = info.Version
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		t, err := h.store.LastSyncedAt(ctx)
+		if err == nil {
+			mu.Lock()
+			data.LastSyncedAt = t
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		price, err := h.price.GetBTCPrice(ctx)
+		if err == nil {
+			mu.Lock()
+			data.BTCPriceUSD = price
+			data.PriceFetchedAt = h.price.FetchedAt()
+			mu.Unlock()
+		}
+	})
+
+	wg.Wait()
+
+	if data.BTCPriceUSD > 0 {
+		data.TotalBalanceUSD = satsToUSD(data.TotalBalanceSats, data.BTCPriceUSD)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "wallets_layout", data); err != nil {
+		h.logger.Printf("failed to render wallets page: %v", err)
+	}
+}
+
+// HandleAddWallet handles POST /api/wallets.
+func (h *Handler) HandleAddWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.walletStore == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "wallet tracking not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	label := r.FormValue("label")
+	value := r.FormValue("value")
+
+	if label == "" || value == "" {
+		h.writeError(w, http.StatusBadRequest, "label and value are required")
+		return
+	}
+
+	// Detect wallet type and derivation
+	walletType := "address"
+	derivationType := "bip84"
+
+	if isDescriptor(value) {
+		walletType = "descriptor"
+		derivationType = ""
+	} else if len(value) > 100 {
+		// Likely an extended public key
+		walletType = "xpub"
+		if len(value) >= 4 {
+			switch value[:4] {
+			case "zpub":
+				derivationType = "bip84"
+			case "ypub":
+				derivationType = "bip49"
+			case "xpub":
+				derivationType = "bip44"
+			}
+		}
+	}
+
+	id, err := h.walletStore.AddWallet(r.Context(), label, walletType, value, derivationType)
+	if err != nil {
+		h.logger.Printf("add wallet failed: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "failed to add wallet")
+		return
+	}
+
+	// Trigger a background scan if scanner is available
+	if h.walletScanner != nil {
+		go h.scanWallet(id, label, walletType, value, derivationType)
+	}
+
+	// Redirect back immediately with a toast notification
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/wallets?toast=scanning")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+}
+
+// HandleRemoveWallet handles POST /api/wallets/delete.
+func (h *Handler) HandleRemoveWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.walletStore == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "wallet tracking not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	idStr := r.FormValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		h.writeError(w, http.StatusBadRequest, "invalid wallet id: "+idStr)
+		return
+	}
+
+	if err := h.walletStore.RemoveWallet(r.Context(), id); err != nil {
+		h.logger.Printf("remove wallet %d failed: %v", id, err)
+		h.writeError(w, http.StatusInternalServerError, "failed to remove wallet")
+		return
+	}
+
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/wallets")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/wallets", http.StatusSeeOther)
+}
+
+// HandleRefreshWallet handles POST /api/wallets/refresh.
+func (h *Handler) HandleRefreshWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.walletStore == nil || h.walletScanner == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "wallet scanning not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form data")
+		return
+	}
+
+	idStr := r.FormValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		h.writeError(w, http.StatusBadRequest, "invalid wallet id")
+		return
+	}
+
+	wallet, err := h.walletStore.GetWallet(r.Context(), id)
+	if err != nil || wallet == nil {
+		h.writeError(w, http.StatusNotFound, "wallet not found")
+		return
+	}
+
+	go h.scanWallet(wallet.ID, wallet.Label, wallet.Type, wallet.Value, wallet.DerivationType)
+
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/wallets?toast=scanning")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/wallets?toast=scanning", http.StatusSeeOther)
+}
+
+// HandleRefreshAll handles POST /api/wallets/refresh-all.
+// Kicks off background scans for all wallets and redirects immediately.
+func (h *Handler) HandleRefreshAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.walletStore == nil || h.walletScanner == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "wallet scanning not available")
+		return
+	}
+
+	wallets, err := h.walletStore.ListWallets(r.Context())
+	if err != nil {
+		h.logger.Printf("refresh-all: list wallets failed: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "failed to list wallets")
+		return
+	}
+
+	// Scan all wallets sequentially in the background
+	go func() {
+		for _, wlt := range wallets {
+			h.scanWallet(wlt.ID, wlt.Label, wlt.Type, wlt.Value, wlt.DerivationType)
+		}
+		h.logger.Printf("refresh-all: completed scanning %d wallets", len(wallets))
+	}()
+
+	h.logger.Printf("refresh-all: started background scan for %d wallets", len(wallets))
+
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/wallets?toast=scanning")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/wallets?toast=scanning", http.StatusSeeOther)
+}
+
+// scanWallet runs a balance scan for a single wallet in the background.
+// It uses context.Background() so it survives after the HTTP request ends.
+func (h *Handler) scanWallet(id int64, label, walletType, value, derivationType string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	var balance int64
+	var err error
+
+	switch walletType {
+	case "address":
+		balance, err = h.walletScanner.ScanAddress(ctx, value)
+	case "xpub":
+		balance, err = h.walletScanner.ScanXpub(ctx, value, derivationType)
+	case "descriptor":
+		balance, err = h.walletScanner.ScanDescriptor(ctx, value)
+	default:
+		h.logger.Printf("scan %q: unknown wallet type %q", label, walletType)
+		return
+	}
+
+	if err != nil {
+		h.logger.Printf("scan %q: %v", label, err)
+		return
+	}
+
+	if err := h.walletStore.UpdateWalletBalance(context.Background(), id, balance); err != nil {
+		h.logger.Printf("scan %q: failed to save balance: %v", label, err)
+		return
+	}
+
+	h.logger.Printf("scan %q: %d sats", label, balance)
+}
+
+// isDescriptor returns true if the value looks like a Bitcoin output descriptor.
+func isDescriptor(v string) bool {
+	prefixes := []string{
+		"wpkh(", "sh(", "wsh(", "pk(", "pkh(", "combo(",
+		"multi(", "sortedmulti(", "tr(", "addr(", "raw(",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(v, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseDateParam parses a "YYYY-MM-DD" query parameter.
