@@ -22,42 +22,40 @@
       <h1 style="margin: 0; font-size: 1.25rem;">{{.Wallet.Label}}</h1>
     </div>
 
-    <div class="card">
+    <div class="card" style="overflow: hidden;">
       <div class="card-label">Wallet Details</div>
-      <table style="width: 100%; table-layout: fixed; font-size: 0.85rem; margin-top: 12px;">
-        <col style="width: 130px;">
-        <col style="width: calc(100% - 130px);">
-        <tr>
-          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Type</td>
-          <td style="padding: 6px 0;">
+      <div style="font-size: 0.85rem; margin-top: 12px;">
+        <div style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <div style="color: var(--text-muted); margin-bottom: 4px;">Type</div>
+          <div>
             <span style="background: var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.75rem;">{{.Wallet.Type}}</span>
             {{if eq .Wallet.Type "xpub"}}
             <span style="background: var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.75rem; margin-left: 4px;">{{.Wallet.DerivationType}}</span>
             {{end}}
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Value</td>
-          <td style="padding: 6px 0; font-family: monospace; overflow-wrap: break-word; word-break: break-all; font-size: 0.8rem;">{{.Wallet.Value}}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Balance</td>
-          <td style="padding: 6px 0; font-weight: 600;">
+          </div>
+        </div>
+        <div style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <div style="color: var(--text-muted); margin-bottom: 4px;">Value</div>
+          <div style="font-family: monospace; font-size: 0.8rem; word-break: break-all; overflow-wrap: break-word;">{{.Wallet.Value}}</div>
+        </div>
+        <div style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <div style="color: var(--text-muted); margin-bottom: 4px;">Balance</div>
+          <div style="font-weight: 600;">
             {{formatSats .Wallet.BalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span>
             {{if gt .BTCPriceUSD 0.0}}
             <span style="color: var(--text-muted); font-weight: 400; font-size: 0.85rem; margin-left: 8px;">{{formatUSD .BalanceUSD}}</span>
             {{end}}
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Last Checked</td>
-          <td style="padding: 6px 0;">{{timeAgoPtr .Wallet.LastCheckedAt}}</td>
-        </tr>
-        <tr>
-          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Added</td>
-          <td style="padding: 6px 0;">{{formatDate .Wallet.CreatedAt}}</td>
-        </tr>
-      </table>
+          </div>
+        </div>
+        <div style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+          <div style="color: var(--text-muted); margin-bottom: 4px;">Last Checked</div>
+          <div>{{timeAgoPtr .Wallet.LastCheckedAt}}</div>
+        </div>
+        <div style="padding: 8px 0;">
+          <div style="color: var(--text-muted); margin-bottom: 4px;">Added</div>
+          <div>{{formatDate .Wallet.CreatedAt}}</div>
+        </div>
+      </div>
     </div>
   </main>
 
