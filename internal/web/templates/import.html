@@ -11,7 +11,7 @@
 <div id="panel-strike" class="card" style="max-width: 600px;">
   <div class="card-label">Upload Strike CSV</div>
   <p class="card-sub" style="margin-bottom: 16px;">
-    Import your Strike transaction history. Export from Strike app: Profile &gt; Account &gt; Transaction History &gt; Download CSV.
+    Import your Strike transaction history. You can select multiple files at once (e.g. quarterly exports). Export from Strike app: Profile &gt; Account &gt; Transaction History &gt; Download CSV.
   </p>
 
   <form hx-post="/api/import/strike"
@@ -20,7 +20,7 @@
         hx-encoding="multipart/form-data"
         hx-indicator="#import-loading">
     <div style="margin-bottom: 12px;">
-      <input type="file" name="file" accept=".csv" required
+      <input type="file" name="file" accept=".csv" required multiple
              style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
     </div>
     <button type="submit" class="filter-form" style="display: inline-block;">
@@ -37,7 +37,7 @@
 <div id="panel-river" class="card" style="max-width: 600px; display: none;">
   <div class="card-label">Upload River CSV</div>
   <p class="card-sub" style="margin-bottom: 16px;">
-    Import your River Financial transaction history. Export from River app: Settings &gt; Account &gt; Download Activity.
+    Import your River Financial transaction history. You can select multiple files at once. Export from River app: Settings &gt; Account &gt; Download Activity.
   </p>
 
   <form hx-post="/api/import/river"
@@ -46,7 +46,7 @@
         hx-encoding="multipart/form-data"
         hx-indicator="#import-loading-river">
     <div style="margin-bottom: 12px;">
-      <input type="file" name="file" accept=".csv" required
+      <input type="file" name="file" accept=".csv" required multiple
              style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
     </div>
     <button type="submit" class="filter-form" style="display: inline-block;">
@@ -63,7 +63,7 @@
 <div id="panel-coinbase" class="card" style="max-width: 600px; display: none;">
   <div class="card-label">Upload Coinbase CSV</div>
   <p class="card-sub" style="margin-bottom: 16px;">
-    Import your Coinbase transaction history (BTC only). Export from Coinbase: Manage Account &gt; Statements &gt; Generate Statement.
+    Import your Coinbase transaction history (BTC only). You can select multiple files at once. Export from Coinbase: Manage Account &gt; Statements &gt; Generate Statement.
   </p>
 
   <form hx-post="/api/import/coinbase"
@@ -72,7 +72,7 @@
         hx-encoding="multipart/form-data"
         hx-indicator="#import-loading-coinbase">
     <div style="margin-bottom: 12px;">
-      <input type="file" name="file" accept=".csv" required
+      <input type="file" name="file" accept=".csv" required multiple
              style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
     </div>
     <button type="submit" class="filter-form" style="display: inline-block;">

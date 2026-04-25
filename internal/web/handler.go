@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -405,28 +406,41 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, fh, err := r.FormFile("file")
-	if err != nil {
-		h.logger.Printf("strike import: missing file field: %v", err)
-		h.writeError(w, http.StatusBadRequest, "missing 'file' field in upload")
-		return
-	}
-	defer file.Close()
-	h.logger.Printf("strike import: received file %q (%d bytes)", fh.Filename, fh.Size)
-
-	result, err := exchange.ParseStrikeCSV(file)
-	if err != nil {
-		h.logger.Printf("strike import: CSV parse error: %v", err)
-		h.writeError(w, http.StatusBadRequest, err.Error())
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
+		h.writeError(w, http.StatusBadRequest, "no files uploaded")
 		return
 	}
 
-	if len(result.Rows) == 0 {
-		h.writeError(w, http.StatusBadRequest, "CSV contains no valid data rows")
+	var allRows []exchange.StrikeRow
+	var allErrors []string
+	for _, fh := range files {
+		file, err := fh.Open()
+		if err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s: failed to open: %v", fh.Filename, err))
+			continue
+		}
+		h.logger.Printf("strike import: received file %q (%d bytes)", fh.Filename, fh.Size)
+		result, err := exchange.ParseStrikeCSV(file)
+		file.Close()
+		if err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s: %v", fh.Filename, err))
+			continue
+		}
+		allRows = append(allRows, result.Rows...)
+		allErrors = append(allErrors, result.Errors...)
+	}
+
+	if len(allRows) == 0 {
+		msg := "no valid data rows found"
+		if len(allErrors) > 0 {
+			msg = allErrors[0]
+		}
+		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 
-	summary, err := h.importStore.ImportStrikeCSV(r.Context(), result.Rows)
+	summary, err := h.importStore.ImportStrikeCSV(r.Context(), allRows)
 	if err != nil {
 		h.logger.Printf("strike import failed: %v", err)
 		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
@@ -434,10 +448,11 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := importResponse{
-		Total:        summary.Total,
-		NewPurchases: summary.NewPurchases,
-		Duplicates:   summary.Duplicates,
-		ParseErrors:  result.Errors,
+		Total:          summary.Total,
+		NewPurchases:   summary.NewPurchases,
+		Duplicates:     summary.Duplicates,
+		FilesProcessed: len(files),
+		ParseErrors:    allErrors,
 	}
 
 	// HTMX request — render partial
@@ -453,10 +468,11 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 }
 
 type importResponse struct {
-	Total        int      `json:"total"`
-	NewPurchases int      `json:"new_purchases"`
-	Duplicates   int      `json:"duplicates"`
-	ParseErrors  []string `json:"parse_errors,omitempty"`
+	Total          int      `json:"total"`
+	NewPurchases   int      `json:"new_purchases"`
+	Duplicates     int      `json:"duplicates"`
+	FilesProcessed int      `json:"files_processed,omitempty"`
+	ParseErrors    []string `json:"parse_errors,omitempty"`
 }
 
 // HandleRiverImport serves POST /api/import/river.
@@ -473,28 +489,41 @@ func (h *Handler) HandleRiverImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, fh, err := r.FormFile("file")
-	if err != nil {
-		h.logger.Printf("river import: missing file field: %v", err)
-		h.writeError(w, http.StatusBadRequest, "missing 'file' field in upload")
-		return
-	}
-	defer file.Close()
-	h.logger.Printf("river import: received file %q (%d bytes)", fh.Filename, fh.Size)
-
-	result, err := exchange.ParseRiverCSV(file)
-	if err != nil {
-		h.logger.Printf("river import: CSV parse error: %v", err)
-		h.writeError(w, http.StatusBadRequest, err.Error())
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
+		h.writeError(w, http.StatusBadRequest, "no files uploaded")
 		return
 	}
 
-	if len(result.Rows) == 0 {
-		h.writeError(w, http.StatusBadRequest, "CSV contains no valid data rows")
+	var allRows []exchange.RiverRow
+	var allErrors []string
+	for _, fh := range files {
+		file, err := fh.Open()
+		if err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s: failed to open: %v", fh.Filename, err))
+			continue
+		}
+		h.logger.Printf("river import: received file %q (%d bytes)", fh.Filename, fh.Size)
+		result, err := exchange.ParseRiverCSV(file)
+		file.Close()
+		if err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s: %v", fh.Filename, err))
+			continue
+		}
+		allRows = append(allRows, result.Rows...)
+		allErrors = append(allErrors, result.Errors...)
+	}
+
+	if len(allRows) == 0 {
+		msg := "no valid data rows found"
+		if len(allErrors) > 0 {
+			msg = allErrors[0]
+		}
+		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 
-	summary, err := h.importStore.ImportRiverCSV(r.Context(), result.Rows)
+	summary, err := h.importStore.ImportRiverCSV(r.Context(), allRows)
 	if err != nil {
 		h.logger.Printf("river import failed: %v", err)
 		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
@@ -502,10 +531,11 @@ func (h *Handler) HandleRiverImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := importResponse{
-		Total:        summary.Total,
-		NewPurchases: summary.NewPurchases,
-		Duplicates:   summary.Duplicates,
-		ParseErrors:  result.Errors,
+		Total:          summary.Total,
+		NewPurchases:   summary.NewPurchases,
+		Duplicates:     summary.Duplicates,
+		FilesProcessed: len(files),
+		ParseErrors:    allErrors,
 	}
 
 	// HTMX request — render partial
@@ -533,28 +563,41 @@ func (h *Handler) HandleCoinbaseImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, fh, err := r.FormFile("file")
-	if err != nil {
-		h.logger.Printf("coinbase import: missing file field: %v", err)
-		h.writeError(w, http.StatusBadRequest, "missing 'file' field in upload")
-		return
-	}
-	defer file.Close()
-	h.logger.Printf("coinbase import: received file %q (%d bytes)", fh.Filename, fh.Size)
-
-	result, err := exchange.ParseCoinbaseCSV(file)
-	if err != nil {
-		h.logger.Printf("coinbase import: CSV parse error: %v", err)
-		h.writeError(w, http.StatusBadRequest, err.Error())
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
+		h.writeError(w, http.StatusBadRequest, "no files uploaded")
 		return
 	}
 
-	if len(result.Rows) == 0 {
-		h.writeError(w, http.StatusBadRequest, "CSV contains no BTC transactions")
+	var allRows []exchange.CoinbaseRow
+	var allErrors []string
+	for _, fh := range files {
+		file, err := fh.Open()
+		if err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s: failed to open: %v", fh.Filename, err))
+			continue
+		}
+		h.logger.Printf("coinbase import: received file %q (%d bytes)", fh.Filename, fh.Size)
+		result, err := exchange.ParseCoinbaseCSV(file)
+		file.Close()
+		if err != nil {
+			allErrors = append(allErrors, fmt.Sprintf("%s: %v", fh.Filename, err))
+			continue
+		}
+		allRows = append(allRows, result.Rows...)
+		allErrors = append(allErrors, result.Errors...)
+	}
+
+	if len(allRows) == 0 {
+		msg := "no valid BTC transactions found"
+		if len(allErrors) > 0 {
+			msg = allErrors[0]
+		}
+		h.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 
-	summary, err := h.importStore.ImportCoinbaseCSV(r.Context(), result.Rows)
+	summary, err := h.importStore.ImportCoinbaseCSV(r.Context(), allRows)
 	if err != nil {
 		h.logger.Printf("coinbase import failed: %v", err)
 		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
@@ -562,10 +605,11 @@ func (h *Handler) HandleCoinbaseImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := importResponse{
-		Total:        summary.Total,
-		NewPurchases: summary.NewPurchases,
-		Duplicates:   summary.Duplicates,
-		ParseErrors:  result.Errors,
+		Total:          summary.Total,
+		NewPurchases:   summary.NewPurchases,
+		Duplicates:     summary.Duplicates,
+		FilesProcessed: len(files),
+		ParseErrors:    allErrors,
 	}
 
 	if r.Header.Get("HX-Request") == "true" {
