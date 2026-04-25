@@ -2,7 +2,7 @@
 <div class="card">
   <div class="card-label" style="color: var(--green);">Import Complete</div>
   <p style="margin-top: 8px;">
-    Imported <strong>{{.Total}}</strong> transaction{{if ne .Total 1}}s{{end}},
+    {{if gt .FilesProcessed 1}}Processed <strong>{{.FilesProcessed}}</strong> files — {{end}}Imported <strong>{{.Total}}</strong> transaction{{if ne .Total 1}}s{{end}},
     <strong>{{.NewPurchases}}</strong> new purchase{{if ne .NewPurchases 1}}s{{end}},
     <strong>{{.Duplicates}}</strong> duplicate{{if ne .Duplicates 1}}s{{end}} skipped.
   </p>
