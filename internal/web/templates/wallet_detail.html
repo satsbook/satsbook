@@ -24,9 +24,11 @@
 
     <div class="card" style="max-width: 600px;">
       <div class="card-label">Wallet Details</div>
-      <table style="width: 100%; font-size: 0.85rem; margin-top: 12px;">
+      <table style="width: 100%; table-layout: fixed; font-size: 0.85rem; margin-top: 12px;">
+        <col style="width: 130px;">
+        <col>
         <tr>
-          <td style="padding: 6px 0; color: var(--text-muted); width: 120px;">Type</td>
+          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Type</td>
           <td style="padding: 6px 0;">
             <span style="background: var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.75rem;">{{.Wallet.Type}}</span>
             {{if eq .Wallet.Type "xpub"}}
@@ -35,11 +37,11 @@
           </td>
         </tr>
         <tr>
-          <td style="padding: 6px 0; color: var(--text-muted);">Value</td>
-          <td style="padding: 6px 0; font-family: monospace; word-break: break-all; font-size: 0.8rem;">{{.Wallet.Value}}</td>
+          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Value</td>
+          <td style="padding: 6px 0; font-family: monospace; overflow-wrap: break-word; word-break: break-all; font-size: 0.8rem;">{{.Wallet.Value}}</td>
         </tr>
         <tr>
-          <td style="padding: 6px 0; color: var(--text-muted);">Balance</td>
+          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Balance</td>
           <td style="padding: 6px 0; font-weight: 600;">
             {{formatSats .Wallet.BalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span>
             {{if gt .BTCPriceUSD 0.0}}
@@ -48,11 +50,11 @@
           </td>
         </tr>
         <tr>
-          <td style="padding: 6px 0; color: var(--text-muted);">Last Checked</td>
+          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Last Checked</td>
           <td style="padding: 6px 0;">{{timeAgoPtr .Wallet.LastCheckedAt}}</td>
         </tr>
         <tr>
-          <td style="padding: 6px 0; color: var(--text-muted);">Added</td>
+          <td style="padding: 6px 12px 6px 0; color: var(--text-muted); vertical-align: top;">Added</td>
           <td style="padding: 6px 0;">{{formatDate .Wallet.CreatedAt}}</td>
         </tr>
       </table>
