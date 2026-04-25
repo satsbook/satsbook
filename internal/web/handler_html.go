@@ -999,7 +999,8 @@ type ExchangeDetailData struct {
 	SourceLabel string
 
 	// Summary stats
-	Summary *db.ExchangeSummaryResult
+	Summary    *db.ExchangeSummaryResult
+	BalanceSats int64
 
 	// Transaction list
 	Transactions []db.ExchangeTransaction
@@ -1047,6 +1048,17 @@ func (h *Handler) HandleExchangeDetail(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			mu.Lock()
 			data.Summary = summary
+			mu.Unlock()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		bal, err := h.store.ExchangeBalance(ctx, source)
+		if err == nil {
+			mu.Lock()
+			data.BalanceSats = bal
 			mu.Unlock()
 		}
 	}()
