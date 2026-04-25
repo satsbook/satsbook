@@ -993,6 +993,153 @@ func (h *Handler) scanWallet(id int64, label, walletType, value, derivationType 
 	h.logger.Printf("scan %q: %d sats", label, balance)
 }
 
+// ExchangeDetailData holds data for the exchange transaction detail page.
+type ExchangeDetailData struct {
+	Source      string
+	SourceLabel string
+
+	// Summary stats
+	Summary    *db.ExchangeSummaryResult
+	BalanceSats int64
+
+	// Transaction list
+	Transactions []db.ExchangeTransaction
+	Total        int
+	Page         int
+	Limit        int
+	TotalPages   int
+
+	// Price
+	BTCPriceUSD    float64
+	PriceFetchedAt time.Time
+}
+
+// HandleExchangeDetail serves GET /exchange/{source}.
+func (h *Handler) HandleExchangeDetail(w http.ResponseWriter, r *http.Request) {
+	source := strings.TrimPrefix(r.URL.Path, "/exchange/")
+	if source == "" || (source != "strike" && source != "river" && source != "coinbase" && source != "swan") {
+		http.NotFound(w, r)
+		return
+	}
+
+	labels := map[string]string{"strike": "Strike", "river": "River", "coinbase": "Coinbase", "swan": "Swan"}
+	ctx := r.Context()
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	data := ExchangeDetailData{
+		Source:      source,
+		SourceLabel: labels[source],
+		Page:        page,
+		Limit:       limit,
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		summary, err := h.store.ExchangeSummary(ctx, source, time.Time{})
+		if err == nil {
+			mu.Lock()
+			data.Summary = summary
+			mu.Unlock()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		bal, err := h.store.ExchangeBalance(ctx, source)
+		if err == nil {
+			mu.Lock()
+			data.BalanceSats = bal
+			mu.Unlock()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		result, err := h.store.ListExchangeTransactions(ctx, source, limit, offset)
+		if err == nil {
+			mu.Lock()
+			data.Transactions = result.Transactions
+			data.Total = result.Total
+			mu.Unlock()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		price, err := h.price.GetBTCPrice(ctx)
+		if err == nil {
+			mu.Lock()
+			data.BTCPriceUSD = price
+			data.PriceFetchedAt = h.price.FetchedAt()
+			mu.Unlock()
+		}
+	}()
+
+	wg.Wait()
+
+	if data.Total > 0 {
+		data.TotalPages = (data.Total + limit - 1) / limit
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "exchange_detail_layout", data); err != nil {
+		h.logger.Printf("failed to render exchange detail: %v", err)
+	}
+}
+
+// WalletDetailData holds data for the wallet detail page.
+type WalletDetailData struct {
+	Wallet      *db.WatchedWallet
+	BTCPriceUSD float64
+	BalanceUSD  float64
+}
+
+// HandleWalletDetail serves GET /wallets/{id}.
+func (h *Handler) HandleWalletDetail(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/wallets/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id < 1 {
+		http.NotFound(w, r)
+		return
+	}
+
+	if h.walletStore == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	ctx := r.Context()
+	wallet, err := h.walletStore.GetWallet(ctx, id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	data := WalletDetailData{Wallet: wallet}
+	price, err := h.price.GetBTCPrice(ctx)
+	if err == nil && price > 0 {
+		data.BTCPriceUSD = price
+		data.BalanceUSD = float64(wallet.BalanceSats) / 1e8 * price
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "wallet_detail_layout", data); err != nil {
+		h.logger.Printf("failed to render wallet detail: %v", err)
+	}
+}
+
 // isDescriptor returns true if the value looks like a Bitcoin output descriptor.
 func isDescriptor(v string) bool {
 	prefixes := []string{

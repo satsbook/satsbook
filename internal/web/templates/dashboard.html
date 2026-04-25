@@ -126,10 +126,10 @@
     <div class="card-value">{{formatSats .ExchangeBalanceSats}} <small>sats</small></div>
     {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .ExchangeBalanceUSD}}</div>{{end}}
     <div style="margin-top: 8px; font-size: 0.8em; color: var(--text-muted);">
-      {{if .StrikeBalanceSats}}<div>Strike: {{formatSats .StrikeBalanceSats}} sats</div>{{end}}
-      {{if .RiverBalanceSats}}<div>River: {{formatSats .RiverBalanceSats}} sats</div>{{end}}
-      {{if .CoinbaseBalanceSats}}<div>Coinbase: {{formatSats .CoinbaseBalanceSats}} sats</div>{{end}}
-      {{if .SwanBalanceSats}}<div>Swan: {{formatSats .SwanBalanceSats}} sats</div>{{end}}
+      {{if .StrikeBalanceSats}}<div><a href="/exchange/strike" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">Strike</a>: {{formatSats .StrikeBalanceSats}} sats</div>{{end}}
+      {{if .RiverBalanceSats}}<div><a href="/exchange/river" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">River</a>: {{formatSats .RiverBalanceSats}} sats</div>{{end}}
+      {{if .CoinbaseBalanceSats}}<div><a href="/exchange/coinbase" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">Coinbase</a>: {{formatSats .CoinbaseBalanceSats}} sats</div>{{end}}
+      {{if .SwanBalanceSats}}<div><a href="/exchange/swan" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">Swan</a>: {{formatSats .SwanBalanceSats}} sats</div>{{end}}
     </div>
   </div>
   {{end}}

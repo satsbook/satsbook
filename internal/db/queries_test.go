@@ -1957,3 +1957,70 @@ func TestExchangeBalance_Swan(t *testing.T) {
 		t.Errorf("swan balance = %d, want 34705", bal)
 	}
 }
+
+func TestListExchangeTransactions(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// Empty source returns empty page
+	page, err := d.ListExchangeTransactions(context.Background(), "strike", 10, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if page.Total != 0 || len(page.Transactions) != 0 {
+		t.Errorf("expected empty page, got total=%d txns=%d", page.Total, len(page.Transactions))
+	}
+
+	// Import some rows
+	rows := testStrikeRows()
+	_, err = d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("import error: %v", err)
+	}
+
+	// Fetch all
+	page, err = d.ListExchangeTransactions(context.Background(), "strike", 50, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if page.Total != len(rows) {
+		t.Errorf("total = %d, want %d", page.Total, len(rows))
+	}
+	if len(page.Transactions) != len(rows) {
+		t.Errorf("txns = %d, want %d", len(page.Transactions), len(rows))
+	}
+
+	// Verify fields on first transaction (sorted by date desc)
+	for _, tx := range page.Transactions {
+		if tx.Source != "strike" {
+			t.Errorf("source = %q, want %q", tx.Source, "strike")
+		}
+		if tx.TxType == "" {
+			t.Error("tx_type should not be empty")
+		}
+	}
+
+	// Pagination: limit 1
+	page, err = d.ListExchangeTransactions(context.Background(), "strike", 1, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if page.Total != len(rows) {
+		t.Errorf("total = %d, want %d", page.Total, len(rows))
+	}
+	if len(page.Transactions) != 1 {
+		t.Errorf("txns = %d, want 1", len(page.Transactions))
+	}
+	if page.Page != 1 {
+		t.Errorf("page = %d, want 1", page.Page)
+	}
+
+	// Different source returns 0
+	page, err = d.ListExchangeTransactions(context.Background(), "river", 50, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if page.Total != 0 {
+		t.Errorf("river total = %d, want 0", page.Total)
+	}
+}

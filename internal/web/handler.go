@@ -25,6 +25,7 @@ type DashboardStore interface {
 	LastSyncedAt(ctx context.Context) (time.Time, error)
 	ExchangeBalance(ctx context.Context, source string) (int64, error)
 	ExchangeSummary(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
+	ListExchangeTransactions(ctx context.Context, source string, limit, offset int) (*db.ExchangeTransactionPage, error)
 	PortfolioPosition(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
 }
 
