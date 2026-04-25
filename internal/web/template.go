@@ -44,6 +44,18 @@ func NewRenderer() *Renderer {
 		"add": func(a, b int) int { return a + b },
 		"add64":       func(a, b int64) int64 { return a + b },
 		"seq":         seq,
+		"netSats": func(s *db.ExchangeSummaryResult) int64 {
+			if s == nil {
+				return 0
+			}
+			return s.PurchasedSats + s.ReceivedSats - s.SoldSats - s.SentSats
+		},
+		"costPerBTC": func(costUSD float64, sats int64) float64 {
+			if sats <= 0 {
+				return 0
+			}
+			return costUSD / (float64(sats) / 1e8)
+		},
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of args")

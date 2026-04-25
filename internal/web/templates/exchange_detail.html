@@ -25,6 +25,11 @@
     {{if .Summary}}
     <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px;">
       <div class="card" style="flex: 1; min-width: 140px;">
+        <div class="card-label">Net Balance</div>
+        <div class="card-value" style="font-size: 1.1rem;">{{formatSats (netSats .Summary)}} <small>sats</small></div>
+        <div class="card-sub">{{satsToBTC (netSats .Summary)}} BTC</div>
+      </div>
+      <div class="card" style="flex: 1; min-width: 140px;">
         <div class="card-label">Total Rows</div>
         <div class="card-value" style="font-size: 1.1rem;">{{.Total}}</div>
       </div>
@@ -51,8 +56,15 @@
       </div>
       {{end}}
       <div class="card" style="flex: 1; min-width: 140px;">
-        <div class="card-label">Cost Basis</div>
+        <div class="card-label" style="display: flex; align-items: center; gap: 6px;">
+          Cost Basis
+          <span title="Total USD spent on purchases as reported by {{.SourceLabel}}. Per-BTC price is calculated by dividing total cost basis by total purchased BTC. Some exchanges allow you to edit your cost basis — if yours does, re-export your CSV and re-import to update."
+                style="display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--text-muted); color: var(--text-muted); font-size: 0.65rem; cursor: help; font-style: italic; flex-shrink: 0;">i</span>
+        </div>
         <div class="card-value" style="font-size: 1.1rem;">{{formatUSD .Summary.TotalCostBasisUSD}}</div>
+        {{if .Summary.PurchasedSats}}
+        <div class="card-sub">{{formatUSD (costPerBTC .Summary.TotalCostBasisUSD .Summary.PurchasedSats)}} / BTC</div>
+        {{end}}
       </div>
       {{if gt .Summary.FeesPaidUSD 0.0}}
       <div class="card" style="flex: 1; min-width: 140px;">
