@@ -24,6 +24,8 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	mux.HandleFunc("/import", handler.HandleImportPage)
 	mux.HandleFunc("/pl", handler.HandlePLPage)
 	mux.HandleFunc("/wallets", handler.HandleWalletsPage)
+	mux.HandleFunc("/exchange/", handler.HandleExchangeDetail)
+	mux.HandleFunc("/wallets/", handler.HandleWalletDetail)
 	mux.HandleFunc("/partials/forwarding", handler.HandleForwardingPartial)
 
 	// Static assets (embedded)

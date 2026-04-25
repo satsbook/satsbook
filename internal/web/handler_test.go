@@ -30,8 +30,9 @@ type mockStore struct {
 	dailyFeesFn         func(ctx context.Context, since time.Time) ([]db.DailyFeeStat, error)
 	lastSyncedAtFn      func(ctx context.Context) (time.Time, error)
 	exchangeBalanceFn   func(ctx context.Context, source string) (int64, error)
-	exchangeSummaryFn   func(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
-	portfolioPositionFn func(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
+	exchangeSummaryFn          func(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
+	listExchangeTransactionsFn func(ctx context.Context, source string, limit, offset int) (*db.ExchangeTransactionPage, error)
+	portfolioPositionFn        func(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
 }
 
 func (m *mockStore) FeeSummary(ctx context.Context, since time.Time) (int64, int64, error) {
@@ -72,6 +73,12 @@ func (m *mockStore) ExchangeSummary(ctx context.Context, source string, since ti
 		return m.exchangeSummaryFn(ctx, source, since)
 	}
 	return &db.ExchangeSummaryResult{}, nil
+}
+func (m *mockStore) ListExchangeTransactions(ctx context.Context, source string, limit, offset int) (*db.ExchangeTransactionPage, error) {
+	if m.listExchangeTransactionsFn != nil {
+		return m.listExchangeTransactionsFn(ctx, source, limit, offset)
+	}
+	return &db.ExchangeTransactionPage{}, nil
 }
 func (m *mockStore) PortfolioPosition(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error) {
 	if m.portfolioPositionFn != nil {

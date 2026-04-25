@@ -63,7 +63,7 @@
       {{range .Wallets}}
       <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
         <div>
-          <div style="font-weight: 600;">{{.Label}}</div>
+          <div style="font-weight: 600;"><a href="/wallets/{{.ID}}" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">{{.Label}}</a></div>
           <div style="color: var(--text-muted); font-size: 0.75rem; font-family: monospace; word-break: break-all; max-width: 400px;">
             {{if or (eq .Type "xpub") (eq .Type "descriptor")}}{{truncate .Value 40}}...{{else}}{{.Value}}{{end}}
           </div>

@@ -75,6 +75,8 @@ func NewRenderer() *Renderer {
 			"templates/pl_layout.html",
 			"templates/pl.html",
 			"templates/wallets_layout.html",
+			"templates/exchange_detail.html",
+			"templates/wallet_detail.html",
 		),
 	)
 

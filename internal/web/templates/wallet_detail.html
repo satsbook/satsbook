@@ -1,0 +1,68 @@
+{{define "wallet_detail_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — {{.Wallet.Label}}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <div style="display: flex; align-items: center; gap: 24px;">
+        <a class="logo" href="/">Satsbook</a>
+        {{template "nav" "wallets"}}
+      </div>
+    </div>
+  </header>
+
+  <main class="container" style="padding: 24px 16px;">
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px;">
+      <a href="/wallets" style="color: var(--text-muted); text-decoration: none; font-size: 0.85rem;">&larr; Wallets</a>
+      <h1 style="margin: 0; font-size: 1.25rem;">{{.Wallet.Label}}</h1>
+    </div>
+
+    <div class="card" style="max-width: 600px;">
+      <div class="card-label">Wallet Details</div>
+      <table style="width: 100%; font-size: 0.85rem; margin-top: 12px;">
+        <tr>
+          <td style="padding: 6px 0; color: var(--text-muted); width: 120px;">Type</td>
+          <td style="padding: 6px 0;">
+            <span style="background: var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.75rem;">{{.Wallet.Type}}</span>
+            {{if eq .Wallet.Type "xpub"}}
+            <span style="background: var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.75rem; margin-left: 4px;">{{.Wallet.DerivationType}}</span>
+            {{end}}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: var(--text-muted);">Value</td>
+          <td style="padding: 6px 0; font-family: monospace; word-break: break-all; font-size: 0.8rem;">{{.Wallet.Value}}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: var(--text-muted);">Balance</td>
+          <td style="padding: 6px 0; font-weight: 600;">
+            {{formatSats .Wallet.BalanceSats}} <span style="font-size: 0.75rem; color: var(--text-muted);">sats</span>
+            {{if gt .BTCPriceUSD 0.0}}
+            <span style="color: var(--text-muted); font-weight: 400; font-size: 0.85rem; margin-left: 8px;">{{formatUSD .BalanceUSD}}</span>
+            {{end}}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: var(--text-muted);">Last Checked</td>
+          <td style="padding: 6px 0;">{{timeAgoPtr .Wallet.LastCheckedAt}}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color: var(--text-muted);">Added</td>
+          <td style="padding: 6px 0;">{{formatDate .Wallet.CreatedAt}}</td>
+        </tr>
+      </table>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook</span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}

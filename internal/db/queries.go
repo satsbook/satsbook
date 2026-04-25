@@ -875,6 +875,81 @@ func (d *DB) TotalWatchedBalance(ctx context.Context) (int64, error) {
 	return total, nil
 }
 
+// ExchangeTransaction represents a single exchange import row for display.
+type ExchangeTransaction struct {
+	ID           int64
+	Source       string
+	TxType       string
+	Date         time.Time
+	AmountBTC    float64
+	AmountSats   int64
+	AmountUSD    float64
+	FeeUSD       float64
+	CostBasisUSD float64
+}
+
+// ExchangeTransactionPage holds paginated exchange transaction results.
+type ExchangeTransactionPage struct {
+	Transactions []ExchangeTransaction
+	Total        int
+	Page         int
+	Limit        int
+}
+
+// ListExchangeTransactions returns paginated exchange import rows for a source.
+func (d *DB) ListExchangeTransactions(ctx context.Context, source string, limit, offset int) (*ExchangeTransactionPage, error) {
+	// Count total
+	var total int
+	err := d.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM exchange_imports WHERE source = ?`, source,
+	).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count exchange transactions for %s: %w", source, err)
+	}
+
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, source, tx_type,
+			COALESCE(json_extract(raw_data, '$.Date'), imported_at) as tx_date,
+			COALESCE(json_extract(raw_data, '$.AmountBTC'), 0),
+			COALESCE(json_extract(raw_data, '$.AmountUSD'), 0),
+			COALESCE(json_extract(raw_data, '$.FeeUSD'), 0),
+			COALESCE(json_extract(raw_data, '$.CostBasisUSD'), 0)
+		FROM exchange_imports
+		WHERE source = ?
+		ORDER BY COALESCE(json_extract(raw_data, '$.Date'), imported_at) DESC
+		LIMIT ? OFFSET ?`, source, limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list exchange transactions for %s: %w", source, err)
+	}
+	defer rows.Close()
+
+	var txns []ExchangeTransaction
+	for rows.Next() {
+		var t ExchangeTransaction
+		var dateStr string
+		if err := rows.Scan(&t.ID, &t.Source, &t.TxType, &dateStr, &t.AmountBTC, &t.AmountUSD, &t.FeeUSD, &t.CostBasisUSD); err != nil {
+			return nil, fmt.Errorf("scan exchange transaction: %w", err)
+		}
+		t.Date, _ = time.Parse(time.RFC3339, dateStr)
+		if t.Date.IsZero() {
+			t.Date, _ = time.Parse("2006-01-02T15:04:05Z", dateStr)
+		}
+		t.AmountSats = int64(math.Round(t.AmountBTC * 1e8))
+		txns = append(txns, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate exchange transactions: %w", err)
+	}
+
+	return &ExchangeTransactionPage{
+		Transactions: txns,
+		Total:        total,
+		Page:         offset/limit + 1,
+		Limit:        limit,
+	}, nil
+}
+
 // ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
 // by summing AmountBTC only from rows that actually move BTC (non-zero AmountBTC).
 // USD-only transactions (e.g. cash withdrawals) are excluded.
