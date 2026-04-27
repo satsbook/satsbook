@@ -151,6 +151,70 @@ func TestSeq(t *testing.T) {
 	}
 }
 
+func TestPortfolioChart_Empty(t *testing.T) {
+	html := portfolioChart(nil)
+	if !contains(string(html), "No portfolio data yet") {
+		t.Errorf("unexpected empty chart output: %s", html)
+	}
+}
+
+func TestPortfolioChart_WithData(t *testing.T) {
+	now := time.Now()
+	data := []db.PortfolioSnapshot{
+		{CapturedAt: now.AddDate(0, 0, -2), TotalSats: 1000000, BTCPriceUSD: 60000},
+		{CapturedAt: now.AddDate(0, 0, -1), TotalSats: 1100000, BTCPriceUSD: 61000},
+		{CapturedAt: now, TotalSats: 1050000, BTCPriceUSD: 59000},
+	}
+	html := portfolioChart(data)
+	s := string(html)
+
+	if !contains(s, "<svg") {
+		t.Error("expected SVG element")
+	}
+	if !contains(s, "chart-line") {
+		t.Error("expected chart-line class")
+	}
+	if !contains(s, "chart-dot") {
+		t.Error("expected chart-dot class")
+	}
+	// Should have 3 dots
+	count := countOccurrences(s, `class="chart-dot"`)
+	if count != 3 {
+		t.Errorf("expected 3 dots, found %d", count)
+	}
+	// Should include USD tooltip
+	if !contains(s, "$") {
+		t.Error("expected USD value in tooltip")
+	}
+}
+
+func TestPortfolioChart_SinglePoint(t *testing.T) {
+	data := []db.PortfolioSnapshot{
+		{CapturedAt: time.Now(), TotalSats: 500000, BTCPriceUSD: 0},
+	}
+	html := portfolioChart(data)
+	s := string(html)
+	if !contains(s, "<svg") {
+		t.Error("expected SVG for single point")
+	}
+	// No USD when price is 0
+	if contains(s, "$") {
+		t.Error("expected no USD value when price is 0")
+	}
+}
+
+func TestPortfolioChart_FlatLine(t *testing.T) {
+	now := time.Now()
+	data := []db.PortfolioSnapshot{
+		{CapturedAt: now.AddDate(0, 0, -1), TotalSats: 500000},
+		{CapturedAt: now, TotalSats: 500000},
+	}
+	html := portfolioChart(data)
+	if !contains(string(html), "<svg") {
+		t.Error("expected SVG for flat line (same values)")
+	}
+}
+
 // helpers
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && countOccurrences(s, substr) > 0

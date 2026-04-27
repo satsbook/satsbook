@@ -24,10 +24,23 @@ type Store interface {
 	RunSync(ctx context.Context, fn func(db.SyncTx) error) error
 }
 
+// SnapshotStore captures portfolio snapshots after each sync cycle.
+type SnapshotStore interface {
+	TotalPortfolioSats(ctx context.Context) (int64, error)
+	InsertPortfolioSnapshot(ctx context.Context, totalSats int64, btcPriceUSD float64) error
+}
+
+// PriceProvider fetches the current BTC/USD price for snapshots.
+type PriceProvider interface {
+	GetBTCPrice(ctx context.Context) (float64, error)
+}
+
 // Syncer orchestrates LND data synchronization.
 type Syncer struct {
 	lnd            LNDClient
 	store          Store
+	snapshot       SnapshotStore
+	price          PriceProvider
 	logger         *log.Logger
 	syncInterval   time.Duration
 	maxHistoryDays int
@@ -42,6 +55,12 @@ func New(lnd LNDClient, store Store, logger *log.Logger, syncInterval time.Durat
 		syncInterval:   syncInterval,
 		maxHistoryDays: maxHistoryDays,
 	}
+}
+
+// SetSnapshotStore sets the snapshot store and price provider for portfolio snapshots.
+func (s *Syncer) SetSnapshotStore(ss SnapshotStore, pp PriceProvider) {
+	s.snapshot = ss
+	s.price = pp
 }
 
 // Run blocks until ctx is cancelled, syncing on startup and then on the configured interval.
@@ -68,9 +87,38 @@ func (s *Syncer) Run(ctx context.Context) {
 
 // Sync performs one full synchronization cycle.
 func (s *Syncer) Sync(ctx context.Context) error {
-	return s.store.RunSync(ctx, func(tx db.SyncTx) error {
+	err := s.store.RunSync(ctx, func(tx db.SyncTx) error {
 		return s.syncCycle(ctx, tx)
 	})
+	if err != nil {
+		return err
+	}
+
+	// Capture portfolio snapshot after successful sync
+	if s.snapshot != nil && s.price != nil {
+		s.captureSnapshot(ctx)
+	}
+
+	return nil
+}
+
+// captureSnapshot records the current total portfolio value.
+func (s *Syncer) captureSnapshot(ctx context.Context) {
+	totalSats, err := s.snapshot.TotalPortfolioSats(ctx)
+	if err != nil {
+		s.logger.Printf("snapshot: failed to compute total sats: %v", err)
+		return
+	}
+
+	var btcPrice float64
+	price, err := s.price.GetBTCPrice(ctx)
+	if err == nil {
+		btcPrice = price
+	}
+
+	if err := s.snapshot.InsertPortfolioSnapshot(ctx, totalSats, btcPrice); err != nil {
+		s.logger.Printf("snapshot: failed to insert: %v", err)
+	}
 }
 
 // syncCycle is the core sync logic, executed within a transaction.

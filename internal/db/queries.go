@@ -969,3 +969,222 @@ func (d *DB) ExchangeBalance(ctx context.Context, source string) (int64, error) 
 	}
 	return int64(math.Round(totalBTC.Float64 * 1e8)), nil
 }
+
+// TotalPortfolioSats computes total BTC across on-chain wallet, channels, cold storage, and exchanges.
+func (d *DB) TotalPortfolioSats(ctx context.Context) (int64, error) {
+	var total int64
+
+	// On-chain wallet balance (latest snapshot)
+	var walletSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT total_sat FROM wallet_balance_snapshots ORDER BY captured_at DESC LIMIT 1`,
+	).Scan(&walletSats)
+	if walletSats.Valid {
+		total += walletSats.Int64
+	}
+
+	// Channel local balances
+	var channelSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT SUM(local_balance) FROM channels WHERE active = 1`,
+	).Scan(&channelSats)
+	if channelSats.Valid {
+		total += channelSats.Int64
+	}
+
+	// Cold storage wallets
+	var coldSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT SUM(balance_sats) FROM watched_wallets`,
+	).Scan(&coldSats)
+	if coldSats.Valid {
+		total += coldSats.Int64
+	}
+
+	// Exchange balances (all sources)
+	for _, source := range []string{"strike", "river", "coinbase", "swan"} {
+		bal, err := d.ExchangeBalance(ctx, source)
+		if err == nil {
+			total += bal
+		}
+	}
+
+	return total, nil
+}
+
+// PortfolioSnapshot represents a point-in-time portfolio value.
+type PortfolioSnapshot struct {
+	CapturedAt  time.Time
+	TotalSats   int64
+	BTCPriceUSD float64
+}
+
+// InsertPortfolioSnapshot records the current total portfolio value.
+func (d *DB) InsertPortfolioSnapshot(ctx context.Context, totalSats int64, btcPriceUSD float64) error {
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshots (total_sats, btc_price_usd) VALUES (?, ?)`,
+		totalSats, btcPriceUSD,
+	)
+	if err != nil {
+		return fmt.Errorf("insert portfolio snapshot: %w", err)
+	}
+	return nil
+}
+
+// PortfolioSnapshots returns up to `days` days of portfolio snapshots, one per day (latest per day).
+func (d *DB) PortfolioSnapshots(ctx context.Context, days int) ([]PortfolioSnapshot, error) {
+	since := time.Now().AddDate(0, 0, -days).UTC().Format(time.RFC3339)
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT DATE(p.captured_at) as day,
+			p.total_sats,
+			MAX(p.btc_price_usd, 0)
+		FROM portfolio_snapshots p
+		INNER JOIN (
+			SELECT MAX(id) as max_id
+			FROM portfolio_snapshots
+			WHERE captured_at >= ?
+			GROUP BY DATE(captured_at)
+		) g ON p.id = g.max_id
+		ORDER BY day ASC`, since,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("portfolio snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	var snapshots []PortfolioSnapshot
+	for rows.Next() {
+		var s PortfolioSnapshot
+		var day string
+		if err := rows.Scan(&day, &s.TotalSats, &s.BTCPriceUSD); err != nil {
+			return nil, fmt.Errorf("scan portfolio snapshot: %w", err)
+		}
+		s.CapturedAt, _ = time.Parse("2006-01-02", day)
+		snapshots = append(snapshots, s)
+	}
+	return snapshots, rows.Err()
+}
+
+// BackfillPortfolioSnapshots reconstructs historical portfolio snapshots by replaying
+// exchange transactions and wallet balance snapshots. For each unique date found in
+// the data, it computes the cumulative exchange balance (from CSV imports) plus the
+// wallet balance (from the nearest prior wallet_balance_snapshot). Channel and cold
+// storage balances are not available historically and are excluded from backfill.
+// Only dates without an existing snapshot are filled. Price data is not available
+// historically and is set to 0.
+// BackfillPortfolioSnapshots reconstructs historical portfolio snapshots by replaying
+// exchange transactions and wallet balance snapshots. For each unique date found in
+// the data, it computes the cumulative exchange balance (from CSV imports) plus the
+// wallet balance (from the nearest prior wallet_balance_snapshot). Channel and cold
+// storage balances are not available historically and are excluded from backfill.
+//
+// Backfilled snapshots use btc_price_usd = -1 as a marker so they can be distinguished
+// from live snapshots and safely replaced on re-import. This function is idempotent:
+// calling it multiple times (e.g. after each CSV import) replaces stale backfill data
+// without affecting live syncer snapshots (which have btc_price_usd >= 0).
+func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("backfill: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Remove previous backfilled snapshots (marker: btc_price_usd = -1)
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM portfolio_snapshots WHERE btc_price_usd = -1`)
+	if err != nil {
+		return 0, fmt.Errorf("backfill: clear old: %w", err)
+	}
+
+	// Collect all unique dates from exchange transactions and wallet snapshots.
+	rows, err := tx.QueryContext(ctx,
+		`SELECT DISTINCT DATE(d) as day FROM (
+			SELECT json_extract(raw_data, '$.Date') as d FROM exchange_imports
+			WHERE json_extract(raw_data, '$.Date') IS NOT NULL
+			UNION
+			SELECT captured_at as d FROM wallet_balance_snapshots
+		)
+		WHERE d IS NOT NULL AND DATE(d) IS NOT NULL
+		ORDER BY day ASC`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("backfill: collect dates: %w", err)
+	}
+
+	var dates []string
+	for rows.Next() {
+		var day string
+		if err := rows.Scan(&day); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("backfill: scan date: %w", err)
+		}
+		dates = append(dates, day)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("backfill: iterate dates: %w", err)
+	}
+
+	if len(dates) == 0 {
+		// Still commit to apply the delete (clears stale backfill).
+		return 0, tx.Commit()
+	}
+
+	// For each date, compute the portfolio total and insert.
+	// Skip days that already have a live snapshot (btc_price_usd >= 0).
+	inserted := 0
+	for _, day := range dates {
+		var liveExists int
+		err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM portfolio_snapshots
+			 WHERE DATE(captured_at) = ? AND btc_price_usd >= 0`, day,
+		).Scan(&liveExists)
+		if err != nil {
+			return inserted, fmt.Errorf("backfill: check existing for %s: %w", day, err)
+		}
+		if liveExists > 0 {
+			continue
+		}
+
+		var total int64
+
+		// Exchange balance: sum of all AmountBTC where Date <= this day
+		var exchBTC sql.NullFloat64
+		_ = tx.QueryRowContext(ctx,
+			`SELECT SUM(json_extract(raw_data, '$.AmountBTC'))
+			 FROM exchange_imports
+			 WHERE COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0
+			   AND DATE(json_extract(raw_data, '$.Date')) <= ?`, day,
+		).Scan(&exchBTC)
+		if exchBTC.Valid {
+			total += int64(math.Round(exchBTC.Float64 * 1e8))
+		}
+
+		// Wallet balance: latest snapshot on or before this day
+		var walletSats sql.NullInt64
+		_ = tx.QueryRowContext(ctx,
+			`SELECT total_sat FROM wallet_balance_snapshots
+			 WHERE DATE(captured_at) <= ?
+			 ORDER BY captured_at DESC LIMIT 1`, day,
+		).Scan(&walletSats)
+		if walletSats.Valid {
+			total += walletSats.Int64
+		}
+
+		// Insert with marker btc_price_usd = -1
+		capturedAt := day + " 12:00:00"
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO portfolio_snapshots (captured_at, total_sats, btc_price_usd) VALUES (?, ?, -1)`,
+			capturedAt, total,
+		)
+		if err != nil {
+			return inserted, fmt.Errorf("backfill: insert for %s: %w", day, err)
+		}
+		inserted++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("backfill: commit: %w", err)
+	}
+	return inserted, nil
+}

@@ -56,6 +56,7 @@ func NewRenderer() *Renderer {
 			}
 			return costUSD / (float64(sats) / 1e8)
 		},
+		"portfolioChart": portfolioChart,
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of args")
@@ -208,6 +209,108 @@ func seq(n int) []int {
 		s[i] = i
 	}
 	return s
+}
+
+// portfolioChart generates an inline SVG line chart from portfolio snapshots.
+func portfolioChart(snapshots []db.PortfolioSnapshot) template.HTML {
+	if len(snapshots) == 0 {
+		return template.HTML(`<div class="chart-empty">No portfolio data yet — snapshots are recorded each sync cycle</div>`)
+	}
+
+	const (
+		width     = 800
+		height    = 200
+		padTop    = 10
+		padBottom = 30
+		padLeft   = 70
+		padRight  = 10
+		chartW    = width - padLeft - padRight
+		chartH    = height - padTop - padBottom
+	)
+
+	// Find min/max sats for scaling
+	var minSats, maxSats int64
+	minSats = snapshots[0].TotalSats
+	maxSats = snapshots[0].TotalSats
+	for _, s := range snapshots {
+		if s.TotalSats < minSats {
+			minSats = s.TotalSats
+		}
+		if s.TotalSats > maxSats {
+			maxSats = s.TotalSats
+		}
+	}
+
+	// Add 5% padding to range
+	rangeVal := maxSats - minSats
+	if rangeVal == 0 {
+		rangeVal = 1
+	}
+	pad := rangeVal / 20
+	if pad == 0 {
+		pad = 1
+	}
+	scaleMin := minSats - pad
+	if scaleMin < 0 {
+		scaleMin = 0
+	}
+	scaleMax := maxSats + pad
+	scaleRange := scaleMax - scaleMin
+	if scaleRange == 0 {
+		scaleRange = 1
+	}
+
+	n := len(snapshots)
+	xStep := float64(chartW) / float64(n-1)
+	if n == 1 {
+		xStep = float64(chartW)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, `<svg viewBox="0 0 %d %d" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`, width, height)
+
+	// Y-axis and X-axis
+	fmt.Fprintf(&sb, `<line x1="%d" y1="%d" x2="%d" y2="%d" class="chart-axis"/>`, padLeft, padTop, padLeft, padTop+chartH)
+	fmt.Fprintf(&sb, `<line x1="%d" y1="%d" x2="%d" y2="%d" class="chart-axis"/>`, padLeft, padTop+chartH, padLeft+chartW, padTop+chartH)
+
+	// Y-axis labels
+	fmt.Fprintf(&sb, `<text x="%d" y="%d" class="chart-label" text-anchor="end">%s</text>`, padLeft-5, padTop+10, formatSats(scaleMax))
+	fmt.Fprintf(&sb, `<text x="%d" y="%d" class="chart-label" text-anchor="end">%s</text>`, padLeft-5, padTop+chartH, formatSats(scaleMin))
+
+	// Build polyline points and circles
+	var points strings.Builder
+	for i, s := range snapshots {
+		var x float64
+		if n == 1 {
+			x = float64(padLeft) + float64(chartW)/2
+		} else {
+			x = float64(padLeft) + float64(i)*xStep
+		}
+		y := float64(padTop) + float64(chartH) - (float64(s.TotalSats-scaleMin)/float64(scaleRange))*float64(chartH)
+		fmt.Fprintf(&points, "%.1f,%.1f ", x, y)
+
+		// Tooltip circle for each point
+		usdLabel := ""
+		if s.BTCPriceUSD > 0 {
+			usdVal := float64(s.TotalSats) / 1e8 * s.BTCPriceUSD
+			usdLabel = fmt.Sprintf(" ($%.0f)", usdVal)
+		}
+		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="3" class="chart-dot"><title>%s: %s sats%s</title></circle>`,
+			x, y, s.CapturedAt.Format("Jan 02"), formatSats(s.TotalSats), usdLabel)
+
+		// X-axis labels
+		if i == 0 || i == n-1 || (n > 7 && i%(n/5) == 0) {
+			fmt.Fprintf(&sb, `<text x="%.1f" y="%d" class="chart-label" text-anchor="middle">%s</text>`,
+				x, padTop+chartH+15, s.CapturedAt.Format("01-02"))
+		}
+	}
+
+	// Draw the line
+	fmt.Fprintf(&sb, `<polyline points="%s" class="chart-line" fill="none" stroke="var(--accent, #f7931a)" stroke-width="2"/>`,
+		strings.TrimSpace(points.String()))
+
+	sb.WriteString(`</svg>`)
+	return template.HTML(sb.String())
 }
 
 // feeChart generates an inline SVG bar chart from daily fee data.

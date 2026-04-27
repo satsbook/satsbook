@@ -27,6 +27,8 @@ type DashboardStore interface {
 	ExchangeSummary(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
 	ListExchangeTransactions(ctx context.Context, source string, limit, offset int) (*db.ExchangeTransactionPage, error)
 	PortfolioPosition(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
+	PortfolioSnapshots(ctx context.Context, days int) ([]db.PortfolioSnapshot, error)
+	BackfillPortfolioSnapshots(ctx context.Context) (int, error)
 }
 
 // NodeInfoProvider fetches node info from LND.
@@ -98,6 +100,58 @@ func (h *Handler) SetWalletStore(ws WalletStore) {
 // SetWalletScanner sets the wallet scanner (optional, requires Electrum).
 func (h *Handler) SetWalletScanner(ws WalletScanner) {
 	h.walletScanner = ws
+}
+
+// backfillSnapshots runs portfolio snapshot backfill in the background after imports.
+func (h *Handler) backfillSnapshots(ctx context.Context) {
+	go func() {
+		n, err := h.store.BackfillPortfolioSnapshots(ctx)
+		if err != nil {
+			h.logger.Printf("portfolio backfill error: %v", err)
+		} else if n > 0 {
+			h.logger.Printf("portfolio backfill: inserted %d historical snapshots", n)
+		}
+	}()
+}
+
+// HandlePortfolioBackfill serves POST /api/portfolio/backfill.
+// Reconstructs historical portfolio snapshots from exchange CSVs and wallet data.
+// Uses a detached context so the operation completes even if the user navigates away.
+func (h *Handler) HandlePortfolioBackfill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Use background context — this can take 30s+ and we don't want a
+	// cancelled HTTP request to abort the DB writes mid-transaction.
+	ctx := context.Background()
+
+	n, err := h.store.BackfillPortfolioSnapshots(ctx)
+	if err != nil {
+		h.logger.Printf("portfolio backfill error: %v", err)
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<span style="color:var(--danger,#ef4444);">Backfill failed: %s</span>`, err.Error())
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "backfill failed: "+err.Error())
+		return
+	}
+
+	h.logger.Printf("portfolio backfill: inserted %d historical snapshots", n)
+
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		msg := "No new data to backfill."
+		if n > 0 {
+			msg = fmt.Sprintf("Done — rebuilt %d days of portfolio history.", n)
+		}
+		fmt.Fprintf(w, `<span style="color:var(--success,#4ade80);">%s</span>`, msg)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]int{"inserted": n})
 }
 
 // --- JSON response types ---
@@ -448,6 +502,8 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.backfillSnapshots(r.Context())
+
 	resp := importResponse{
 		Total:          summary.Total,
 		NewPurchases:   summary.NewPurchases,
@@ -531,6 +587,8 @@ func (h *Handler) HandleRiverImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.backfillSnapshots(r.Context())
+
 	resp := importResponse{
 		Total:          summary.Total,
 		NewPurchases:   summary.NewPurchases,
@@ -604,6 +662,8 @@ func (h *Handler) HandleCoinbaseImport(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
 		return
 	}
+
+	h.backfillSnapshots(r.Context())
 
 	resp := importResponse{
 		Total:          summary.Total,
@@ -701,6 +761,8 @@ func (h *Handler) HandleSwanImport(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
 		return
 	}
+
+	h.backfillSnapshots(r.Context())
 
 	resp := importResponse{
 		Total:        summary.Total,

@@ -33,6 +33,7 @@ type mockStore struct {
 	exchangeSummaryFn          func(ctx context.Context, source string, since time.Time) (*db.ExchangeSummaryResult, error)
 	listExchangeTransactionsFn func(ctx context.Context, source string, limit, offset int) (*db.ExchangeTransactionPage, error)
 	portfolioPositionFn        func(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
+	portfolioSnapshotsFn       func(ctx context.Context, days int) ([]db.PortfolioSnapshot, error)
 }
 
 func (m *mockStore) FeeSummary(ctx context.Context, since time.Time) (int64, int64, error) {
@@ -85,6 +86,15 @@ func (m *mockStore) PortfolioPosition(ctx context.Context, since time.Time) (*db
 		return m.portfolioPositionFn(ctx, since)
 	}
 	return &db.PortfolioPositionResult{BySource: map[string]db.SourceBalance{}}, nil
+}
+func (m *mockStore) PortfolioSnapshots(ctx context.Context, days int) ([]db.PortfolioSnapshot, error) {
+	if m.portfolioSnapshotsFn != nil {
+		return m.portfolioSnapshotsFn(ctx, days)
+	}
+	return nil, nil
+}
+func (m *mockStore) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
+	return 0, nil
 }
 
 type mockNodeInfo struct {

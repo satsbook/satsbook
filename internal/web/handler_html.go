@@ -83,7 +83,8 @@ type DashboardData struct {
 	LastSyncedAt time.Time
 
 	// Chart data
-	DailyFees []db.DailyFeeStat
+	DailyFees          []db.DailyFeeStat
+	PortfolioSnapshots []db.PortfolioSnapshot
 
 	// Channel list
 	Channels []db.ChannelStat
@@ -140,7 +141,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		priceFetched       time.Time
 		portfolioAll       *db.PortfolioPositionResult
 		portfolioYTD       *db.PortfolioPositionResult
-		coldStorageSats    int64
+		coldStorageSats int64
 	}
 	var res result
 
@@ -350,6 +351,24 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	if err := h.renderer.Render(w, "layout", data); err != nil {
 		h.logger.Printf("failed to render dashboard: %v", err)
 	}
+}
+
+// HandlePortfolioChartPartial serves GET /partials/portfolio-chart (HTMX partial).
+func (h *Handler) HandlePortfolioChartPartial(w http.ResponseWriter, r *http.Request) {
+	days := parseIntParam(r, "days", 30)
+	if days <= 0 {
+		days = 3650 // "All" — 10 years
+	}
+
+	snaps, err := h.store.PortfolioSnapshots(r.Context(), days)
+	if err != nil {
+		h.logger.Printf("portfolio chart partial error: %v", err)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// portfolioChart returns template.HTML, write it directly
+	html := portfolioChart(snaps)
+	w.Write([]byte(html))
 }
 
 // HandleForwardingPartial serves GET /partials/forwarding (HTMX partial).

@@ -457,6 +457,121 @@ func TestSync_WithForwardingEvents(t *testing.T) {
 	}
 }
 
+// mockSnapshotStore mocks the SnapshotStore interface.
+type mockSnapshotStore struct {
+	totalSats int64
+	totalErr  error
+	inserted  []struct {
+		totalSats   int64
+		btcPriceUSD float64
+	}
+	insertErr error
+}
+
+func (m *mockSnapshotStore) TotalPortfolioSats(ctx context.Context) (int64, error) {
+	return m.totalSats, m.totalErr
+}
+
+func (m *mockSnapshotStore) InsertPortfolioSnapshot(ctx context.Context, totalSats int64, btcPriceUSD float64) error {
+	m.inserted = append(m.inserted, struct {
+		totalSats   int64
+		btcPriceUSD float64
+	}{totalSats, btcPriceUSD})
+	return m.insertErr
+}
+
+// mockPriceProvider mocks the PriceProvider interface.
+type mockPriceProvider struct {
+	price float64
+	err   error
+}
+
+func (m *mockPriceProvider) GetBTCPrice(ctx context.Context) (float64, error) {
+	return m.price, m.err
+}
+
+func TestSync_CapturesSnapshot(t *testing.T) {
+	store := newMockStore()
+	mockLND := &mockLNDClient{
+		channels:          []lnd.Channel{},
+		forwardingHistory: []lnd.ForwardingEvent{},
+		invoices:          []lnd.Invoice{},
+		payments:          []lnd.Payment{},
+		walletBalance:     defaultMockBalance(),
+	}
+
+	ss := &mockSnapshotStore{totalSats: 5_000_000}
+	pp := &mockPriceProvider{price: 65000.0}
+
+	s := newTestSyncer(mockLND, store)
+	s.SetSnapshotStore(ss, pp)
+
+	err := s.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	if len(ss.inserted) != 1 {
+		t.Fatalf("expected 1 snapshot inserted, got %d", len(ss.inserted))
+	}
+	if ss.inserted[0].totalSats != 5_000_000 {
+		t.Errorf("expected 5000000 sats, got %d", ss.inserted[0].totalSats)
+	}
+	if ss.inserted[0].btcPriceUSD != 65000.0 {
+		t.Errorf("expected price 65000, got %f", ss.inserted[0].btcPriceUSD)
+	}
+}
+
+func TestSync_SnapshotPriceError(t *testing.T) {
+	store := newMockStore()
+	mockLND := &mockLNDClient{
+		channels:          []lnd.Channel{},
+		forwardingHistory: []lnd.ForwardingEvent{},
+		invoices:          []lnd.Invoice{},
+		payments:          []lnd.Payment{},
+		walletBalance:     defaultMockBalance(),
+	}
+
+	ss := &mockSnapshotStore{totalSats: 1_000_000}
+	pp := &mockPriceProvider{err: errors.New("price unavailable")}
+
+	s := newTestSyncer(mockLND, store)
+	s.SetSnapshotStore(ss, pp)
+
+	err := s.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	// Snapshot should still be inserted with price=0
+	if len(ss.inserted) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(ss.inserted))
+	}
+	if ss.inserted[0].btcPriceUSD != 0 {
+		t.Errorf("expected price 0 on error, got %f", ss.inserted[0].btcPriceUSD)
+	}
+}
+
+func TestSync_NoSnapshotWithoutStore(t *testing.T) {
+	store := newMockStore()
+	mockLND := &mockLNDClient{
+		channels:          []lnd.Channel{},
+		forwardingHistory: []lnd.ForwardingEvent{},
+		invoices:          []lnd.Invoice{},
+		payments:          []lnd.Payment{},
+		walletBalance:     defaultMockBalance(),
+	}
+
+	s := newTestSyncer(mockLND, store)
+	// No SetSnapshotStore call
+
+	err := s.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	// No panic, no snapshot — just passes
+}
+
 func TestRun_StopsOnCancel(t *testing.T) {
 	store := newMockStore()
 	mockLND := &mockLNDClient{
