@@ -1083,15 +1083,21 @@ func (d *DB) PortfolioSnapshots(ctx context.Context, days int) ([]PortfolioSnaps
 // calling it multiple times (e.g. after each CSV import) replaces stale backfill data
 // without affecting live syncer snapshots (which have btc_price_usd >= 0).
 func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("backfill: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	// Remove previous backfilled snapshots (marker: btc_price_usd = -1)
-	_, err := d.db.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`DELETE FROM portfolio_snapshots WHERE btc_price_usd = -1`)
 	if err != nil {
 		return 0, fmt.Errorf("backfill: clear old: %w", err)
 	}
 
 	// Collect all unique dates from exchange transactions and wallet snapshots.
-	rows, err := d.db.QueryContext(ctx,
+	rows, err := tx.QueryContext(ctx,
 		`SELECT DISTINCT DATE(d) as day FROM (
 			SELECT json_extract(raw_data, '$.Date') as d FROM exchange_imports
 			WHERE json_extract(raw_data, '$.Date') IS NOT NULL
@@ -1104,22 +1110,24 @@ func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("backfill: collect dates: %w", err)
 	}
-	defer rows.Close()
 
 	var dates []string
 	for rows.Next() {
 		var day string
 		if err := rows.Scan(&day); err != nil {
+			rows.Close()
 			return 0, fmt.Errorf("backfill: scan date: %w", err)
 		}
 		dates = append(dates, day)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("backfill: iterate dates: %w", err)
 	}
 
 	if len(dates) == 0 {
-		return 0, nil
+		// Still commit to apply the delete (clears stale backfill).
+		return 0, tx.Commit()
 	}
 
 	// For each date, compute the portfolio total and insert.
@@ -1127,7 +1135,7 @@ func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
 	inserted := 0
 	for _, day := range dates {
 		var liveExists int
-		err := d.db.QueryRowContext(ctx,
+		err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM portfolio_snapshots
 			 WHERE DATE(captured_at) = ? AND btc_price_usd >= 0`, day,
 		).Scan(&liveExists)
@@ -1142,7 +1150,7 @@ func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
 
 		// Exchange balance: sum of all AmountBTC where Date <= this day
 		var exchBTC sql.NullFloat64
-		_ = d.db.QueryRowContext(ctx,
+		_ = tx.QueryRowContext(ctx,
 			`SELECT SUM(json_extract(raw_data, '$.AmountBTC'))
 			 FROM exchange_imports
 			 WHERE COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0
@@ -1154,7 +1162,7 @@ func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
 
 		// Wallet balance: latest snapshot on or before this day
 		var walletSats sql.NullInt64
-		_ = d.db.QueryRowContext(ctx,
+		_ = tx.QueryRowContext(ctx,
 			`SELECT total_sat FROM wallet_balance_snapshots
 			 WHERE DATE(captured_at) <= ?
 			 ORDER BY captured_at DESC LIMIT 1`, day,
@@ -1165,7 +1173,7 @@ func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
 
 		// Insert with marker btc_price_usd = -1
 		capturedAt := day + " 12:00:00"
-		_, err = d.db.ExecContext(ctx,
+		_, err = tx.ExecContext(ctx,
 			`INSERT INTO portfolio_snapshots (captured_at, total_sats, btc_price_usd) VALUES (?, ?, -1)`,
 			capturedAt, total,
 		)
@@ -1175,5 +1183,8 @@ func (d *DB) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
 		inserted++
 	}
 
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("backfill: commit: %w", err)
+	}
 	return inserted, nil
 }
