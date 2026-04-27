@@ -4,6 +4,7 @@
   <p style="margin-top: 8px;">
     {{if gt .FilesProcessed 1}}Processed <strong>{{.FilesProcessed}}</strong> files — {{end}}Imported <strong>{{.Total}}</strong> transaction{{if ne .Total 1}}s{{end}},
     <strong>{{.NewPurchases}}</strong> new purchase{{if ne .NewPurchases 1}}s{{end}},
+    {{if .Updated}}<strong>{{.Updated}}</strong> updated,{{end}}
     <strong>{{.Duplicates}}</strong> duplicate{{if ne .Duplicates 1}}s{{end}} skipped.
   </p>
   {{if .ParseErrors}}

@@ -462,6 +462,161 @@ func TestImportStrikeCSV_Dedup(t *testing.T) {
 	}
 }
 
+func TestImportStrikeCSV_CostBasisUpdate(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	rows := []exchange.StrikeRow{
+		{TransactionID: "tx-100", Date: now, Type: "Purchase", AmountSat: 100000, AmountBTC: 0.001, AmountUSD: 67.00, CostBasisUSD: 67.00, RawLine: "original"},
+	}
+
+	s1, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	if s1.NewPurchases != 1 {
+		t.Fatalf("expected 1 new purchase, got %d", s1.NewPurchases)
+	}
+
+	// Re-import same transaction with updated cost basis
+	rows[0].CostBasisUSD = 72.50
+	rows[0].RawLine = "updated"
+	s2, err := d.ImportStrikeCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if s2.Updated != 1 {
+		t.Errorf("expected 1 updated, got %d", s2.Updated)
+	}
+	if s2.NewPurchases != 0 {
+		t.Errorf("expected 0 new purchases on update, got %d", s2.NewPurchases)
+	}
+
+	// Verify cost basis was updated in btc_lots
+	var priceUSD float64
+	err = d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'strike' AND external_id = 'tx-100'").Scan(&priceUSD)
+	if err != nil {
+		t.Fatalf("query btc_lot: %v", err)
+	}
+	if priceUSD != 72.50 {
+		t.Errorf("expected price_usd 72.50, got %.2f", priceUSD)
+	}
+
+	// Verify only 1 lot exists (not duplicated)
+	var count int
+	d.db.QueryRow("SELECT COUNT(*) FROM btc_lots WHERE source = 'strike'").Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 btc_lot, got %d", count)
+	}
+}
+
+func TestImportRiverCSV_CostBasisUpdate(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	rows := []exchange.RiverRow{
+		{Date: now, Type: "buy", AmountBTC: 0.002, AmountSat: 200000, AmountUSD: 134.00, CostBasisUSD: 134.00, RawLine: "original"},
+	}
+
+	_, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+
+	// Re-import with updated cost basis
+	rows[0].CostBasisUSD = 140.00
+	rows[0].RawLine = "updated"
+	s2, err := d.ImportRiverCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if s2.Updated != 1 {
+		t.Errorf("expected 1 updated, got %d", s2.Updated)
+	}
+
+	// Verify updated price
+	externalID := fmt.Sprintf("%s|%s|%.8f", now.Format("2006-01-02T15:04:05"), "buy", 0.002)
+	var priceUSD float64
+	err = d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'river' AND external_id = ?", externalID).Scan(&priceUSD)
+	if err != nil {
+		t.Fatalf("query btc_lot: %v", err)
+	}
+	if priceUSD != 140.00 {
+		t.Errorf("expected price_usd 140.00, got %.2f", priceUSD)
+	}
+}
+
+func TestImportCoinbaseCSV_CostBasisUpdate(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	rows := []exchange.CoinbaseRow{
+		{Date: now, Type: "buy", AmountBTC: 0.003, AmountSat: 300000, AmountUSD: 200.00, CostBasisUSD: 200.00, RawLine: "original"},
+	}
+
+	_, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+
+	rows[0].CostBasisUSD = 210.00
+	rows[0].RawLine = "updated"
+	s2, err := d.ImportCoinbaseCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if s2.Updated != 1 {
+		t.Errorf("expected 1 updated, got %d", s2.Updated)
+	}
+
+	externalID := fmt.Sprintf("%s|%s|%.8f", now.Format("2006-01-02T15:04:05"), "buy", 0.003)
+	var priceUSD float64
+	err = d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'coinbase' AND external_id = ?", externalID).Scan(&priceUSD)
+	if err != nil {
+		t.Fatalf("query btc_lot: %v", err)
+	}
+	if priceUSD != 210.00 {
+		t.Errorf("expected price_usd 210.00, got %.2f", priceUSD)
+	}
+}
+
+func TestImportSwanCSV_CostBasisUpdate(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	now := time.Now().UTC()
+	rows := []exchange.SwanRow{
+		{TransactionID: "swan-100", Date: now, Type: "purchase", AmountBTC: 0.004, AmountSat: 400000, AmountUSD: 268.00, CostBasisUSD: 268.00, RawLine: "original"},
+	}
+
+	_, err := d.ImportSwanCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+
+	rows[0].CostBasisUSD = 280.00
+	rows[0].RawLine = "updated"
+	s2, err := d.ImportSwanCSV(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if s2.Updated != 1 {
+		t.Errorf("expected 1 updated, got %d", s2.Updated)
+	}
+
+	var priceUSD float64
+	err = d.db.QueryRow("SELECT price_usd FROM btc_lots WHERE source = 'swan' AND external_id = 'swan-100'").Scan(&priceUSD)
+	if err != nil {
+		t.Fatalf("query btc_lot: %v", err)
+	}
+	if priceUSD != 280.00 {
+		t.Errorf("expected price_usd 280.00, got %.2f", priceUSD)
+	}
+}
+
 func TestImportStrikeCSV_Empty(t *testing.T) {
 	d := newTestDB(t)
 	defer d.Close()

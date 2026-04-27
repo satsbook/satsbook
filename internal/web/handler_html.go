@@ -51,6 +51,10 @@ type DashboardData struct {
 	ExchangeBalanceSats   int64
 	ExchangeBalanceUSD    float64
 
+	// Cost basis (from exchange imports)
+	TotalCostBasisUSD float64
+	AvgCostPerBTC     float64 // TotalCostBasisUSD / total purchased BTC
+
 	// Cold storage (watched wallets)
 	ColdStorageSats int64
 	ColdStorageUSD  float64
@@ -290,6 +294,10 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
 		data.SwanBalanceSats = res.portfolioAll.BySource["swan"].NetSats
 		data.ExchangeBalanceSats = res.portfolioAll.ExchangeNetSats
+		data.TotalCostBasisUSD = res.portfolioAll.TotalCostBasisUSD
+		if res.portfolioAll.PurchasedSats > 0 {
+			data.AvgCostPerBTC = res.portfolioAll.TotalCostBasisUSD / (float64(res.portfolioAll.PurchasedSats) / 1e8)
+		}
 	}
 
 	data.Fees30dSats = res.fees30d / 1000

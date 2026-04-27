@@ -507,6 +507,7 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 	resp := importResponse{
 		Total:          summary.Total,
 		NewPurchases:   summary.NewPurchases,
+		Updated:        summary.Updated,
 		Duplicates:     summary.Duplicates,
 		FilesProcessed: len(files),
 		ParseErrors:    allErrors,
@@ -527,6 +528,7 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 type importResponse struct {
 	Total          int      `json:"total"`
 	NewPurchases   int      `json:"new_purchases"`
+	Updated        int      `json:"updated,omitempty"`
 	Duplicates     int      `json:"duplicates"`
 	FilesProcessed int      `json:"files_processed,omitempty"`
 	ParseErrors    []string `json:"parse_errors,omitempty"`
@@ -592,6 +594,7 @@ func (h *Handler) HandleRiverImport(w http.ResponseWriter, r *http.Request) {
 	resp := importResponse{
 		Total:          summary.Total,
 		NewPurchases:   summary.NewPurchases,
+		Updated:        summary.Updated,
 		Duplicates:     summary.Duplicates,
 		FilesProcessed: len(files),
 		ParseErrors:    allErrors,
@@ -668,6 +671,7 @@ func (h *Handler) HandleCoinbaseImport(w http.ResponseWriter, r *http.Request) {
 	resp := importResponse{
 		Total:          summary.Total,
 		NewPurchases:   summary.NewPurchases,
+		Updated:        summary.Updated,
 		Duplicates:     summary.Duplicates,
 		FilesProcessed: len(files),
 		ParseErrors:    allErrors,
@@ -767,6 +771,7 @@ func (h *Handler) HandleSwanImport(w http.ResponseWriter, r *http.Request) {
 	resp := importResponse{
 		Total:        summary.Total,
 		NewPurchases: summary.NewPurchases,
+		Updated:      summary.Updated,
 		Duplicates:   summary.Duplicates,
 		ParseErrors:  allErrors,
 	}

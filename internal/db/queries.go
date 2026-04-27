@@ -2,9 +2,7 @@ package db
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -310,6 +308,7 @@ type ImportSummary struct {
 	Total        int
 	NewPurchases int
 	Duplicates   int
+	Updated      int
 }
 
 // ImportStrikeCSV imports parsed Strike CSV rows into exchange_imports and btc_lots.
@@ -326,62 +325,80 @@ func (d *DB) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*I
 	for _, row := range rows {
 		rawData, _ := json.Marshal(row)
 
-		// Use content hash for dedup — Strike reference IDs are not unique
-		// (same ref can appear for reversals, multi-part transactions, etc.)
-		h := sha256.Sum256([]byte(row.RawLine))
-		contentHash := hex.EncodeToString(h[:])
+		// Use TransactionID (Strike "Reference") as the key field.
+		// Same reference can appear with different tx_types (e.g. Sale + Withdrawal).
+		externalID := row.TransactionID
 
-		// Insert into exchange_imports (dedup via UNIQUE(source, external_id, tx_type))
-		// external_id is the content hash so re-importing the same CSV is idempotent
-		res, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
-			 VALUES (?, ?, ?, ?)`,
-			"strike", contentHash, row.Type, string(rawData),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("insert exchange import %q: %w", row.TransactionID, err)
+		// Check if this row already exists
+		var existingRaw string
+		err := tx.QueryRowContext(ctx,
+			`SELECT raw_data FROM exchange_imports WHERE source = ? AND external_id = ? AND tx_type = ?`,
+			"strike", externalID, row.Type,
+		).Scan(&existingRaw)
+
+		isNew := errors.Is(err, sql.ErrNoRows)
+		if err != nil && !isNew {
+			return nil, fmt.Errorf("check exchange import %q: %w", row.TransactionID, err)
 		}
 
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return nil, fmt.Errorf("rows affected for %q: %w", row.TransactionID, err)
-		}
-
-		if affected == 0 {
+		rawStr := string(rawData)
+		if !isNew && existingRaw == rawStr {
 			summary.Duplicates++
 			continue
 		}
 
-		// Create btc_lot for completed purchases
+		if isNew {
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data) VALUES (?, ?, ?, ?)`,
+				"strike", externalID, row.Type, rawStr,
+			)
+		} else {
+			_, err = tx.ExecContext(ctx,
+				`UPDATE exchange_imports SET raw_data = ? WHERE source = ? AND external_id = ? AND tx_type = ?`,
+				rawStr, "strike", externalID, row.Type,
+			)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("upsert exchange import %q: %w", row.TransactionID, err)
+		}
+
+		// Create or update btc_lot for completed purchases
 		if row.IsPurchase() && row.AmountSat > 0 {
-			// Dedup check: don't create lot if one already exists for this content hash
-			var exists int
-			err := tx.QueryRowContext(ctx,
-				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
-				"strike", contentHash,
-			).Scan(&exists)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
+			priceUSD := row.CostBasisUSD
+			if priceUSD == 0 {
+				priceUSD = row.AmountUSD
 			}
+			if priceUSD == 0 {
+				continue
+			}
+
+			var lotID int64
+			err := tx.QueryRowContext(ctx,
+				`SELECT id FROM btc_lots WHERE source = ? AND external_id = ?`,
+				"strike", externalID,
+			).Scan(&lotID)
 			if errors.Is(err, sql.ErrNoRows) {
-				// Prefer cost basis from Strike; fall back to amount USD
-				priceUSD := row.CostBasisUSD
-				if priceUSD == 0 {
-					priceUSD = row.AmountUSD
-				}
-				if priceUSD == 0 {
-					// No cost basis available, skip lot creation
-					continue
-				}
 				_, err = tx.ExecContext(ctx,
 					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
 					 VALUES (?, ?, ?, ?, ?)`,
-					row.Date, row.AmountSat, priceUSD, "strike", contentHash,
+					row.Date, row.AmountSat, priceUSD, "strike", externalID,
 				)
 				if err != nil {
-					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
+					return nil, fmt.Errorf("insert btc_lot %q: %w", externalID, err)
 				}
 				summary.NewPurchases++
+			} else if err != nil {
+				return nil, fmt.Errorf("check btc_lot %q: %w", externalID, err)
+			} else {
+				// Update cost basis if it changed
+				_, err = tx.ExecContext(ctx,
+					`UPDATE btc_lots SET price_usd = ? WHERE id = ?`,
+					priceUSD, lotID,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("update btc_lot %q: %w", externalID, err)
+				}
+				summary.Updated++
 			}
 		}
 	}
@@ -407,55 +424,77 @@ func (d *DB) ImportRiverCSV(ctx context.Context, rows []exchange.RiverRow) (*Imp
 	for _, row := range rows {
 		rawData, _ := json.Marshal(row)
 
-		h := sha256.Sum256([]byte(row.RawLine))
-		contentHash := hex.EncodeToString(h[:])
+		// River has no transaction ID; use composite key: date|type|amount_btc
+		externalID := fmt.Sprintf("%s|%s|%.8f", row.Date.Format("2006-01-02T15:04:05"), row.Type, row.AmountBTC)
 
-		res, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
-			 VALUES (?, ?, ?, ?)`,
-			"river", contentHash, row.Type, string(rawData),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("insert exchange import: %w", err)
+		var existingRaw string
+		err := tx.QueryRowContext(ctx,
+			`SELECT raw_data FROM exchange_imports WHERE source = ? AND external_id = ? AND tx_type = ?`,
+			"river", externalID, row.Type,
+		).Scan(&existingRaw)
+
+		isNew := errors.Is(err, sql.ErrNoRows)
+		if err != nil && !isNew {
+			return nil, fmt.Errorf("check exchange import: %w", err)
 		}
 
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return nil, fmt.Errorf("rows affected: %w", err)
-		}
-
-		if affected == 0 {
+		rawStr := string(rawData)
+		if !isNew && existingRaw == rawStr {
 			summary.Duplicates++
 			continue
 		}
 
-		// Create btc_lot for completed purchases
+		if isNew {
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data) VALUES (?, ?, ?, ?)`,
+				"river", externalID, row.Type, rawStr,
+			)
+		} else {
+			_, err = tx.ExecContext(ctx,
+				`UPDATE exchange_imports SET raw_data = ? WHERE source = ? AND external_id = ? AND tx_type = ?`,
+				rawStr, "river", externalID, row.Type,
+			)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("upsert exchange import: %w", err)
+		}
+
+		// Create or update btc_lot for completed purchases
 		if row.IsPurchase() && row.AmountSat > 0 {
-			var exists int
-			err := tx.QueryRowContext(ctx,
-				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
-				"river", contentHash,
-			).Scan(&exists)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
+			priceUSD := row.CostBasisUSD
+			if priceUSD == 0 {
+				priceUSD = row.AmountUSD
 			}
+			if priceUSD == 0 {
+				continue
+			}
+
+			var lotID int64
+			err := tx.QueryRowContext(ctx,
+				`SELECT id FROM btc_lots WHERE source = ? AND external_id = ?`,
+				"river", externalID,
+			).Scan(&lotID)
 			if errors.Is(err, sql.ErrNoRows) {
-				priceUSD := row.CostBasisUSD
-				if priceUSD == 0 {
-					priceUSD = row.AmountUSD
-				}
-				if priceUSD == 0 {
-					continue
-				}
 				_, err = tx.ExecContext(ctx,
 					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
 					 VALUES (?, ?, ?, ?, ?)`,
-					row.Date, row.AmountSat, priceUSD, "river", contentHash,
+					row.Date, row.AmountSat, priceUSD, "river", externalID,
 				)
 				if err != nil {
-					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
+					return nil, fmt.Errorf("insert btc_lot %q: %w", externalID, err)
 				}
 				summary.NewPurchases++
+			} else if err != nil {
+				return nil, fmt.Errorf("check btc_lot %q: %w", externalID, err)
+			} else {
+				_, err = tx.ExecContext(ctx,
+					`UPDATE btc_lots SET price_usd = ? WHERE id = ?`,
+					priceUSD, lotID,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("update btc_lot %q: %w", externalID, err)
+				}
+				summary.Updated++
 			}
 		}
 	}
@@ -481,55 +520,77 @@ func (d *DB) ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow)
 	for _, row := range rows {
 		rawData, _ := json.Marshal(row)
 
-		h := sha256.Sum256([]byte(row.RawLine))
-		contentHash := hex.EncodeToString(h[:])
+		// Coinbase has no transaction ID in struct; use composite key
+		externalID := fmt.Sprintf("%s|%s|%.8f", row.Date.Format("2006-01-02T15:04:05"), row.Type, row.AmountBTC)
 
-		res, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
-			 VALUES (?, ?, ?, ?)`,
-			"coinbase", contentHash, row.Type, string(rawData),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("insert exchange import: %w", err)
+		var existingRaw string
+		err := tx.QueryRowContext(ctx,
+			`SELECT raw_data FROM exchange_imports WHERE source = ? AND external_id = ? AND tx_type = ?`,
+			"coinbase", externalID, row.Type,
+		).Scan(&existingRaw)
+
+		isNew := errors.Is(err, sql.ErrNoRows)
+		if err != nil && !isNew {
+			return nil, fmt.Errorf("check exchange import: %w", err)
 		}
 
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return nil, fmt.Errorf("rows affected: %w", err)
-		}
-
-		if affected == 0 {
+		rawStr := string(rawData)
+		if !isNew && existingRaw == rawStr {
 			summary.Duplicates++
 			continue
 		}
 
-		// Create btc_lot for completed purchases
+		if isNew {
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data) VALUES (?, ?, ?, ?)`,
+				"coinbase", externalID, row.Type, rawStr,
+			)
+		} else {
+			_, err = tx.ExecContext(ctx,
+				`UPDATE exchange_imports SET raw_data = ? WHERE source = ? AND external_id = ? AND tx_type = ?`,
+				rawStr, "coinbase", externalID, row.Type,
+			)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("upsert exchange import: %w", err)
+		}
+
+		// Create or update btc_lot for completed purchases
 		if row.IsPurchase() && row.AmountSat > 0 {
-			var exists int
-			err := tx.QueryRowContext(ctx,
-				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
-				"coinbase", contentHash,
-			).Scan(&exists)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
+			priceUSD := row.CostBasisUSD
+			if priceUSD == 0 {
+				priceUSD = row.AmountUSD
 			}
+			if priceUSD == 0 {
+				continue
+			}
+
+			var lotID int64
+			err := tx.QueryRowContext(ctx,
+				`SELECT id FROM btc_lots WHERE source = ? AND external_id = ?`,
+				"coinbase", externalID,
+			).Scan(&lotID)
 			if errors.Is(err, sql.ErrNoRows) {
-				priceUSD := row.CostBasisUSD
-				if priceUSD == 0 {
-					priceUSD = row.AmountUSD
-				}
-				if priceUSD == 0 {
-					continue
-				}
 				_, err = tx.ExecContext(ctx,
 					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
 					 VALUES (?, ?, ?, ?, ?)`,
-					row.Date, row.AmountSat, priceUSD, "coinbase", contentHash,
+					row.Date, row.AmountSat, priceUSD, "coinbase", externalID,
 				)
 				if err != nil {
-					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
+					return nil, fmt.Errorf("insert btc_lot %q: %w", externalID, err)
 				}
 				summary.NewPurchases++
+			} else if err != nil {
+				return nil, fmt.Errorf("check btc_lot %q: %w", externalID, err)
+			} else {
+				_, err = tx.ExecContext(ctx,
+					`UPDATE btc_lots SET price_usd = ? WHERE id = ?`,
+					priceUSD, lotID,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("update btc_lot %q: %w", externalID, err)
+				}
+				summary.Updated++
 			}
 		}
 	}
@@ -555,29 +616,45 @@ func (d *DB) ImportSwanCSV(ctx context.Context, rows []exchange.SwanRow) (*Impor
 	for _, row := range rows {
 		rawData, _ := json.Marshal(row)
 
-		h := sha256.Sum256([]byte(row.RawLine))
-		contentHash := hex.EncodeToString(h[:])
-
-		res, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO exchange_imports (source, external_id, tx_type, raw_data)
-			 VALUES (?, ?, ?, ?)`,
-			"swan", contentHash, row.Type, string(rawData),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("insert exchange import: %w", err)
+		// Swan has TransactionID for transfers/withdrawals; use composite for trades
+		externalID := row.TransactionID
+		if externalID == "" {
+			externalID = fmt.Sprintf("%s|%s|%.8f", row.Date.Format("2006-01-02T15:04:05"), row.Type, row.AmountBTC)
 		}
 
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return nil, fmt.Errorf("rows affected: %w", err)
+		var existingRaw string
+		err := tx.QueryRowContext(ctx,
+			`SELECT raw_data FROM exchange_imports WHERE source = ? AND external_id = ? AND tx_type = ?`,
+			"swan", externalID, row.Type,
+		).Scan(&existingRaw)
+
+		isNew := errors.Is(err, sql.ErrNoRows)
+		if err != nil && !isNew {
+			return nil, fmt.Errorf("check exchange import: %w", err)
 		}
 
-		if affected == 0 {
+		rawStr := string(rawData)
+		if !isNew && existingRaw == rawStr {
 			summary.Duplicates++
 			continue
 		}
 
-		// Create btc_lot for purchases, BTC deposits, and withdrawals
+		if isNew {
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data) VALUES (?, ?, ?, ?)`,
+				"swan", externalID, row.Type, rawStr,
+			)
+		} else {
+			_, err = tx.ExecContext(ctx,
+				`UPDATE exchange_imports SET raw_data = ? WHERE source = ? AND external_id = ? AND tx_type = ?`,
+				rawStr, "swan", externalID, row.Type,
+			)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("upsert exchange import: %w", err)
+		}
+
+		// Create or update btc_lot for purchases, deposits, and withdrawals
 		shouldCreateLot := false
 		var lotAmount int64
 		var lotPrice float64
@@ -591,38 +668,44 @@ func (d *DB) ImportSwanCSV(ctx context.Context, rows []exchange.SwanRow) (*Impor
 				lotPrice = row.AmountUSD
 			}
 		case row.IsDeposit() && row.AmountSat > 0:
-			// BTC deposit (e.g. custodial transfer) — no cost basis
 			shouldCreateLot = true
 			lotAmount = row.AmountSat
 			lotPrice = 0
 		case row.IsWithdrawal() && row.AmountSat < 0:
-			// Withdrawal — negative lot to reduce balance
 			shouldCreateLot = true
-			lotAmount = row.AmountSat // already negative
+			lotAmount = row.AmountSat
 			lotPrice = 0
 		}
 
 		if shouldCreateLot && lotAmount != 0 {
-			var exists int
+			var lotID int64
 			err := tx.QueryRowContext(ctx,
-				`SELECT 1 FROM btc_lots WHERE source = ? AND external_id = ?`,
-				"swan", contentHash,
-			).Scan(&exists)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return nil, fmt.Errorf("check btc_lot %q: %w", contentHash, err)
-			}
+				`SELECT id FROM btc_lots WHERE source = ? AND external_id = ?`,
+				"swan", externalID,
+			).Scan(&lotID)
 			if errors.Is(err, sql.ErrNoRows) {
 				_, err = tx.ExecContext(ctx,
 					`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id)
 					 VALUES (?, ?, ?, ?, ?)`,
-					row.Date, lotAmount, lotPrice, "swan", contentHash,
+					row.Date, lotAmount, lotPrice, "swan", externalID,
 				)
 				if err != nil {
-					return nil, fmt.Errorf("insert btc_lot %q: %w", contentHash, err)
+					return nil, fmt.Errorf("insert btc_lot %q: %w", externalID, err)
 				}
 				if row.IsPurchase() {
 					summary.NewPurchases++
 				}
+			} else if err != nil {
+				return nil, fmt.Errorf("check btc_lot %q: %w", externalID, err)
+			} else {
+				_, err = tx.ExecContext(ctx,
+					`UPDATE btc_lots SET price_usd = ? WHERE id = ?`,
+					lotPrice, lotID,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("update btc_lot %q: %w", externalID, err)
+				}
+				summary.Updated++
 			}
 		}
 	}
@@ -636,18 +719,20 @@ func (d *DB) ImportSwanCSV(ctx context.Context, rows []exchange.SwanRow) (*Impor
 
 // SourceBalance holds per-source aggregated balances for the portfolio view.
 type SourceBalance struct {
-	Source        string
-	NetSats       int64 // signed: purchases + receives - sales - sends
-	PurchasedSats int64 // for "purchased in period" stats
+	Source           string
+	NetSats          int64   // signed: purchases + receives - sales - sends
+	PurchasedSats    int64   // for "purchased in period" stats
+	TotalCostBasisUSD float64 // USD spent on purchases (CostBasisUSD fallback AmountUSD)
 }
 
 // PortfolioPositionResult holds the aggregated portfolio position across all sources.
 type PortfolioPositionResult struct {
 	BySource        map[string]SourceBalance
-	ExchangeNetSats int64 // sum of NetSats across all sources
-	PurchasedSats   int64 // sum of PurchasedSats across all sources (for YTD purchased stat)
-	RoutingFeesSats int64 // routing fees from forwarding_events in the period
-	RoutedCount     int64 // number of routed payments in the period
+	ExchangeNetSats    int64   // sum of NetSats across all sources
+	PurchasedSats      int64   // sum of PurchasedSats across all sources (for YTD purchased stat)
+	TotalCostBasisUSD  float64 // sum of cost basis across all sources
+	RoutingFeesSats    int64   // routing fees from forwarding_events in the period
+	RoutedCount        int64   // number of routed payments in the period
 }
 
 // PortfolioPosition aggregates exchange balances per source and routing fees in a single
@@ -672,7 +757,10 @@ func (d *DB) PortfolioPosition(ctx context.Context, since time.Time) (*Portfolio
 			COALESCE(SUM(CASE WHEN COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0
 				THEN json_extract(raw_data, '$.AmountBTC') ELSE 0 END), 0) AS net_btc,
 			COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) IN ('purchase', 'buy')
-				THEN json_extract(raw_data, '$.AmountBTC') ELSE 0 END), 0) AS purchased_btc
+				THEN json_extract(raw_data, '$.AmountBTC') ELSE 0 END), 0) AS purchased_btc,
+			COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data, '$.Type')) IN ('purchase', 'buy')
+				THEN ABS(COALESCE(json_extract(raw_data, '$.CostBasisUSD'),
+					json_extract(raw_data, '$.AmountUSD'), 0)) ELSE 0 END), 0) AS cost_basis_usd
 		FROM exchange_imports ` + dateFilter + `
 		GROUP BY source`
 
@@ -684,18 +772,20 @@ func (d *DB) PortfolioPosition(ctx context.Context, since time.Time) (*Portfolio
 
 	for rows.Next() {
 		var source string
-		var netBTC, purchasedBTC float64
-		if err := rows.Scan(&source, &netBTC, &purchasedBTC); err != nil {
+		var netBTC, purchasedBTC, costBasis float64
+		if err := rows.Scan(&source, &netBTC, &purchasedBTC, &costBasis); err != nil {
 			return nil, fmt.Errorf("scan portfolio source: %w", err)
 		}
 		sb := SourceBalance{
-			Source:        source,
-			NetSats:       int64(math.Round(netBTC * 1e8)),
-			PurchasedSats: int64(math.Round(purchasedBTC * 1e8)),
+			Source:            source,
+			NetSats:           int64(math.Round(netBTC * 1e8)),
+			PurchasedSats:     int64(math.Round(purchasedBTC * 1e8)),
+			TotalCostBasisUSD: costBasis,
 		}
 		result.BySource[source] = sb
 		result.ExchangeNetSats += sb.NetSats
 		result.PurchasedSats += sb.PurchasedSats
+		result.TotalCostBasisUSD += costBasis
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("portfolio position rows: %w", err)

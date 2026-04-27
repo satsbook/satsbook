@@ -1,6 +1,10 @@
 {{define "import_content"}}
 <h1 style="margin-bottom: 24px; font-size: 1.25rem;">Import Transactions</h1>
 
+<div style="background: var(--card-bg); border: 1px solid var(--border); border-left: 3px solid var(--text-muted); border-radius: 4px; padding: 10px 14px; margin-bottom: 20px; max-width: 600px; font-size: 0.8rem; color: var(--text-muted);">
+  <strong>Cost basis note:</strong> Cost basis values come from your exchange CSV exports. Some exchanges (e.g. Strike) allow editing cost basis before export. Satsbook uses these values as-is — verify with your tax advisor.
+</div>
+
 <div style="display: flex; gap: 16px; margin-bottom: 16px;">
   <button class="filter-form" id="tab-strike" onclick="showTab('strike')" style="display: inline-block;">Strike</button>
   <button class="filter-form" id="tab-river" onclick="showTab('river')" style="display: inline-block; opacity: 0.6;">River</button>

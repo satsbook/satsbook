@@ -132,6 +132,16 @@
       {{if .SwanBalanceSats}}<div><a href="/exchange/swan" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">Swan</a>: {{formatSats .SwanBalanceSats}} sats</div>{{end}}
     </div>
   </div>
+
+  {{if gt .TotalCostBasisUSD 0.0}}
+  <div class="card">
+    <div class="card-label">Cost Basis
+      <span title="Total USD spent on BTC purchases as reported by your exchange CSV exports. Verify with your tax advisor." style="cursor:help;font-size:0.75em;color:var(--text-muted);border:1px solid var(--text-muted);border-radius:50%;display:inline-block;width:14px;height:14px;text-align:center;line-height:14px;margin-left:4px;">i</span>
+    </div>
+    <div class="card-value">{{formatUSD .TotalCostBasisUSD}}</div>
+    {{if gt .AvgCostPerBTC 0.0}}<div class="card-sub">Avg {{formatUSD .AvgCostPerBTC}} / BTC</div>{{end}}
+  </div>
+  {{end}}
   {{end}}
 </div>
 
