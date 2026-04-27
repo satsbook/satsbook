@@ -146,25 +146,30 @@
 <!-- Portfolio Value Chart -->
 <div class="chart-section">
   <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-    <h2 style="margin: 0;">Portfolio Value (last 30 days)</h2>
-    <span id="backfill-area" style="display:inline-flex;align-items:center;gap:8px;">
-      <button hx-post="/api/portfolio/backfill"
-              hx-target="#backfill-result"
-              hx-swap="innerHTML"
-              hx-indicator="#backfill-spinner"
-              hx-disabled-elt="this"
-              style="font-size: 0.8rem; padding: 4px 12px; cursor: pointer;"
-              title="Reconstruct historical portfolio values from imported exchange CSVs and wallet data">
-        Rebuild History
-      </button>
-      <span id="backfill-spinner" class="htmx-indicator" style="font-size:0.8rem;color:var(--text-muted);">Rebuilding… this may take a moment</span>
-      <span id="backfill-result"></span>
-    </span>
+    <h2 style="margin: 0;">Portfolio Value</h2>
+    <div style="display: flex; gap: 4px; font-size: 0.8rem;">
+      <button class="filter-form portfolio-range-btn" data-days="30"
+              onclick="setPortfolioRange(30)" style="display:inline-block;padding:4px 10px;opacity:1;">30d</button>
+      <button class="filter-form portfolio-range-btn" data-days="90"
+              onclick="setPortfolioRange(90)" style="display:inline-block;padding:4px 10px;opacity:0.6;">90d</button>
+      <button class="filter-form portfolio-range-btn" data-days="0"
+              onclick="setPortfolioRange(0)" style="display:inline-block;padding:4px 10px;opacity:0.6;">All</button>
+    </div>
   </div>
-  <div class="chart-container">
-    {{portfolioChart .PortfolioSnapshots}}
+  <div id="portfolio-chart" class="chart-container"
+       hx-get="/partials/portfolio-chart?days=30"
+       hx-trigger="load"
+       hx-swap="innerHTML">
   </div>
 </div>
+<script>
+function setPortfolioRange(days) {
+  document.querySelectorAll('.portfolio-range-btn').forEach(function(b) {
+    b.style.opacity = parseInt(b.dataset.days) === days ? '1' : '0.6';
+  });
+  htmx.ajax('GET', '/partials/portfolio-chart?days=' + days, '#portfolio-chart');
+}
+</script>
 
 <!-- Channel Table -->
 <div class="table-section">

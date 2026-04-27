@@ -132,7 +132,7 @@ func (h *Handler) HandlePortfolioBackfill(w http.ResponseWriter, r *http.Request
 		h.logger.Printf("portfolio backfill error: %v", err)
 		if r.Header.Get("HX-Request") == "true" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprintf(w, `<span style="color:var(--danger,#ef4444);font-size:0.85rem;">Backfill failed: %s</span>`, err.Error())
+			fmt.Fprintf(w, `<span style="color:var(--danger,#ef4444);">Backfill failed: %s</span>`, err.Error())
 			return
 		}
 		h.writeError(w, http.StatusInternalServerError, "backfill failed: "+err.Error())
@@ -143,13 +143,11 @@ func (h *Handler) HandlePortfolioBackfill(w http.ResponseWriter, r *http.Request
 
 	if r.Header.Get("HX-Request") == "true" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		msg := "No new data to backfill"
+		msg := "No new data to backfill."
 		if n > 0 {
-			msg = fmt.Sprintf("Rebuilt %d days of history. Reloading…", n)
+			msg = fmt.Sprintf("Done — rebuilt %d days of portfolio history.", n)
 		}
-		// Return a success message, then trigger a page reload after a short delay
-		fmt.Fprintf(w, `<span style="color:var(--success,#4ade80);font-size:0.85rem;">%s</span>
-<script>setTimeout(function(){window.location.reload()},1500)</script>`, msg)
+		fmt.Fprintf(w, `<span style="color:var(--success,#4ade80);">%s</span>`, msg)
 		return
 	}
 
