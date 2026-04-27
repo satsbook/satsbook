@@ -116,15 +116,25 @@ func (h *Handler) backfillSnapshots(ctx context.Context) {
 
 // HandlePortfolioBackfill serves POST /api/portfolio/backfill.
 // Reconstructs historical portfolio snapshots from exchange CSVs and wallet data.
+// Uses a detached context so the operation completes even if the user navigates away.
 func (h *Handler) HandlePortfolioBackfill(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	n, err := h.store.BackfillPortfolioSnapshots(r.Context())
+	// Use background context — this can take 30s+ and we don't want a
+	// cancelled HTTP request to abort the DB writes mid-transaction.
+	ctx := context.Background()
+
+	n, err := h.store.BackfillPortfolioSnapshots(ctx)
 	if err != nil {
 		h.logger.Printf("portfolio backfill error: %v", err)
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<span style="color:var(--danger,#ef4444);font-size:0.85rem;">Backfill failed: %s</span>`, err.Error())
+			return
+		}
 		h.writeError(w, http.StatusInternalServerError, "backfill failed: "+err.Error())
 		return
 	}
@@ -132,8 +142,14 @@ func (h *Handler) HandlePortfolioBackfill(w http.ResponseWriter, r *http.Request
 	h.logger.Printf("portfolio backfill: inserted %d historical snapshots", n)
 
 	if r.Header.Get("HX-Request") == "true" {
-		w.Header().Set("HX-Redirect", "/")
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		msg := "No new data to backfill"
+		if n > 0 {
+			msg = fmt.Sprintf("Rebuilt %d days of history. Reloading…", n)
+		}
+		// Return a success message, then trigger a page reload after a short delay
+		fmt.Fprintf(w, `<span style="color:var(--success,#4ade80);font-size:0.85rem;">%s</span>
+<script>setTimeout(function(){window.location.reload()},1500)</script>`, msg)
 		return
 	}
 
