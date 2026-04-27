@@ -63,6 +63,9 @@ func main() {
 	// Initialize price cache
 	priceCache := price.NewCache(price.WithAPIURL(cfg.PriceAPIURL))
 
+	// Enable portfolio snapshots after each sync
+	s.SetSnapshotStore(database, priceCache)
+
 	// Initialize HTTP server
 	httpLogger := log.New(os.Stdout, "[http] ", log.LstdFlags)
 	handler := web.NewHandler(database, lndClient, priceCache, database, httpLogger)

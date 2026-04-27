@@ -83,7 +83,8 @@ type DashboardData struct {
 	LastSyncedAt time.Time
 
 	// Chart data
-	DailyFees []db.DailyFeeStat
+	DailyFees          []db.DailyFeeStat
+	PortfolioSnapshots []db.PortfolioSnapshot
 
 	// Channel list
 	Channels []db.ChannelStat
@@ -140,7 +141,8 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		priceFetched       time.Time
 		portfolioAll       *db.PortfolioPositionResult
 		portfolioYTD       *db.PortfolioPositionResult
-		coldStorageSats    int64
+		coldStorageSats       int64
+		portfolioSnapshots []db.PortfolioSnapshot
 	}
 	var res result
 
@@ -229,6 +231,15 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 
 	fetch(func() {
+		snaps, err := h.store.PortfolioSnapshots(ctx, 30)
+		if err == nil {
+			mu.Lock()
+			res.portfolioSnapshots = snaps
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
 		info, err := h.node.GetInfo(ctx)
 		if err == nil {
 			mu.Lock()
@@ -298,6 +309,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	data.ActiveChannels = res.activeChannels
 	data.LastSyncedAt = res.lastSynced
 	data.DailyFees = res.dailyFees
+	data.PortfolioSnapshots = res.portfolioSnapshots
 	data.Channels = res.channels
 
 	if res.balance != nil {

@@ -177,6 +177,17 @@ var migrations = []string{
 	DROP TABLE watched_wallets;
 	ALTER TABLE watched_wallets_new RENAME TO watched_wallets;
 	`,
+
+	// Migration 6: Portfolio snapshots for 30-day value chart.
+	`
+	CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		captured_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		total_sats    INTEGER NOT NULL DEFAULT 0,
+		btc_price_usd REAL NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_captured ON portfolio_snapshots(captured_at);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

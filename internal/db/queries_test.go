@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -2022,5 +2023,220 @@ func TestListExchangeTransactions(t *testing.T) {
 	}
 	if page.Total != 0 {
 		t.Errorf("river total = %d, want 0", page.Total)
+	}
+}
+
+func TestInsertPortfolioSnapshot(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	err := d.InsertPortfolioSnapshot(context.Background(), 5_000_000, 65000.0)
+	if err != nil {
+		t.Fatalf("insert snapshot: %v", err)
+	}
+
+	// Insert another
+	err = d.InsertPortfolioSnapshot(context.Background(), 5_100_000, 66000.0)
+	if err != nil {
+		t.Fatalf("insert second snapshot: %v", err)
+	}
+
+	snaps, err := d.PortfolioSnapshots(context.Background(), 30)
+	if err != nil {
+		t.Fatalf("fetch snapshots: %v", err)
+	}
+	// Both inserted today, so grouped into 1 day
+	if len(snaps) != 1 {
+		t.Fatalf("expected 1 day of snapshots, got %d", len(snaps))
+	}
+	// Should pick the latest values (second insert)
+	if snaps[0].TotalSats != 5_100_000 {
+		t.Errorf("expected 5100000 sats, got %d", snaps[0].TotalSats)
+	}
+}
+
+func TestPortfolioSnapshots_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	snaps, err := d.PortfolioSnapshots(context.Background(), 30)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(snaps) != 0 {
+		t.Errorf("expected 0 snapshots, got %d", len(snaps))
+	}
+}
+
+func TestBackfillPortfolioSnapshots(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+
+	// Backfill with no data should insert 0
+	n, err := d.BackfillPortfolioSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 inserted with no data, got %d", n)
+	}
+
+	// Insert some exchange transactions with dates
+	now := time.Now()
+	day1 := now.AddDate(0, 0, -20).Format("2006-01-02")
+	day2 := now.AddDate(0, 0, -10).Format("2006-01-02")
+	day3 := now.AddDate(0, 0, -5).Format("2006-01-02")
+
+	for _, row := range []struct {
+		date      string
+		amountBTC float64
+	}{
+		{day1, 0.01},
+		{day2, 0.02},
+		{day3, -0.005},
+	} {
+		rawData := fmt.Sprintf(`{"Date":"%s","AmountBTC":%f,"Type":"purchase"}`, row.date, row.amountBTC)
+		_, err := d.db.ExecContext(ctx,
+			`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data)
+			 VALUES ('strike', ?, 'purchase', ?)`,
+			row.date, rawData)
+		if err != nil {
+			t.Fatalf("seed exchange: %v", err)
+		}
+	}
+
+	// Backfill should create 3 snapshots
+	n, err = d.BackfillPortfolioSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("expected 3 inserted, got %d", n)
+	}
+
+	// Verify snapshots
+	snaps, err := d.PortfolioSnapshots(ctx, 365)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("expected 3 snapshots, got %d", len(snaps))
+	}
+
+	// Jan 15: 0.01 BTC = 1,000,000 sats
+	if snaps[0].TotalSats != 1_000_000 {
+		t.Errorf("jan snapshot: expected 1000000 sats, got %d", snaps[0].TotalSats)
+	}
+	// Feb 1: 0.01 + 0.02 = 0.03 BTC = 3,000,000 sats
+	if snaps[1].TotalSats != 3_000_000 {
+		t.Errorf("feb snapshot: expected 3000000 sats, got %d", snaps[1].TotalSats)
+	}
+	// Mar 1: 0.03 - 0.005 = 0.025 BTC = 2,500,000 sats
+	if snaps[2].TotalSats != 2_500_000 {
+		t.Errorf("mar snapshot: expected 2500000 sats, got %d", snaps[2].TotalSats)
+	}
+
+	// Price should be 0 (backfilled, marker -1 converted to 0)
+	if snaps[0].BTCPriceUSD != 0 {
+		t.Errorf("expected price 0 for backfilled, got %f", snaps[0].BTCPriceUSD)
+	}
+
+	// Re-running backfill is idempotent (deletes old backfill, re-inserts)
+	n, err = d.BackfillPortfolioSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("re-backfill: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("re-backfill: expected 3, got %d", n)
+	}
+
+	// Should still have exactly 3 snapshots
+	snaps, err = d.PortfolioSnapshots(ctx, 365)
+	if err != nil {
+		t.Fatalf("fetch after re-backfill: %v", err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("expected 3 snapshots after re-backfill, got %d", len(snaps))
+	}
+}
+
+func TestBackfillPortfolioSnapshots_PreservesLiveSnapshots(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+
+	// Insert a live snapshot (btc_price_usd >= 0)
+	err := d.InsertPortfolioSnapshot(ctx, 5_000_000, 65000.0)
+	if err != nil {
+		t.Fatalf("insert live: %v", err)
+	}
+
+	// Insert exchange data for today
+	today := time.Now().Format("2006-01-02")
+	rawData := fmt.Sprintf(`{"Date":"%s","AmountBTC":0.01,"Type":"purchase"}`, today)
+	_, err = d.db.ExecContext(ctx,
+		`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data)
+		 VALUES ('strike', 'today-tx', 'purchase', ?)`, rawData)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Backfill should skip today (live snapshot exists)
+	n, err := d.BackfillPortfolioSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 (live snapshot exists), got %d", n)
+	}
+
+	// Live snapshot should be preserved
+	snaps, err := d.PortfolioSnapshots(ctx, 1)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snaps))
+	}
+	if snaps[0].TotalSats != 5_000_000 {
+		t.Errorf("live snapshot should be preserved, got %d sats", snaps[0].TotalSats)
+	}
+}
+
+func TestTotalPortfolioSats(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// With no data, total should be 0
+	total, err := d.TotalPortfolioSats(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("expected 0, got %d", total)
+	}
+
+	// Add a wallet balance
+	err = d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.InsertWalletBalanceSnapshot(WalletBalanceSnapshot{
+			CapturedAt:     time.Now(),
+			TotalSat:       100_000,
+			ConfirmedSat:   90_000,
+			UnconfirmedSat: 10_000,
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed wallet balance: %v", err)
+	}
+
+	total, err = d.TotalPortfolioSats(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 100_000 {
+		t.Errorf("expected 100000, got %d", total)
 	}
 }

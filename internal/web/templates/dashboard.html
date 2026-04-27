@@ -143,6 +143,22 @@
   </div>
 </div>
 
+<!-- Portfolio Value Chart -->
+<div class="chart-section">
+  <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+    <h2 style="margin: 0;">Portfolio Value (last 30 days)</h2>
+    <button hx-post="/api/portfolio/backfill"
+            hx-swap="none"
+            style="font-size: 0.8rem; padding: 4px 12px; cursor: pointer;"
+            title="Reconstruct historical portfolio values from imported exchange CSVs and wallet data">
+      Rebuild History
+    </button>
+  </div>
+  <div class="chart-container">
+    {{portfolioChart .PortfolioSnapshots}}
+  </div>
+</div>
+
 <!-- Channel Table -->
 <div class="table-section">
   <h2>Channels</h2>
