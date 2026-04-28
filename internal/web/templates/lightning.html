@@ -1,0 +1,76 @@
+{{define "lightning_content"}}
+<h1 style="margin-bottom: 24px; font-size: 1.25rem;">Lightning Node</h1>
+
+<!-- Summary Cards -->
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Fee Income</div>
+    <div class="card-value">{{formatSats .FeesAllTimeSats}} <small>sats</small></div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .FeesAllTimeUSD}}</div>{{end}}
+    <div class="card-breakdown">
+      <span>30d: {{formatSats .Fees30dSats}}</span>
+      <span>7d: {{formatSats .Fees7dSats}}</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Payments Routed</div>
+    <div class="card-value">{{formatSats .RoutedAllTime}}</div>
+    <div class="card-breakdown">
+      <span>30d: {{formatSats .Routed30d}}</span>
+      <span>7d: {{formatSats .Routed7d}}</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Active Channels</div>
+    <div class="card-value">{{.ActiveChannels}}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Wallet Balance</div>
+    <div class="card-value">{{formatSats .WalletBalanceSats}} <small>sats</small></div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .WalletBalanceUSD}}</div>{{end}}
+  </div>
+</div>
+
+<!-- Daily Fee Chart -->
+<div class="chart-section">
+  <h2>Daily Fee Income (last 30 days)</h2>
+  <div class="chart-container">
+    {{feeChart .DailyFees}}
+  </div>
+</div>
+
+<!-- Channel Table -->
+<div class="table-section">
+  <h2>Channels</h2>
+  {{template "channel_table" .Channels}}
+</div>
+
+<!-- Forwarding Events -->
+<div class="table-section">
+  <h2>Forwarding Events</h2>
+  <form class="filter-form"
+        hx-get="/partials/forwarding"
+        hx-target="#forwarding-table"
+        hx-swap="innerHTML"
+        hx-indicator="#fwd-loading">
+    <div>
+      <label for="from">From</label>
+      <input type="date" id="from" name="from" value="{{.DefaultFrom}}">
+    </div>
+    <div>
+      <label for="to">To</label>
+      <input type="date" id="to" name="to" value="{{.DefaultTo}}">
+    </div>
+    <button type="submit">Filter</button>
+    <span id="fwd-loading" class="htmx-indicator">Loading...</span>
+  </form>
+  <div id="forwarding-table"
+       hx-get="/partials/forwarding?from={{.DefaultFrom}}&to={{.DefaultTo}}"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+  </div>
+</div>
+{{end}}
