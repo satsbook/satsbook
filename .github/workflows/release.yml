@@ -199,10 +199,55 @@ jobs:
             "s|image: ghcr.io/satsbook/satsbook:[^[:space:]]+|image: ghcr.io/satsbook/satsbook:${VERSION}|" \
             "$COMPOSE_FILE"
 
+          # Generate release notes summary from conventional commits.
+          cd "$GITHUB_WORKSPACE"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^v${VERSION}$" | head -1)
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..v${VERSION}"
+          else
+            RANGE="v${VERSION}"
+          fi
+
+          NOTES=""
+          while IFS= read -r line; do
+            msg="${line#* }"
+            # Strip conventional commit prefix for cleaner notes
+            clean=$(echo "$msg" | sed -E 's/^(feat|fix|chore|ci|docs|perf|refactor|test)(\([^)]*\))?:\s*//')
+            if [ -n "$clean" ]; then
+              if [ -n "$NOTES" ]; then
+                NOTES="${NOTES}, ${clean}"
+              else
+                NOTES="${clean}"
+              fi
+            fi
+          done < <(git log --oneline --no-merges "$RANGE" -- ':!.github')
+
+          # Truncate to reasonable length and update releaseNotes in umbrel-app.yml
+          if [ ${#NOTES} -gt 500 ]; then
+            NOTES="${NOTES:0:497}..."
+          fi
+
+          cd "$REPO_DIR"
+          if [ -n "$NOTES" ]; then
+            # Replace the releaseNotes field (handles multi-line >- format)
+            python3 -c "
+import re, sys
+content = open('$APP_FILE').read()
+# Match releaseNotes: with optional >- and indented continuation lines
+content = re.sub(
+    r'releaseNotes:.*?(?=\n\S)',
+    'releaseNotes: >-\n  ' + sys.argv[1].rstrip() + '\n',
+    content, count=1, flags=re.DOTALL)
+open('$APP_FILE', 'w').write(content)
+" "$NOTES"
+          fi
+
           echo "--- updated $APP_FILE ---"
           grep '^version:' "$APP_FILE"
           echo "--- updated $COMPOSE_FILE ---"
           grep 'image: ghcr.io/satsbook/satsbook:' "$COMPOSE_FILE"
+          echo "--- release notes ---"
+          grep -A2 'releaseNotes:' "$APP_FILE"
 
           if git diff --quiet; then
             echo "No changes to umbrel-app-store — already at v${VERSION}?"
