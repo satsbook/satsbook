@@ -2329,8 +2329,8 @@ func TestBackfillPortfolioSnapshots_PreservesLiveSnapshots(t *testing.T) {
 		t.Fatalf("insert live: %v", err)
 	}
 
-	// Insert exchange data for today
-	today := time.Now().Format("2006-01-02")
+	// Insert exchange data for today (use UTC to match SQLite CURRENT_TIMESTAMP)
+	today := time.Now().UTC().Format("2006-01-02")
 	rawData := fmt.Sprintf(`{"Date":"%s","AmountBTC":0.01,"Type":"purchase"}`, today)
 	_, err = d.db.ExecContext(ctx,
 		`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data)
