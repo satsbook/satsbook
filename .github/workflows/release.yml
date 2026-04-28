@@ -229,17 +229,7 @@ jobs:
 
           cd "$REPO_DIR"
           if [ -n "$NOTES" ]; then
-            # Replace the releaseNotes field (handles multi-line >- format)
-            python3 -c "
-import re, sys
-content = open('$APP_FILE').read()
-# Match releaseNotes: with optional >- and indented continuation lines
-content = re.sub(
-    r'releaseNotes:.*?(?=\n\S)',
-    'releaseNotes: >-\n  ' + sys.argv[1].rstrip() + '\n',
-    content, count=1, flags=re.DOTALL)
-open('$APP_FILE', 'w').write(content)
-" "$NOTES"
+            python3 "$GITHUB_WORKSPACE/scripts/update-release-notes.py" "$NOTES" "$APP_FILE"
           fi
 
           echo "--- updated $APP_FILE ---"
