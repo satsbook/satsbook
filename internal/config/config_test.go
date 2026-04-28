@@ -275,6 +275,58 @@ func TestGetEnvAsInt_ValidValue(t *testing.T) {
 	}
 }
 
+func TestLoad_NoLND_IsValid(t *testing.T) {
+	// When no LND vars are set, config should load successfully (dashboard-only mode)
+	clearEnv()
+	os.Setenv("SATSBOOK_DATABASE_PATH", "/test/db.sqlite")
+	defer clearEnv()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() should succeed without LND config, got: %v", err)
+	}
+	if cfg.LNDConfigured() {
+		t.Error("LNDConfigured() should be false when no LND vars are set")
+	}
+}
+
+func TestLNDConfigured(t *testing.T) {
+	tests := []struct {
+		name     string
+		macaroon string
+		tls      string
+		want     bool
+	}{
+		{"both set", "/mac", "/tls", true},
+		{"macaroon only", "/mac", "", false},
+		{"tls only", "", "/tls", false},
+		{"neither set", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Config{LNDMacaroonPath: tt.macaroon, LNDTLSCertPath: tt.tls}
+			if got := c.LNDConfigured(); got != tt.want {
+				t.Errorf("LNDConfigured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidate_LNDPartialConfig_MissingHost(t *testing.T) {
+	cfg := &Config{
+		LNDMacaroonPath: "/test/macaroon",
+		LNDTLSCertPath:  "/test/tls.cert",
+		LNDHost:         "",
+		LNDPort:         10009,
+		DatabasePath:    "./satsbook.db",
+		AppPort:         8080,
+		LogLevel:        "info",
+	}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("validate() should fail when LND creds are set but host is empty")
+	}
+}
+
 // clearEnv clears all test environment variables
 func clearEnv() {
 	testVars := []string{

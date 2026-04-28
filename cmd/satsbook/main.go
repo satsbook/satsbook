@@ -48,27 +48,35 @@ func main() {
 	defer database.Close()
 	log.Printf("database initialized at %s", cfg.DatabasePath)
 
-	// Initialize LND client
-	lndClient, err := lnd.NewClient(cfg.LNDHost, cfg.LNDPort, cfg.LNDMacaroonPath, cfg.LNDTLSCertPath)
-	if err != nil {
-		log.Fatalf("failed to connect to LND: %v", err)
-	}
-	defer lndClient.Close()
-	log.Printf("connected to LND at %s:%d", cfg.LNDHost, cfg.LNDPort)
-
-	// Initialize syncer
-	syncerLogger := log.New(os.Stdout, "[syncer] ", log.LstdFlags)
-	s := syncer.New(lndClient, database, syncerLogger, cfg.SyncInterval, cfg.MaxHistoryDays)
-
 	// Initialize price cache
 	priceCache := price.NewCache(price.WithAPIURL(cfg.PriceAPIURL))
 
-	// Enable portfolio snapshots after each sync
-	s.SetSnapshotStore(database, priceCache)
+	// Initialize LND client (optional — app works without it for dashboard-only mode)
+	var lndClient *lnd.Client
+	var s *syncer.Syncer
+	if cfg.LNDConfigured() {
+		lndClient, err = lnd.NewClient(cfg.LNDHost, cfg.LNDPort, cfg.LNDMacaroonPath, cfg.LNDTLSCertPath)
+		if err != nil {
+			log.Printf("WARNING: failed to connect to LND: %v — running without node sync", err)
+		} else {
+			defer lndClient.Close()
+			log.Printf("connected to LND at %s:%d", cfg.LNDHost, cfg.LNDPort)
+
+			syncerLogger := log.New(os.Stdout, "[syncer] ", log.LstdFlags)
+			s = syncer.New(lndClient, database, syncerLogger, cfg.SyncInterval, cfg.MaxHistoryDays)
+			s.SetSnapshotStore(database, priceCache)
+		}
+	} else {
+		log.Printf("LND not configured — running in dashboard-only mode")
+	}
 
 	// Initialize HTTP server
 	httpLogger := log.New(os.Stdout, "[http] ", log.LstdFlags)
-	handler := web.NewHandler(database, lndClient, priceCache, database, httpLogger)
+	var nodeProvider web.NodeInfoProvider
+	if lndClient != nil {
+		nodeProvider = lndClient
+	}
+	handler := web.NewHandler(database, nodeProvider, priceCache, database, httpLogger)
 
 	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)
@@ -137,8 +145,12 @@ func main() {
 		}
 	}()
 
-	// Run syncer (blocks until ctx is cancelled)
-	s.Run(ctx)
+	// Run syncer (blocks until ctx is cancelled) or just wait for signal
+	if s != nil {
+		s.Run(ctx)
+	} else {
+		<-ctx.Done()
+	}
 
 	log.Println("shutdown complete")
 }

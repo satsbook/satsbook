@@ -92,6 +92,18 @@ func NewHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider
 	}
 }
 
+// getNodeInfo returns node info if an LND connection is configured, otherwise nil.
+func (h *Handler) getNodeInfo(ctx context.Context) *lnd.NodeInfo {
+	if h.node == nil {
+		return nil
+	}
+	info, err := h.node.GetInfo(ctx)
+	if err != nil {
+		return nil
+	}
+	return info
+}
+
 // SetWalletStore sets the wallet store (optional, may not be available without Electrum).
 func (h *Handler) SetWalletStore(ws WalletStore) {
 	h.walletStore = ws
