@@ -3,12 +3,13 @@ version: "3.7"
 services:
   app_proxy:
     environment:
-      APP_HOST: satsbook_server_1
-      APP_PORT: 3015
+      APP_HOST: satsbook-satsbook_server_1
+      APP_PORT: 3000
 
   server:
-    image: ghcr.io/satsbook/satsbook:1.0.0@sha256:4a265925e6903da45a0aa82653e9f17be97b47d63422212680025bcf418a8cc5
-    container_name: satsbook_server_1
+    image: ghcr.io/satsbook/satsbook:1.1.0
+    container_name: satsbook-satsbook_server_1
+    user: "1000:1000"
     restart: on-failure
     stop_grace_period: 1m
     init: true
@@ -21,6 +22,5 @@ services:
       SATSBOOK_LND_MACAROON_PATH: /lnd/data/chain/bitcoin/mainnet/readonly.macaroon
       SATSBOOK_LND_TLS_CERT_PATH: /lnd/tls.cert
       SATSBOOK_DATABASE_PATH: /data/satsbook.db
-      SATSBOOK_APP_PORT: 3015
+      SATSBOOK_APP_PORT: 3000
       SATSBOOK_LOG_LEVEL: info
-

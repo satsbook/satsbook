@@ -234,8 +234,8 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 
 	fetch(func() {
-		info, err := h.node.GetInfo(ctx)
-		if err == nil {
+		info := h.getNodeInfo(ctx)
+		if info != nil {
 			mu.Lock()
 			res.nodeInfo = info
 			mu.Unlock()
@@ -465,8 +465,8 @@ func (h *Handler) HandleLightningPage(w http.ResponseWriter, r *http.Request) {
 	})
 
 	fetch(func() {
-		info, err := h.node.GetInfo(ctx)
-		if err == nil {
+		info := h.getNodeInfo(ctx)
+		if info != nil {
 			mu.Lock()
 			res.nodeInfo = info
 			mu.Unlock()
@@ -793,8 +793,8 @@ func (h *Handler) HandlePLPage(w http.ResponseWriter, r *http.Request) {
 	})
 
 	fetch(func() {
-		info, err := h.node.GetInfo(ctx)
-		if err == nil {
+		info := h.getNodeInfo(ctx)
+		if info != nil {
 			mu.Lock()
 			res.nodeInfo = info
 			mu.Unlock()
@@ -932,8 +932,8 @@ func (h *Handler) HandleWalletsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fetch(func() {
-		info, err := h.node.GetInfo(ctx)
-		if err == nil {
+		info := h.getNodeInfo(ctx)
+		if info != nil {
 			mu.Lock()
 			data.NodeAlias = info.Alias
 			data.NodePubKey = info.PubKey

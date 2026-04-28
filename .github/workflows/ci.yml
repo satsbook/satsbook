@@ -55,3 +55,56 @@ jobs:
 
       - name: Cross-compile (linux/arm64)
         run: GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/satsbook
+
+  docker:
+    name: Docker build & smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t satsbook:ci-test .
+
+      - name: Smoke test — container starts and serves HTTP
+        run: |
+          # Create data dir writable by UID 1000
+          DATA_DIR="$(mktemp -d)"
+          mkdir -p "$DATA_DIR/data"
+          chmod 777 "$DATA_DIR/data"
+
+          # Start container in background
+          docker run -d --name satsbook-smoke \
+            --user 1000:1000 \
+            -p 3000:3000 \
+            -v "$DATA_DIR/data:/data" \
+            -e SATSBOOK_DATABASE_PATH=/data/satsbook.db \
+            -e SATSBOOK_APP_PORT=3000 \
+            satsbook:ci-test
+
+          # Wait for HTTP to be ready (up to 15s)
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
+              echo "OK: HTTP responding after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 15 ]; then
+              echo "FAIL: container did not respond within 15s"
+              docker logs satsbook-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Verify key pages return 200
+          for path in / /lightning /import /wallets /pl; do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000${path}")
+            if [ "$STATUS" != "200" ]; then
+              echo "FAIL: GET ${path} returned ${STATUS}"
+              docker logs satsbook-smoke
+              exit 1
+            fi
+            echo "OK: GET ${path} -> ${STATUS}"
+          done
+
+          docker rm -f satsbook-smoke

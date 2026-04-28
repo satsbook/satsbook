@@ -86,20 +86,19 @@ func Load() (*Config, error) {
 
 // validate checks that required configuration values are present.
 func (c *Config) validate() error {
-	if c.LNDHost == "" {
-		return fmt.Errorf("LND host is required (set SATSBOOK_LND_HOST or LND_IP)")
-	}
-
-	if c.LNDPort <= 0 || c.LNDPort > 65535 {
-		return fmt.Errorf("LND port must be between 1 and 65535, got %d", c.LNDPort)
-	}
-
-	if c.LNDMacaroonPath == "" {
-		return fmt.Errorf("LND macaroon path is required (set SATSBOOK_LND_MACAROON_PATH or LND_MACAROON_PATH)")
-	}
-
-	if c.LNDTLSCertPath == "" {
-		return fmt.Errorf("LND TLS cert path is required (set SATSBOOK_LND_TLS_CERT_PATH or LND_TLS_CERT_PATH)")
+	if c.LNDMacaroonPath != "" || c.LNDTLSCertPath != "" {
+		if c.LNDHost == "" {
+			return fmt.Errorf("LND host is required (set SATSBOOK_LND_HOST or LND_IP)")
+		}
+		if c.LNDPort <= 0 || c.LNDPort > 65535 {
+			return fmt.Errorf("LND port must be between 1 and 65535, got %d", c.LNDPort)
+		}
+		if c.LNDMacaroonPath == "" {
+			return fmt.Errorf("LND macaroon path is required (set SATSBOOK_LND_MACAROON_PATH or LND_MACAROON_PATH)")
+		}
+		if c.LNDTLSCertPath == "" {
+			return fmt.Errorf("LND TLS cert path is required (set SATSBOOK_LND_TLS_CERT_PATH or LND_TLS_CERT_PATH)")
+		}
 	}
 
 	if c.DatabasePath == "" {
@@ -129,6 +128,11 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// LNDConfigured returns true if LND connection details are provided.
+func (c *Config) LNDConfigured() bool {
+	return c.LNDMacaroonPath != "" && c.LNDTLSCertPath != ""
 }
 
 // BitcoinRPCConfigured returns true if Bitcoin Core RPC is configured.
