@@ -88,10 +88,80 @@ jobs:
             go build -ldflags "$LDFLAGS" -o dist/satsbook-linux-arm64 ./cmd/satsbook
           ls -lh dist/
 
+      - name: Generate release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Find the previous tag for the changelog range
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^v${VERSION}$" | head -1)
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+
+          # Collect commits by conventional-commit prefix
+          features=""
+          fixes=""
+          infra=""
+          docs=""
+          other=""
+
+          while IFS= read -r line; do
+            msg="${line#* }"  # strip short hash
+            case "$msg" in
+              feat*) features="${features}- ${msg}\n" ;;
+              fix*)  fixes="${fixes}- ${msg}\n" ;;
+              ci*|chore*|perf*) infra="${infra}- ${msg}\n" ;;
+              docs*) docs="${docs}- ${msg}\n" ;;
+              *)     other="${other}- ${msg}\n" ;;
+            esac
+          done < <(git log --oneline --no-merges "$RANGE")
+
+          {
+            if [ -n "$features" ]; then
+              echo "## Features"
+              echo ""
+              echo -e "$features"
+            fi
+            if [ -n "$fixes" ]; then
+              echo "## Bug Fixes"
+              echo ""
+              echo -e "$fixes"
+            fi
+            if [ -n "$infra" ]; then
+              echo "## Infrastructure"
+              echo ""
+              echo -e "$infra"
+            fi
+            if [ -n "$docs" ]; then
+              echo "## Documentation"
+              echo ""
+              echo -e "$docs"
+            fi
+            if [ -n "$other" ]; then
+              echo "## Other Changes"
+              echo ""
+              echo -e "$other"
+            fi
+            echo "## Install"
+            echo ""
+            echo "**Umbrel Community Store:**"
+            echo "Add \`https://github.com/satsbook/umbrel-app-store\` as a community app store, then install Satsbook."
+            echo ""
+            echo "**Docker:**"
+            echo "\`\`\`"
+            echo "docker pull ghcr.io/satsbook/satsbook:${VERSION}"
+            echo "\`\`\`"
+          } > release-body.md
+
+          echo "--- Release notes preview ---"
+          cat release-body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-body.md
           files: |
             dist/satsbook-linux-amd64
             dist/satsbook-linux-arm64
