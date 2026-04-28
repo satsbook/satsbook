@@ -210,17 +210,12 @@ func TestHandleDashboard_Success(t *testing.T) {
 
 	body := w.Body.String()
 
-	// Check key elements are present
+	// Check key elements are present (lightning-specific content moved to /lightning)
 	checks := []string{
 		"Satsbook",
 		"test-node",
-		"Fee Income",
-		"Payments Routed",
-		"Active Channels",
-		"Wallet Balance",
-		"Daily Fee Income",
-		"Channels",
-		"Forwarding Events",
+		"Total BTC Position",
+		"Portfolio Value",
 		"synced",
 		"$67,000.00",
 	}
@@ -239,6 +234,41 @@ func TestHandleDashboard_NotFoundForOtherPaths(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for /nonexistent, got %d", w.Code)
+	}
+}
+
+func TestHandleLightningPage_Success(t *testing.T) {
+	store := fullMockStore()
+	node := &mockNodeInfo{info: &lnd.NodeInfo{
+		Alias: "test-node", PubKey: "02abc", Synced: true,
+		NumActiveChannels: 5, BlockHeight: 800000, Version: "0.17.0",
+	}}
+	price := &mockPrice{price: 67000.0, fetchedAt: time.Now()}
+	h := newTestHandler(store, node, price)
+
+	req := httptest.NewRequest(http.MethodGet, "/lightning", nil)
+	w := httptest.NewRecorder()
+	h.HandleLightningPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	checks := []string{
+		"Lightning Node",
+		"Fee Income",
+		"Payments Routed",
+		"Active Channels",
+		"Wallet Balance",
+		"Daily Fee Income",
+		"Channels",
+		"Forwarding Events",
+	}
+	for _, check := range checks {
+		if !strings.Contains(body, check) {
+			t.Errorf("expected body to contain %q", check)
+		}
 	}
 }
 

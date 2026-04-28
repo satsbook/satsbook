@@ -66,6 +66,12 @@
     Routing fees earned: {{formatSats .FeesAllTimeSats}} sats (all-time)
   </div>
   {{end}}
+  {{if gt .TotalCostBasisUSD 0.0}}
+  <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.85em; color: var(--text-muted); display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline;">
+    <span>Cost basis: {{formatUSD .TotalCostBasisUSD}} <span title="Total USD spent on BTC purchases as reported by your exchange CSV exports. Verify with your tax advisor." style="cursor:help;font-size:0.75em;border:1px solid var(--text-muted);border-radius:50%;display:inline-block;width:13px;height:13px;text-align:center;line-height:13px;">i</span></span>
+    {{if gt .AvgCostPerBTC 0.0}}<span>Avg {{formatUSD .AvgCostPerBTC}} / BTC</span>{{end}}
+  </div>
+  {{end}}
 </div>
 
 <!-- YTD strip -->
@@ -87,61 +93,6 @@
   </div>
 </div>
 {{end}}
-
-<!-- Summary Cards -->
-<div class="cards">
-  <div class="card">
-    <div class="card-label">Fee Income</div>
-    <div class="card-value">{{formatSats .FeesAllTimeSats}} <small>sats</small></div>
-    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .FeesAllTimeUSD}}</div>{{end}}
-    <div class="card-breakdown">
-      <span>30d: {{formatSats .Fees30dSats}}</span>
-      <span>7d: {{formatSats .Fees7dSats}}</span>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-label">Payments Routed</div>
-    <div class="card-value">{{formatSats .RoutedAllTime}}</div>
-    <div class="card-breakdown">
-      <span>30d: {{formatSats .Routed30d}}</span>
-      <span>7d: {{formatSats .Routed7d}}</span>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-label">Active Channels</div>
-    <div class="card-value">{{.ActiveChannels}}</div>
-  </div>
-
-  <div class="card">
-    <div class="card-label">Wallet Balance</div>
-    <div class="card-value">{{formatSats .WalletBalanceSats}} <small>sats</small></div>
-    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .WalletBalanceUSD}}</div>{{end}}
-  </div>
-
-  {{if or .StrikeBalanceSats .RiverBalanceSats .CoinbaseBalanceSats .SwanBalanceSats}}
-  <div class="card">
-    <div class="card-label">Exchange Balance <span style="font-size:0.75em;color:var(--text-muted);">(from CSV import)</span></div>
-    <div class="card-value">{{formatSats .ExchangeBalanceSats}} <small>sats</small></div>
-    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .ExchangeBalanceUSD}}</div>{{end}}
-    <div style="margin-top: 8px; font-size: 0.8em; color: var(--text-muted);">
-      {{if .StrikeBalanceSats}}<div><a href="/exchange/strike" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">Strike</a>: {{formatSats .StrikeBalanceSats}} sats</div>{{end}}
-      {{if .RiverBalanceSats}}<div><a href="/exchange/river" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">River</a>: {{formatSats .RiverBalanceSats}} sats</div>{{end}}
-      {{if .CoinbaseBalanceSats}}<div><a href="/exchange/coinbase" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">Coinbase</a>: {{formatSats .CoinbaseBalanceSats}} sats</div>{{end}}
-      {{if .SwanBalanceSats}}<div><a href="/exchange/swan" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">Swan</a>: {{formatSats .SwanBalanceSats}} sats</div>{{end}}
-    </div>
-  </div>
-  {{end}}
-</div>
-
-<!-- Daily Fee Chart -->
-<div class="chart-section">
-  <h2>Daily Fee Income (last 30 days)</h2>
-  <div class="chart-container">
-    {{feeChart .DailyFees}}
-  </div>
-</div>
 
 <!-- Portfolio Value Chart -->
 <div class="chart-section">
@@ -171,35 +122,4 @@ function setPortfolioRange(days) {
 }
 </script>
 
-<!-- Channel Table -->
-<div class="table-section">
-  <h2>Channels</h2>
-  {{template "channel_table" .Channels}}
-</div>
-
-<!-- Forwarding Events -->
-<div class="table-section">
-  <h2>Forwarding Events</h2>
-  <form class="filter-form"
-        hx-get="/partials/forwarding"
-        hx-target="#forwarding-table"
-        hx-swap="innerHTML"
-        hx-indicator="#fwd-loading">
-    <div>
-      <label for="from">From</label>
-      <input type="date" id="from" name="from" value="{{.DefaultFrom}}">
-    </div>
-    <div>
-      <label for="to">To</label>
-      <input type="date" id="to" name="to" value="{{.DefaultTo}}">
-    </div>
-    <button type="submit">Filter</button>
-    <span id="fwd-loading" class="htmx-indicator">Loading...</span>
-  </form>
-  <div id="forwarding-table"
-       hx-get="/partials/forwarding?from={{.DefaultFrom}}&to={{.DefaultTo}}"
-       hx-trigger="load"
-       hx-swap="innerHTML">
-  </div>
-</div>
 {{end}}

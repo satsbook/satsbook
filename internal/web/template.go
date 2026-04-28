@@ -85,6 +85,8 @@ func NewRenderer() *Renderer {
 			"templates/partials/clear_import_result.html",
 			"templates/partials/danger_zone.html",
 			"templates/partials/nav.html",
+			"templates/lightning_layout.html",
+			"templates/lightning.html",
 			"templates/pl_layout.html",
 			"templates/pl.html",
 			"templates/wallets_layout.html",

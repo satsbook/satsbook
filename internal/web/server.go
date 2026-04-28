@@ -21,6 +21,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 
 	// HTML routes
 	mux.HandleFunc("/", handler.HandleDashboard)
+	mux.HandleFunc("/lightning", handler.HandleLightningPage)
 	mux.HandleFunc("/import", handler.HandleImportPage)
 	mux.HandleFunc("/pl", handler.HandlePLPage)
 	mux.HandleFunc("/wallets", handler.HandleWalletsPage)
