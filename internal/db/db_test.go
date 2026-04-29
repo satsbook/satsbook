@@ -100,6 +100,58 @@ func TestClose_NilDB(t *testing.T) {
 	}
 }
 
+// TestMigrations_UpgradeFromV100 simulates upgrading from v1.0.0 which had 4 migrations
+// (0-3) but no watched_wallets table. Migration 3 in v1.0.0 was the exchange_imports fix,
+// which is now migration 4. The current migration 5 must handle missing watched_wallets.
+func TestMigrations_UpgradeFromV100(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// Simulate v1.0.0 database: apply only the v1.0.0 migrations manually
+	sqldb, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// v1.0.0 migration 0: initial schema (same as current)
+	if _, err := sqldb.Exec(migrations[0]); err != nil {
+		t.Fatalf("migration 0: %v", err)
+	}
+	// v1.0.0 migration 1: forwarding events index + wallet balance (same as current)
+	if _, err := sqldb.Exec(migrations[1]); err != nil {
+		t.Fatalf("migration 1: %v", err)
+	}
+	// v1.0.0 migration 2: dashboard indexes (same as current)
+	if _, err := sqldb.Exec(migrations[2]); err != nil {
+		t.Fatalf("migration 2: %v", err)
+	}
+	// v1.0.0 migration 3 was the exchange_imports fix (current migration 4)
+	if _, err := sqldb.Exec(migrations[4]); err != nil {
+		t.Fatalf("v1.0.0 migration 3 (exchange_imports fix): %v", err)
+	}
+
+	// Record 4 migrations in schema_migrations (matching v1.0.0 state)
+	for i := 0; i < 4; i++ {
+		if _, err := sqldb.Exec("INSERT INTO schema_migrations (id) VALUES (?)", i); err != nil {
+			t.Fatalf("record migration %d: %v", i, err)
+		}
+	}
+	sqldb.Close()
+
+	// Now open with current code — should apply migrations 4-6 without error
+	db, err := NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewDB upgrade from v1.0.0 failed: %v", err)
+	}
+	defer db.Close()
+
+	// Verify watched_wallets exists with descriptor type support
+	var name string
+	err = db.db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='watched_wallets'").Scan(&name)
+	if err != nil {
+		t.Errorf("watched_wallets table should exist after upgrade: %v", err)
+	}
+}
+
 // TestMigrations_NeverRerun verifies that migrations are only applied once.
 // After opening the database twice, schema_migrations should have the same number of rows.
 func TestMigrations_NeverRerun(t *testing.T) {

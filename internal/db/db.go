@@ -157,7 +157,21 @@ var migrations = []string{
 	ALTER TABLE exchange_imports_new RENAME TO exchange_imports;
 	`,
 	// Migration 5: Allow 'descriptor' wallet type for multisig / raw descriptor tracking.
+	// Also creates watched_wallets if it doesn't exist (handles upgrades from v1.0.0 where
+	// migration 3 was the exchange_imports fix, not the watched_wallets creation).
 	`
+	CREATE TABLE IF NOT EXISTS watched_wallets (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		label           TEXT NOT NULL,
+		type            TEXT NOT NULL CHECK(type IN ('address', 'xpub')),
+		value           TEXT NOT NULL,
+		derivation_type TEXT NOT NULL DEFAULT 'bip84',
+		balance_sats    INTEGER NOT NULL DEFAULT 0,
+		last_checked_at DATETIME,
+		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(type, value)
+	);
+
 	CREATE TABLE IF NOT EXISTS watched_wallets_new (
 		id              INTEGER PRIMARY KEY AUTOINCREMENT,
 		label           TEXT NOT NULL,
