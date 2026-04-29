@@ -23,8 +23,8 @@ RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /satsbook /usr/local/bin/satsbook
 
-# Data directory for SQLite — writable by UID 1000 (Umbrel runs with user: "1000:1000")
-RUN mkdir -p /data && chown 1000:1000 /data
+# Data directory for SQLite
+RUN mkdir -p /data
 VOLUME /data
 
 EXPOSE 3000

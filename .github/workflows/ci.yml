@@ -68,14 +68,11 @@ jobs:
 
       - name: Smoke test — container starts and serves HTTP
         run: |
-          # Create data dir writable by UID 1000
           DATA_DIR="$(mktemp -d)"
           mkdir -p "$DATA_DIR/data"
-          chmod 777 "$DATA_DIR/data"
 
           # Start container in background
           docker run -d --name satsbook-smoke \
-            --user 1000:1000 \
             -p 3000:3000 \
             -v "$DATA_DIR/data:/data" \
             -e SATSBOOK_DATABASE_PATH=/data/satsbook.db \

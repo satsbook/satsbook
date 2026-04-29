@@ -9,7 +9,6 @@ services:
   server:
     image: ghcr.io/satsbook/satsbook:1.1.0
     container_name: satsbook-satsbook_server_1
-    user: "1000:1000"
     restart: on-failure
     stop_grace_period: 1m
     init: true

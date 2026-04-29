@@ -34,9 +34,7 @@ if $BUILD; then
   docker build -t "$IMAGE" .
 fi
 
-# Ensure data dir is writable by UID 1000 (matching user: "1000:1000" in compose)
 mkdir -p "$DATA_DIR/data"
-chmod 777 "$DATA_DIR/data"
 
 echo "==> Starting Satsbook container (port $PORT)..."
 echo "    Data dir: $DATA_DIR/data"
@@ -45,7 +43,6 @@ echo ""
 
 docker run --rm \
   --name "$CONTAINER" \
-  --user 1000:1000 \
   -p "$PORT:$PORT" \
   -v "$DATA_DIR/data:/data" \
   -e SATSBOOK_DATABASE_PATH=/data/satsbook.db \

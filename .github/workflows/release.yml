@@ -199,6 +199,9 @@ jobs:
             "s|image: ghcr.io/satsbook/satsbook:[^[:space:]]+|image: ghcr.io/satsbook/satsbook:${VERSION}|" \
             "$COMPOSE_FILE"
 
+          # Remove user directive if present (run as root for volume permission compat).
+          sed -i '/^    user:/d' "$COMPOSE_FILE"
+
           # Generate release notes summary from conventional commits.
           cd "$GITHUB_WORKSPACE"
           PREV_TAG=$(git tag --sort=-version:refname | grep -v "^v${VERSION}$" | head -1)
