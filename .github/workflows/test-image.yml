@@ -59,10 +59,4 @@ jobs:
         run: |
           echo "✅ Test image pushed: ghcr.io/satsbook/satsbook:test"
           echo ""
-          echo "To test on Umbrel:"
-          echo "  1. SSH into your Umbrel"
-          echo "  2. Run:"
-          echo "     sudo sed -i 's|image: ghcr.io/satsbook/satsbook:.*|image: ghcr.io/satsbook/satsbook:test|' \\"
-          echo "       ~/umbrel/app-data/satsbook-satsbook/docker-compose.yml"
-          echo "     sudo ~/umbrel/scripts/app restart satsbook-satsbook"
-          echo "  3. Check logs: sudo docker logs satsbook-satsbook_server_1 -f"
+          echo "See TESTING.md for Umbrel testing steps."
