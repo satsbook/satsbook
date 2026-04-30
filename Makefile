@@ -1,4 +1,4 @@
-.PHONY: build build-lndcheck run run-binary run-local run-umbrel test clean docker docker-multiarch
+.PHONY: build build-lndcheck run run-binary run-local run-umbrel run-daemon stop test clean docker docker-multiarch
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard .env))
@@ -25,6 +25,19 @@ run-binary: build
 # Run the built binary via bash (explicit env sourcing, works from fish/zsh/bash)
 run-local: build
 	bash -c 'set -a && source .env && ./satsbook'
+
+# Run in the background, survives terminal exit (logs → satsbook.log, PID → satsbook.pid)
+run-daemon: build
+	@bash -c 'set -a && source .env && nohup ./satsbook > satsbook.log 2>&1 & echo $$! > satsbook.pid'
+	@echo "Started (PID $$(cat satsbook.pid)). Logs: satsbook.log"
+
+# Stop the daemonized process
+stop:
+	@if [ -f satsbook.pid ]; then \
+		kill $$(cat satsbook.pid) && rm satsbook.pid && echo "Stopped."; \
+	else \
+		echo "No satsbook.pid found — is it running?"; \
+	fi
 
 # Run as Umbrel app (uses Umbrel-injected env vars, no .env file)
 run-umbrel: build
