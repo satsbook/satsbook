@@ -11,6 +11,7 @@ import (
 
 	"github.com/satsbook/satsbook/internal/config"
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/license"
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/price"
 	"github.com/satsbook/satsbook/internal/syncer"
@@ -47,6 +48,27 @@ func main() {
 	}
 	defer database.Close()
 	log.Printf("database initialized at %s", cfg.DatabasePath)
+
+	// Initialize license checker
+	var licenseChecker license.Checker
+	if cfg.LicenseKey != "" {
+		licenseLogger := log.New(os.Stdout, "[license] ", log.LstdFlags)
+		lc := license.NewChecker(
+			&licenseStoreAdapter{db: database},
+			cfg.LicenseKey,
+			license.WithValidationURL(cfg.LicenseValidationURL),
+			license.WithLogger(licenseLogger),
+		)
+		if err := lc.Verify(context.Background()); err != nil {
+			log.Printf("WARNING: license verification failed: %v — defaulting to free tier", err)
+		} else {
+			log.Printf("License tier: %s", lc.CurrentTier())
+		}
+		licenseChecker = lc
+	} else {
+		licenseChecker = license.FreeChecker{}
+		log.Printf("No license key configured — running free tier")
+	}
 
 	// Initialize price cache
 	priceCache := price.NewCache(price.WithAPIURL(cfg.PriceAPIURL))
@@ -117,7 +139,7 @@ func main() {
 		walletLogger.Printf("wallet scanning disabled (no Electrum or Bitcoin RPC configured)")
 	}
 
-	srv := web.NewServer(handler, cfg.AppPort, httpLogger)
+	srv := web.NewServer(handler, cfg.AppPort, httpLogger, licenseChecker)
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -153,4 +175,38 @@ func main() {
 	}
 
 	log.Println("shutdown complete")
+}
+
+// licenseStoreAdapter bridges db.DB to the license.LicenseStore interface,
+// converting between db.CachedLicense and license.CachedLicense to avoid
+// circular imports.
+type licenseStoreAdapter struct {
+	db interface {
+		GetCachedLicense(ctx context.Context) (*db.CachedLicense, error)
+		UpdateCachedLicense(ctx context.Context, cl *db.CachedLicense) error
+	}
+}
+
+func (a *licenseStoreAdapter) GetCachedLicense(ctx context.Context) (*license.CachedLicense, error) {
+	cl, err := a.db.GetCachedLicense(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &license.CachedLicense{
+		LicenseKey:   cl.LicenseKey,
+		Tier:         cl.Tier,
+		SignedToken:  cl.SignedToken,
+		LastVerified: cl.LastVerified,
+		ExpiresAt:    cl.ExpiresAt,
+	}, nil
+}
+
+func (a *licenseStoreAdapter) UpdateCachedLicense(ctx context.Context, cl *license.CachedLicense) error {
+	return a.db.UpdateCachedLicense(ctx, &db.CachedLicense{
+		LicenseKey:   cl.LicenseKey,
+		Tier:         cl.Tier,
+		SignedToken:  cl.SignedToken,
+		LastVerified: cl.LastVerified,
+		ExpiresAt:    cl.ExpiresAt,
+	})
 }

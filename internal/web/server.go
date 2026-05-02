@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/satsbook/satsbook/internal/license"
 )
 
 // Server is the HTTP server for the dashboard API.
@@ -16,7 +18,7 @@ type Server struct {
 }
 
 // NewServer creates a new HTTP server with routing and middleware.
-func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
+func NewServer(handler *Handler, port int, logger *log.Logger, checker license.Checker) *Server {
 	mux := http.NewServeMux()
 
 	// HTML routes
@@ -56,7 +58,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger) *Server {
 	return &Server{
 		httpServer: &http.Server{
 			Addr:         fmt.Sprintf(":%d", port),
-			Handler:      requestLogger(mux, logger),
+			Handler:      tierMiddleware(checker, requestLogger(mux, logger)),
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 5 * time.Minute,
 			IdleTimeout:  60 * time.Second,

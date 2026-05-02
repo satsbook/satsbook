@@ -37,6 +37,7 @@
       <span>
         {{if .BTCPriceUSD}}BTC {{formatUSD .BTCPriceUSD}} (mempool.space, {{timeAgo .PriceFetchedAt}}){{else}}BTC price unavailable{{end}}
       </span>
+      {{if .Tier}}<span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>{{end}}
     </div>
   </footer>
 </body>

@@ -14,6 +14,9 @@ import (
 
 // DashboardData holds all data needed to render the dashboard page.
 type DashboardData struct {
+	// License tier (free, pro, power)
+	Tier string
+
 	// Node info
 	NodeAlias  string
 	NodePubKey string
@@ -124,6 +127,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	since7d := now.AddDate(0, 0, -7)
 	sinceYTD := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 	data := DashboardData{
+		Tier:        string(TierFromContext(ctx)),
 		DefaultFrom: since30d.Format("2006-01-02"),
 		DefaultTo:   now.Format("2006-01-02"),
 	}

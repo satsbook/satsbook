@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/license"
 )
 
 // Renderer parses and renders HTML templates from the embedded filesystem.
@@ -57,6 +58,9 @@ func NewRenderer() *Renderer {
 			return costUSD / (float64(sats) / 1e8)
 		},
 		"portfolioChart": portfolioChart,
+		"tierAtLeast": func(current, required string) bool {
+			return license.TierAtLeast(license.Tier(current), license.Tier(required))
+		},
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of args")
@@ -92,6 +96,7 @@ func NewRenderer() *Renderer {
 			"templates/wallets_layout.html",
 			"templates/exchange_detail.html",
 			"templates/wallet_detail.html",
+			"templates/partials/upgrade_required.html",
 		),
 	)
 

@@ -202,6 +202,20 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_captured ON portfolio_snapshots(captured_at);
 	`,
+
+	// Migration 7: License cache for phone-home validation with grace period.
+	`
+	CREATE TABLE IF NOT EXISTS license_cache (
+		id            INTEGER PRIMARY KEY CHECK (id = 1),
+		license_key   TEXT NOT NULL DEFAULT '',
+		tier          TEXT NOT NULL DEFAULT 'free',
+		signed_token  TEXT NOT NULL DEFAULT '',
+		last_verified DATETIME,
+		expires_at    DATETIME,
+		updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	INSERT OR IGNORE INTO license_cache (id, tier) VALUES (1, 'free');
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

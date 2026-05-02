@@ -284,3 +284,17 @@ tr:hover { background: var(--bg-hover); }
 @media (max-width: 480px) {
   .cards { grid-template-columns: 1fr; }
 }
+
+/* Tier badges */
+.tier-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tier-free { background: var(--border); color: var(--text-muted); }
+.tier-pro { background: var(--accent-dim); color: var(--accent); }
+.tier-power { background: var(--blue-dim); color: var(--blue); }
