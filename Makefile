@@ -40,7 +40,7 @@ run-demo:
 # Stop the daemonized process
 stop:
 	@if [ -f satsbook.pid ]; then \
-		kill $$(cat satsbook.pid) && rm satsbook.pid && echo "Stopped satsbook."; \
+		kill $$(cat satsbook.pid) 2>/dev/null; rm satsbook.pid; echo "Stopped satsbook."; \
 	else \
 		echo "No satsbook.pid found — is it running?"; \
 	fi
@@ -48,7 +48,7 @@ stop:
 # Stop the demo validation server
 stop-demo:
 	@if [ -f demoserver.pid ]; then \
-		kill $$(cat demoserver.pid) && rm demoserver.pid && echo "Stopped demo server."; \
+		kill $$(cat demoserver.pid) 2>/dev/null; rm demoserver.pid; echo "Stopped demo server."; \
 	else \
 		echo "No demoserver.pid found — is it running?"; \
 	fi
