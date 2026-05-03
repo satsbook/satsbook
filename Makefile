@@ -1,4 +1,4 @@
-.PHONY: build build-lndcheck run run-binary run-local run-umbrel run-daemon stop test clean docker docker-multiarch
+.PHONY: build build-lndcheck run run-binary run-local run-umbrel run-daemon run-demo stop stop-demo test clean docker docker-multiarch
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard .env))
@@ -31,12 +31,26 @@ run-daemon: build
 	@bash -c 'set -a && source .env && nohup ./satsbook > satsbook.log 2>&1 & echo $$! > satsbook.pid'
 	@echo "Started (PID $$(cat satsbook.pid)). Logs: satsbook.log"
 
+# Run the demo license validation server in the background (requires SATSBOOK_LICENSE_SIGNING_KEY in .env)
+run-demo:
+	@go build -o demoserver ./cmd/demoserver
+	@bash -c 'set -a && source .env && nohup ./demoserver real 3098 > demoserver.log 2>&1 & echo $$! > demoserver.pid'
+	@echo "Demo validation server started (PID $$(cat demoserver.pid), port 3098). Logs: demoserver.log"
+
 # Stop the daemonized process
 stop:
 	@if [ -f satsbook.pid ]; then \
-		kill $$(cat satsbook.pid) && rm satsbook.pid && echo "Stopped."; \
+		kill $$(cat satsbook.pid) && rm satsbook.pid && echo "Stopped satsbook."; \
 	else \
 		echo "No satsbook.pid found — is it running?"; \
+	fi
+
+# Stop the demo validation server
+stop-demo:
+	@if [ -f demoserver.pid ]; then \
+		kill $$(cat demoserver.pid) && rm demoserver.pid && echo "Stopped demo server."; \
+	else \
+		echo "No demoserver.pid found — is it running?"; \
 	fi
 
 # Run as Umbrel app (uses Umbrel-injected env vars, no .env file)
@@ -57,5 +71,5 @@ docker-multiarch:
 
 # Clean build artifacts
 clean:
-	rm -f satsbook lndcheck
+	rm -f satsbook lndcheck demoserver
 	go clean
