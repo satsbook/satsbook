@@ -38,6 +38,10 @@ type Config struct {
 	AppPort     int
 	LogLevel    string
 	PriceAPIURL string
+
+	// License settings
+	LicenseKey           string
+	LicenseValidationURL string
 }
 
 // Load reads configuration from environment variables.
@@ -74,6 +78,10 @@ func Load() (*Config, error) {
 		AppPort:     getEnvAsInt("SATSBOOK_APP_PORT", 8080),
 		LogLevel:    getEnv("SATSBOOK_LOG_LEVEL", "info"),
 		PriceAPIURL: getEnv("SATSBOOK_PRICE_API_URL", "https://mempool.space/api/v1/prices"),
+
+		// License defaults
+		LicenseKey:           getEnv("SATSBOOK_LICENSE_KEY", ""),
+		LicenseValidationURL: getEnv("SATSBOOK_LICENSE_URL", "https://api.satsbook.com/v1/license/validate"),
 	}
 
 	// Validate required fields

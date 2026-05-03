@@ -1,6 +1,9 @@
 # Binaries
 /satsbook
 /lndcheck
+/licsign
+/demoserver
+/seedemo
 *.exe
 *.dll
 *.so

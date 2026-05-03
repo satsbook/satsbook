@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/license"
 )
 
 func TestNewServer_RoutesRegistered(t *testing.T) {
@@ -20,7 +21,7 @@ func TestNewServer_RoutesRegistered(t *testing.T) {
 	price := &mockPrice{err: nil}
 	logger := log.New(os.Stderr, "[test] ", 0)
 	h := NewHandler(store, nil, price, &mockImportStore{}, logger)
-	srv := NewServer(h, 0, logger)
+	srv := NewServer(h, 0, logger, license.FreeChecker{})
 
 	if srv.httpServer == nil {
 		t.Fatal("expected httpServer to be set")
@@ -39,7 +40,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 	logger := log.New(os.Stderr, "[test] ", 0)
 	h := NewHandler(store, nil, &mockPrice{}, &mockImportStore{}, logger)
 	// Use port 0 to let the OS pick a free port
-	srv := NewServer(h, 0, logger)
+	srv := NewServer(h, 0, logger, license.FreeChecker{})
 
 	errCh := make(chan error, 1)
 	go func() {
