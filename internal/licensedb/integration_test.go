@@ -91,7 +91,10 @@ func TestValidateFlow(t *testing.T) {
 	// Now revoke and try again
 	store.Revoke(lic.LicenseKey)
 	body = `{"key":"` + lic.LicenseKey + `"}`
-	resp2, _ := http.Post(srv.URL, "application/json", strings.NewReader(body))
+	resp2, err := http.Post(srv.URL, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
 
 	var result2 struct {
