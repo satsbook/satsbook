@@ -1,4 +1,4 @@
-.PHONY: build build-lndcheck run run-binary run-local run-umbrel run-daemon run-demo stop stop-demo test clean docker docker-multiarch
+.PHONY: build build-lndcheck build-licenseserver run run-binary run-local run-umbrel run-daemon run-demo run-licenseserver stop stop-demo stop-licenseserver test clean docker docker-multiarch
 
 # Load environment variables from .env file if it exists
 ifneq (,$(wildcard .env))
@@ -53,6 +53,23 @@ stop-demo:
 		echo "No demoserver.pid found — is it running?"; \
 	fi
 
+# Build the license server
+build-licenseserver:
+	go build -o licenseserver ./cmd/licenseserver
+
+# Run the license server in the background
+run-licenseserver: build-licenseserver
+	@bash -c 'set -a && source .env && nohup ./licenseserver serve > licenseserver.log 2>&1 & echo $$! > licenseserver.pid'
+	@echo "License server started (PID $$(cat licenseserver.pid), port $${PORT:-8080}). Logs: licenseserver.log"
+
+# Stop the license server
+stop-licenseserver:
+	@if [ -f licenseserver.pid ]; then \
+		kill $$(cat licenseserver.pid) 2>/dev/null; rm licenseserver.pid; echo "Stopped license server."; \
+	else \
+		echo "No licenseserver.pid found — is it running?"; \
+	fi
+
 # Run as Umbrel app (uses Umbrel-injected env vars, no .env file)
 run-umbrel: build
 	./satsbook
@@ -71,5 +88,5 @@ docker-multiarch:
 
 # Clean build artifacts
 clean:
-	rm -f satsbook lndcheck demoserver
+	rm -f satsbook lndcheck demoserver licenseserver
 	go clean

@@ -4,6 +4,7 @@
 /licsign
 /demoserver
 /seedemo
+/licenseserver
 
 # Local dev tools (not for distribution)
 cmd/seedemo/
@@ -19,6 +20,10 @@ dist/
 *.db
 *.sqlite
 *.sqlite3
+
+# Runtime artifacts
+*.pid
+*.log
 
 # Secrets and config
 .env
