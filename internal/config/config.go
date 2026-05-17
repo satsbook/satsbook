@@ -81,7 +81,7 @@ func Load() (*Config, error) {
 
 		// License defaults
 		LicenseKey:           getEnv("SATSBOOK_LICENSE_KEY", ""),
-		LicenseValidationURL: getEnv("SATSBOOK_LICENSE_URL", "https://api.satsbook.com/v1/license/validate"),
+		LicenseValidationURL: getEnv("SATSBOOK_LICENSE_URL", "https://api.satsbook.io/v1/license/validate"),
 	}
 
 	// Validate required fields
