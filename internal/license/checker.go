@@ -79,7 +79,7 @@ func withNowFunc(fn func() time.Time) Option {
 	return func(c *DefaultChecker) { c.nowFunc = fn }
 }
 
-const defaultValidationURL = "https://api.satsbook.com/v1/license/validate"
+const defaultValidationURL = "https://api.satsbook.io/v1/license/validate"
 
 // NewChecker creates a license checker with the given options.
 func NewChecker(store LicenseStore, licenseKey string, opts ...Option) *DefaultChecker {
