@@ -4,6 +4,10 @@
 /licsign
 /demoserver
 /seedemo
+
+# Local dev tools (not for distribution)
+cmd/seedemo/
+-db
 *.exe
 *.dll
 *.so
