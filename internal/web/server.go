@@ -63,6 +63,8 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/monarch/token", monarchGate(handler.HandleMonarchToken))
 	mux.HandleFunc("/api/monarch/disconnect", monarchGate(handler.HandleMonarchDisconnect))
 	mux.HandleFunc("/api/monarch/sync", monarchGate(handler.HandleMonarchSync))
+	mux.HandleFunc("/api/monarch/sync-types", monarchGate(handler.HandleMonarchSyncTypes))
+	mux.HandleFunc("/api/monarch/tx-sync", monarchGate(handler.HandleMonarchTxSync))
 
 	return &Server{
 		httpServer: &http.Server{

@@ -420,6 +420,14 @@ var migrations = []string{
 		COALESCE(json_extract(raw_data, '$.Description'), '') AS memo
 	FROM exchange_imports;
 	`,
+	// Migration 12: Monarch transaction sync tracking.
+	`
+	CREATE TABLE IF NOT EXISTS monarch_tx_sync (
+		source_id     TEXT PRIMARY KEY,
+		monarch_tx_id TEXT NOT NULL,
+		synced_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

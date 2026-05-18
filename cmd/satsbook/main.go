@@ -104,6 +104,7 @@ func main() {
 	// Wire up settings store, transaction store, and optional Monarch sync
 	handler.SetSettingsStore(database)
 	handler.SetTransactionStore(database)
+	handler.SetMonarchTxStore(database)
 	monarchToken, _ := database.GetSetting(context.Background(), "monarch_token")
 	if monarchToken == "" {
 		monarchToken = cfg.MonarchToken // fall back to env var

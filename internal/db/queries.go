@@ -1517,3 +1517,66 @@ func (d *DB) SetTransactionNote(ctx context.Context, sourceID, note string) erro
 		sourceID, strings.TrimSpace(note))
 	return err
 }
+
+// ListUnsyncedTransactions returns unified transactions of the given types that
+// have not yet been synced to Monarch Money.
+func (d *DB) ListUnsyncedTransactions(ctx context.Context, txTypes []string) ([]UnifiedTransaction, error) {
+	if len(txTypes) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(txTypes))
+	args := make([]interface{}, len(txTypes))
+	for i, t := range txTypes {
+		placeholders[i] = "?"
+		args[i] = t
+	}
+
+	query := fmt.Sprintf(`
+		SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
+		       v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo
+		FROM btc_transactions_v v
+		LEFT JOIN monarch_tx_sync m ON m.source_id = v.source_id
+		WHERE v.tx_type IN (%s) AND m.source_id IS NULL
+		ORDER BY v.ts ASC`,
+		strings.Join(placeholders, ","))
+
+	rows, err := d.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list unsynced transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var txns []UnifiedTransaction
+	for rows.Next() {
+		var tx UnifiedTransaction
+		var ts string
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo); err != nil {
+			return nil, fmt.Errorf("scan unsynced transaction: %w", err)
+		}
+		tx.Time = parseFlexibleTime(ts)
+		txns = append(txns, tx)
+	}
+	return txns, nil
+}
+
+// MarkTransactionSynced records that a transaction was synced to Monarch.
+func (d *DB) MarkTransactionSynced(ctx context.Context, sourceID, monarchTxID string) error {
+	_, err := d.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO monarch_tx_sync (source_id, monarch_tx_id) VALUES (?, ?)`,
+		sourceID, monarchTxID)
+	return err
+}
+
+// MonarchSyncedCount returns the number of transactions synced to Monarch.
+func (d *DB) MonarchSyncedCount(ctx context.Context) (int, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM monarch_tx_sync`).Scan(&count)
+	return count, err
+}
+
+// ClearMonarchSyncState removes all Monarch sync tracking records.
+func (d *DB) ClearMonarchSyncState(ctx context.Context) error {
+	_, err := d.db.ExecContext(ctx, `DELETE FROM monarch_tx_sync`)
+	return err
+}

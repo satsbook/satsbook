@@ -79,6 +79,14 @@ func NewRenderer() *Renderer {
 			}
 			return "asc"
 		},
+		"contains": func(slice []string, val string) bool {
+			for _, s := range slice {
+				if s == val {
+					return true
+				}
+			}
+			return false
+		},
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of args")

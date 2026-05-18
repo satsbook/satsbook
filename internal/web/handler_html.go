@@ -1375,6 +1375,10 @@ type SettingsPageData struct {
 	MonarchUnlocked  bool
 	Message          string
 	Error            string
+	// Monarch transaction sync
+	MonarchSyncTypes    []string // currently selected tx types
+	AvailableTxTypes    []string // all tx types from data
+	MonarchSyncedCount  int      // how many transactions have been synced
 }
 
 // HandleSettingsPage serves GET /settings.
@@ -1389,6 +1393,20 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		if token != "" {
 			data.MonarchToken = maskToken(token)
 			data.MonarchConnected = true
+		}
+
+		// Load tx sync preferences
+		syncTypes, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_types")
+		if syncTypes != "" {
+			data.MonarchSyncTypes = strings.Split(syncTypes, ",")
+		}
+
+		// Load available tx types from data
+		if h.monarchTxStore != nil {
+			_, txTypes, _ := h.monarchTxStore.DistinctTransactionValues(r.Context())
+			data.AvailableTxTypes = txTypes
+			count, _ := h.monarchTxStore.MonarchSyncedCount(r.Context())
+			data.MonarchSyncedCount = count
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1611,6 +1629,128 @@ func (h *Handler) getTotalSats(ctx context.Context) (int64, error) {
 	}
 
 	return total, nil
+}
+
+// HandleMonarchSyncTypes handles POST /api/monarch/sync-types — saves which tx types to sync.
+func (h *Handler) HandleMonarchSyncTypes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to parse form.</div>`)
+		return
+	}
+
+	selectedTypes := r.Form["sync_types"]
+	value := strings.Join(selectedTypes, ",")
+
+	if err := h.settingsStore.SetSetting(r.Context(), "monarch_sync_types", value); err != nil {
+		h.logger.Printf("monarch: failed to save sync types: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to save preferences.</div>`)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if len(selectedTypes) == 0 {
+		fmt.Fprint(w, `<div style="color:var(--green);">Transaction sync disabled — no types selected.</div>`)
+	} else {
+		fmt.Fprintf(w, `<div style="color:var(--green);">Saved %d transaction type(s) for sync.</div>`, len(selectedTypes))
+	}
+}
+
+// HandleMonarchTxSync handles POST /api/monarch/tx-sync — syncs transactions to Monarch.
+func (h *Handler) HandleMonarchTxSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Ensure Monarch syncer is available
+	if h.monarchSyncer == nil && h.settingsStore != nil {
+		token, _ := h.settingsStore.GetSetting(r.Context(), "monarch_token")
+		if token != "" {
+			syncer, err := monarch.NewSyncer(token, "")
+			if err == nil {
+				h.monarchSyncer = syncer
+			}
+		}
+	}
+	if h.monarchSyncer == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Monarch not connected. Log in first.</div>`)
+		return
+	}
+
+	if h.settingsStore == nil || h.monarchTxStore == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Transaction sync not available.</div>`)
+		return
+	}
+
+	// Read selected sync types
+	syncTypes, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_types")
+	if syncTypes == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">No transaction types selected. Save preferences first.</div>`)
+		return
+	}
+
+	types := strings.Split(syncTypes, ",")
+
+	// Get unsynced transactions
+	txns, err := h.monarchTxStore.ListUnsyncedTransactions(r.Context(), types)
+	if err != nil {
+		h.logger.Printf("monarch tx sync: list unsynced: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to query transactions.</div>`)
+		return
+	}
+
+	if len(txns) == 0 {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--green);">All transactions are already synced.</div>`)
+		return
+	}
+
+	// Convert to TxToSync
+	toSync := make([]monarch.TxToSync, len(txns))
+	for i, tx := range txns {
+		toSync[i] = monarch.TxToSync{
+			SourceID:  tx.SourceID,
+			Source:    tx.Source,
+			TxType:   tx.TxType,
+			Time:     tx.Time,
+			AmountUSD: tx.AmountUSD,
+			Memo:     tx.Memo,
+		}
+	}
+
+	result, synced, err := h.monarchSyncer.SyncTransactions(r.Context(), toSync)
+	if err != nil {
+		h.logger.Printf("monarch tx sync failed: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<div style="color:var(--red);">Sync failed: %s</div>`, err.Error())
+		return
+	}
+
+	// Record synced transactions
+	for sourceID, monarchTxID := range synced {
+		if err := h.monarchTxStore.MarkTransactionSynced(r.Context(), sourceID, monarchTxID); err != nil {
+			h.logger.Printf("monarch: failed to mark %s synced: %v", sourceID, err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div style="color:var(--green);">Synced %d transactions to Monarch (%d skipped, %d errors).</div>`,
+		result.Created, result.Skipped, result.Errors)
 }
 
 // TransactionsPageData holds data for the /transactions page.
