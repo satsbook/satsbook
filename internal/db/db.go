@@ -319,14 +319,17 @@ var migrations = []string{
 	FROM exchange_imports;
 	`,
 
-	// Migration 10: Transaction notes table + recreate view to surface Description in memo.
+	// Migration 10: Transaction notes table for user-editable annotations.
 	`
 	CREATE TABLE IF NOT EXISTS transaction_notes (
 		source_id  TEXT PRIMARY KEY,
 		note       TEXT NOT NULL DEFAULT '',
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
+	`,
 
+	// Migration 11: Recreate unified view to surface Description in memo column.
+	`
 	DROP VIEW IF EXISTS btc_transactions_v;
 	CREATE VIEW btc_transactions_v AS
 	-- LND forwarding fee income
