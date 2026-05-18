@@ -1733,24 +1733,31 @@ func (h *Handler) HandleMonarchTxSync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, synced, err := h.monarchSyncer.SyncTransactions(r.Context(), toSync)
-	if err != nil {
-		h.logger.Printf("monarch tx sync failed: %v", err)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<div style="color:var(--red);">Sync failed: %s</div>`, err.Error())
-		return
-	}
-
-	// Record synced transactions
-	for sourceID, monarchTxID := range synced {
-		if err := h.monarchTxStore.MarkTransactionSynced(r.Context(), sourceID, monarchTxID); err != nil {
-			h.logger.Printf("monarch: failed to mark %s synced: %v", sourceID, err)
-		}
-	}
-
+	// Respond immediately — sync runs in the background
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<div style="color:var(--green);">Synced %d transactions to Monarch (%d skipped, %d errors).</div>`,
-		result.Created, result.Skipped, result.Errors)
+	fmt.Fprintf(w, `<div style="color:var(--accent);">Syncing %d transactions to Monarch in the background. You can leave this page.</div>`, len(toSync))
+
+	// Capture references for the goroutine
+	syncer := h.monarchSyncer
+	txStore := h.monarchTxStore
+	logger := h.logger
+
+	go func() {
+		ctx := context.Background()
+		result, synced, err := syncer.SyncTransactions(ctx, toSync)
+		if err != nil {
+			logger.Printf("monarch tx sync failed: %v", err)
+			return
+		}
+
+		for sourceID, monarchTxID := range synced {
+			if err := txStore.MarkTransactionSynced(ctx, sourceID, monarchTxID); err != nil {
+				logger.Printf("monarch: failed to mark %s synced: %v", sourceID, err)
+			}
+		}
+
+		logger.Printf("monarch tx sync complete: %d created, %d skipped, %d errors", result.Created, result.Skipped, result.Errors)
+	}()
 }
 
 // TransactionsPageData holds data for the /transactions page.
