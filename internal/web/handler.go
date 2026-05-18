@@ -79,6 +79,7 @@ type SettingsStore interface {
 type TransactionStore interface {
 	ListUnifiedTransactions(ctx context.Context, f db.TransactionFilter) (*db.UnifiedTransactionPage, error)
 	SetTransactionNote(ctx context.Context, sourceID, note string) error
+	DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error)
 }
 
 // MonarchSyncer syncs BTC holdings to Monarch Money.

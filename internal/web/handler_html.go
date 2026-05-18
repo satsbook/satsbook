@@ -1636,17 +1636,6 @@ type TransactionsPageData struct {
 	TxTypes []string
 }
 
-// txSources is the list of available transaction sources for the filter dropdown.
-var txSources = []string{
-	"lnd_forward", "lnd_invoice", "lnd_payment", "lnd_onchain",
-	"strike", "river", "coinbase", "swan",
-}
-
-// txTypes is the list of available transaction types for the filter dropdown.
-var txTypes = []string{
-	"buy", "sell", "send", "receive", "fee_income",
-}
-
 // HandleTransactionsPage serves GET /transactions.
 func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request) {
 	if h.txStore == nil {
@@ -1654,6 +1643,7 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ctx := r.Context()
 	page := parseIntParam(r, "page", 1)
 	if page < 1 {
 		page = 1
@@ -1680,12 +1670,15 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 		Offset:   offset,
 	}
 
-	result, err := h.txStore.ListUnifiedTransactions(r.Context(), f)
+	result, err := h.txStore.ListUnifiedTransactions(ctx, f)
 	if err != nil {
 		h.logger.Printf("transactions page: %v", err)
 		http.Error(w, "failed to load transactions", http.StatusInternalServerError)
 		return
 	}
+
+	// Pull actual sources and types from the data
+	sources, txTypes, _ := h.txStore.DistinctTransactionValues(ctx)
 
 	data := TransactionsPageData{
 		Transactions: result.Transactions,
@@ -1699,14 +1692,14 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 		Search:       f.Search,
 		SortCol:      sortCol,
 		SortDir:      sortDir,
-		Sources:      txSources,
+		Sources:      sources,
 		TxTypes:      txTypes,
 	}
 	if result.Total > 0 {
 		data.TotalPages = (result.Total + limit - 1) / limit
 	}
 
-	if price, err := h.price.GetBTCPrice(r.Context()); err == nil {
+	if price, err := h.price.GetBTCPrice(ctx); err == nil {
 		data.BTCPriceUSD = price
 	}
 

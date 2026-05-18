@@ -1332,6 +1332,37 @@ type UnifiedTransactionPage struct {
 	Total        int
 }
 
+// DistinctTransactionValues returns the distinct sources and tx_types from the unified view.
+func (d *DB) DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT DISTINCT source FROM btc_transactions_v WHERE source != '' ORDER BY source`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("distinct sources: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, nil, err
+		}
+		sources = append(sources, s)
+	}
+
+	rows2, err := d.db.QueryContext(ctx, `SELECT DISTINCT tx_type FROM btc_transactions_v WHERE tx_type != '' ORDER BY tx_type`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("distinct tx_types: %w", err)
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var t string
+		if err := rows2.Scan(&t); err != nil {
+			return nil, nil, err
+		}
+		txTypes = append(txTypes, t)
+	}
+
+	return sources, txTypes, nil
+}
+
 // TransactionFilter holds filter/sort parameters for the unified transaction query.
 type TransactionFilter struct {
 	DateFrom string // "YYYY-MM-DD" or empty
