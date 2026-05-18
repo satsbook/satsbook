@@ -63,8 +63,8 @@ github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24
 github.com/beorn7/perks v1.0.0/go.mod h1:KWe93zE9D1o94FZ5RNwFwVgaQK1VOXiVxmqh+CedLV8=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
-github.com/brewgator/monarchmoney-go v1.0.6-0.20260518214602-da099345913f h1:XWbmBJZc7GjP87KSvJQ4YF44Hpgdeyk6yhsYb4skJqQ=
-github.com/brewgator/monarchmoney-go v1.0.6-0.20260518214602-da099345913f/go.mod h1:ZKPCYT7NcsKGI+YpJ2EqPtfE3dKfuPbiTUrj6J84ot4=
+github.com/brewgator/monarchmoney-go v1.0.6-0.20260518214821-2e7fd82cc694 h1:poPmSX1z5sVfRdlSJg3qUPxmgEusCG1UM+O6mDm8zSQ=
+github.com/brewgator/monarchmoney-go v1.0.6-0.20260518214821-2e7fd82cc694/go.mod h1:ZKPCYT7NcsKGI+YpJ2EqPtfE3dKfuPbiTUrj6J84ot4=
 github.com/btcsuite/btcd v0.20.1-beta/go.mod h1:wVuoA8VJLEcwgqHBwHmzLRazpKxTv13Px/pDuV7OomQ=
 github.com/btcsuite/btcd v0.22.0-beta.0.20220111032746-97732e52810c/go.mod h1:tjmYdS6MLJ5/s0Fj4DbLgSbDHbEqLJrtnHecBFkdz5M=
 github.com/btcsuite/btcd v0.23.5-0.20231215221805-96c9fd8078fd/go.mod h1:nm3Bko6zh6bWP60UxwoT5LzdGJsQJaPo6HjduXq9p6A=
