@@ -37,21 +37,31 @@ run-demo:
 	@bash -c 'set -a && source .env && nohup ./demoserver real 3098 > demoserver.log 2>&1 & echo $$! > demoserver.pid'
 	@echo "Demo validation server started (PID $$(cat demoserver.pid), port 3098). Logs: demoserver.log"
 
-# Stop the daemonized process
+# Stop the daemonized process (PID file + fallback to port scan)
 stop:
 	@if [ -f satsbook.pid ]; then \
-		kill $$(cat satsbook.pid) 2>/dev/null; rm satsbook.pid; echo "Stopped satsbook."; \
-	else \
-		echo "No satsbook.pid found — is it running?"; \
+		kill $$(cat satsbook.pid) 2>/dev/null; rm -f satsbook.pid; \
 	fi
+	@PID=$$(lsof -ti :$${SATSBOOK_APP_PORT:-3000} 2>/dev/null | head -1); \
+	if [ -n "$$PID" ]; then \
+		kill $$PID 2>/dev/null; sleep 0.5; \
+		if kill -0 $$PID 2>/dev/null; then kill -9 $$PID 2>/dev/null; fi; \
+	fi
+	@rm -f satsbook.pid
+	@echo "Stopped satsbook."
 
 # Stop the demo validation server
 stop-demo:
 	@if [ -f demoserver.pid ]; then \
-		kill $$(cat demoserver.pid) 2>/dev/null; rm demoserver.pid; echo "Stopped demo server."; \
-	else \
-		echo "No demoserver.pid found — is it running?"; \
+		kill $$(cat demoserver.pid) 2>/dev/null; rm -f demoserver.pid; \
 	fi
+	@PID=$$(lsof -ti :3098 2>/dev/null | head -1); \
+	if [ -n "$$PID" ]; then \
+		kill $$PID 2>/dev/null; sleep 0.5; \
+		if kill -0 $$PID 2>/dev/null; then kill -9 $$PID 2>/dev/null; fi; \
+	fi
+	@rm -f demoserver.pid
+	@echo "Stopped demo server."
 
 # Build the license server
 build-licenseserver:

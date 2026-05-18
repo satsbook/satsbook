@@ -12,6 +12,7 @@ import (
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/lnd"
+	"github.com/satsbook/satsbook/internal/monarch"
 )
 
 // DashboardStore defines the read operations needed by dashboard handlers.
@@ -68,16 +69,31 @@ type WalletScanner interface {
 	ScanDescriptor(ctx context.Context, descriptor string) (int64, error)
 }
 
+// SettingsStore defines operations for user-configurable settings.
+type SettingsStore interface {
+	GetSetting(ctx context.Context, key string) (string, error)
+	SetSetting(ctx context.Context, key, value string) error
+}
+
+// MonarchSyncer syncs BTC holdings to Monarch Money.
+type MonarchSyncer interface {
+	SyncHolding(ctx context.Context, btcQuantity float64) error
+}
+
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
-	store         DashboardStore
-	node          NodeInfoProvider
-	price         PriceProvider
-	importStore   ImportStore
-	walletStore   WalletStore
-	walletScanner WalletScanner
-	logger        *log.Logger
-	renderer      *Renderer
+	store          DashboardStore
+	node           NodeInfoProvider
+	price          PriceProvider
+	importStore    ImportStore
+	walletStore    WalletStore
+	walletScanner  WalletScanner
+	settingsStore  SettingsStore
+	monarchSyncer    MonarchSyncer
+	onMonarchChange  func(MonarchSyncer)
+	pendingMonarch   *monarch.PendingClient
+	logger           *log.Logger
+	renderer         *Renderer
 }
 
 // NewHandler creates a new Handler.
@@ -112,6 +128,24 @@ func (h *Handler) SetWalletStore(ws WalletStore) {
 // SetWalletScanner sets the wallet scanner (optional, requires Electrum).
 func (h *Handler) SetWalletScanner(ws WalletScanner) {
 	h.walletScanner = ws
+}
+
+// SetSettingsStore sets the settings store.
+func (h *Handler) SetSettingsStore(ss SettingsStore) {
+	h.settingsStore = ss
+}
+
+// SetMonarchSyncer sets the Monarch syncer and notifies any registered listener.
+func (h *Handler) SetMonarchSyncer(ms MonarchSyncer) {
+	h.monarchSyncer = ms
+	if h.onMonarchChange != nil {
+		h.onMonarchChange(ms)
+	}
+}
+
+// OnMonarchChange registers a callback invoked when the Monarch syncer changes.
+func (h *Handler) OnMonarchChange(fn func(MonarchSyncer)) {
+	h.onMonarchChange = fn
 }
 
 // backfillSnapshots runs portfolio snapshot backfill in the background after imports.

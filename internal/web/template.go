@@ -96,6 +96,7 @@ func NewRenderer() *Renderer {
 			"templates/wallets_layout.html",
 			"templates/exchange_detail.html",
 			"templates/wallet_detail.html",
+			"templates/settings_layout.html",
 			"templates/partials/upgrade_required.html",
 		),
 	)

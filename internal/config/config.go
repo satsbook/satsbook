@@ -42,6 +42,10 @@ type Config struct {
 	// License settings
 	LicenseKey           string
 	LicenseValidationURL string
+
+	// Monarch Money sync settings
+	MonarchToken     string
+	MonarchAccountID string
 }
 
 // Load reads configuration from environment variables.
@@ -82,6 +86,10 @@ func Load() (*Config, error) {
 		// License defaults
 		LicenseKey:           getEnv("SATSBOOK_LICENSE_KEY", ""),
 		LicenseValidationURL: getEnv("SATSBOOK_LICENSE_URL", "https://api.satsbook.io/v1/license/validate"),
+
+		// Monarch Money sync
+		MonarchToken:     getEnv("SATSBOOK_MONARCH_TOKEN", ""),
+		MonarchAccountID: getEnv("SATSBOOK_MONARCH_ACCOUNT_ID", ""),
 	}
 
 	// Validate required fields
