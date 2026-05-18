@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	mm "github.com/eshaffer321/monarchmoney-go/pkg/monarch"
@@ -33,6 +34,20 @@ type TransactionClient interface {
 	Create(ctx context.Context, params *mm.CreateTransactionParams) (*mm.Transaction, error)
 }
 
+// CategoryLister lists Monarch transaction categories.
+type CategoryLister interface {
+	ListCategories(ctx context.Context) ([]*mm.TransactionCategory, error)
+}
+
+// monarchCategoryLister wraps the Monarch client's category service.
+type monarchCategoryLister struct {
+	svc mm.TransactionCategoryService
+}
+
+func (m *monarchCategoryLister) ListCategories(ctx context.Context) ([]*mm.TransactionCategory, error) {
+	return m.svc.List(ctx)
+}
+
 // TxToSync represents a satsbook transaction ready for Monarch export.
 type TxToSync struct {
 	SourceID  string
@@ -52,10 +67,12 @@ type TxSyncResult struct {
 
 // Syncer pushes BTC balance to a Monarch Money manual account.
 type Syncer struct {
-	accounts      AccountClient
-	transactions  TransactionClient
-	accountID     string // holdings account
-	txAccountID   string // transactions account (checking type)
+	accounts          AccountClient
+	transactions      TransactionClient
+	categories        CategoryLister
+	accountID         string // holdings account
+	txAccountID       string // transactions account (checking type)
+	defaultCategoryID string // cached "Uncategorized" category ID
 }
 
 // NewSyncer creates a Monarch syncer using a raw auth token.
@@ -67,6 +84,7 @@ func NewSyncer(token, accountID string) (*Syncer, error) {
 	return &Syncer{
 		accounts:     client.Accounts,
 		transactions: client.Transactions,
+		categories:   &monarchCategoryLister{svc: client.Transactions.Categories()},
 		accountID:    accountID,
 	}, nil
 }
@@ -89,7 +107,7 @@ func NewSyncerWithLogin(ctx context.Context, email, password, accountID string) 
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("get session: %w", err)
 	}
-	return &Syncer{accounts: client.Accounts, transactions: client.Transactions, accountID: accountID}, sess.Token, nil, nil
+	return &Syncer{accounts: client.Accounts, transactions: client.Transactions, categories: &monarchCategoryLister{svc: client.Transactions.Categories()}, accountID: accountID}, sess.Token, nil, nil
 }
 
 // ErrOTPRequired indicates that a second factor is needed.
@@ -110,7 +128,7 @@ func (p *PendingClient) CompleteOTP(ctx context.Context, email, password, otpCod
 	if err != nil {
 		return nil, "", fmt.Errorf("get session: %w", err)
 	}
-	return &Syncer{accounts: p.Client.Accounts, transactions: p.Client.Transactions, accountID: p.AccountID}, sess.Token, nil
+	return &Syncer{accounts: p.Client.Accounts, transactions: p.Client.Transactions, categories: &monarchCategoryLister{svc: p.Client.Transactions.Categories()}, accountID: p.AccountID}, sess.Token, nil
 }
 
 // NewSyncerWithClient creates a Syncer with a provided AccountClient (for testing).
@@ -255,6 +273,39 @@ func (s *Syncer) ensureTxAccount(ctx context.Context) (string, error) {
 	return acct.ID, nil
 }
 
+// ensureDefaultCategory finds the "Uncategorized" category ID (required by Monarch API).
+func (s *Syncer) ensureDefaultCategory(ctx context.Context) (string, error) {
+	if s.defaultCategoryID != "" {
+		return s.defaultCategoryID, nil
+	}
+	if s.categories == nil {
+		return "", fmt.Errorf("category lister not available")
+	}
+
+	cats, err := s.categories.ListCategories(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list categories: %w", err)
+	}
+
+	// Look for "Uncategorized" (case-insensitive)
+	for _, c := range cats {
+		if strings.EqualFold(c.Name, "uncategorized") {
+			s.defaultCategoryID = c.ID
+			log.Printf("monarch: using category %q (%s)", c.Name, c.ID)
+			return c.ID, nil
+		}
+	}
+
+	// Fallback: use the first category
+	if len(cats) > 0 {
+		s.defaultCategoryID = cats[0].ID
+		log.Printf("monarch: no 'Uncategorized' found, using %q (%s)", cats[0].Name, cats[0].ID)
+		return cats[0].ID, nil
+	}
+
+	return "", fmt.Errorf("no categories found in Monarch")
+}
+
 // SyncTransactions creates Monarch transactions for a batch of satsbook transactions.
 // It returns the result and a map of source_id -> monarch_tx_id for successful creates.
 // Transactions with zero USD amount are skipped. Rate-limited to avoid API throttling.
@@ -267,6 +318,12 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 	accountID, err := s.ensureTxAccount(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ensure tx account: %w", err)
+	}
+
+	// Resolve the default category ID ("Uncategorized") — required by Monarch API
+	categoryID, err := s.ensureDefaultCategory(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve default category: %w", err)
 	}
 
 	result := &TxSyncResult{}
@@ -288,11 +345,12 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 		notes := notesForTx(tx)
 
 		params := &mm.CreateTransactionParams{
-			Date:      mm.Date{Time: tx.Time},
-			AccountID: accountID,
-			Amount:    tx.AmountUSD,
-			Merchant:  &mm.Merchant{Name: merchantName},
-			Notes:     notes,
+			Date:       mm.Date{Time: tx.Time},
+			AccountID:  accountID,
+			Amount:     tx.AmountUSD,
+			Merchant:   &mm.Merchant{Name: merchantName},
+			CategoryID: categoryID,
+			Notes:      notes,
 		}
 		log.Printf("monarch: creating tx: date=%s account=%s amount=%.2f merchant=%q notes=%q",
 			params.Date.Format("2006-01-02"), params.AccountID, params.Amount, merchantName, notes)
