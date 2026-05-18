@@ -14,7 +14,7 @@ require (
 
 replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-display v1.30.0-hex-display
 
-replace github.com/eshaffer321/monarchmoney-go => github.com/brewgator/monarchmoney-go v1.0.6-0.20260518214013-d3dbba2307d2
+replace github.com/eshaffer321/monarchmoney-go => github.com/brewgator/monarchmoney-go v1.0.6-0.20260518214357-b695a61554b4
 
 require (
 	dario.cat/mergo v1.0.1 // indirect
