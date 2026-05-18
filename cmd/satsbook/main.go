@@ -13,6 +13,7 @@ import (
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/license"
 	"github.com/satsbook/satsbook/internal/lnd"
+	"github.com/satsbook/satsbook/internal/monarch"
 	"github.com/satsbook/satsbook/internal/price"
 	"github.com/satsbook/satsbook/internal/syncer"
 	"github.com/satsbook/satsbook/internal/wallet"
@@ -99,6 +100,28 @@ func main() {
 		nodeProvider = lndClient
 	}
 	handler := web.NewHandler(database, nodeProvider, priceCache, database, httpLogger)
+
+	// Wire up settings store and optional Monarch sync
+	handler.SetSettingsStore(database)
+	monarchToken, _ := database.GetSetting(context.Background(), "monarch_token")
+	if monarchToken == "" {
+		monarchToken = cfg.MonarchToken // fall back to env var
+	}
+	// When Monarch is connected at runtime via the settings page, propagate to the background syncer
+	if s != nil {
+		handler.OnMonarchChange(func(ms web.MonarchSyncer) {
+			s.SetMonarchSyncer(ms)
+		})
+	}
+	if monarchToken != "" {
+		monarchSyncer, err := monarch.NewSyncer(monarchToken, cfg.MonarchAccountID)
+		if err != nil {
+			log.Printf("monarch: failed to create syncer: %v", err)
+		} else {
+			handler.SetMonarchSyncer(monarchSyncer)
+			log.Printf("monarch: sync enabled")
+		}
+	}
 
 	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)

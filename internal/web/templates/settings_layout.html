@@ -1,0 +1,90 @@
+{{define "settings_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Settings</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <div style="display: flex; align-items: center; gap: 24px;">
+        <a class="logo" href="/">Satsbook</a>
+        {{template "nav" "settings"}}
+      </div>
+    </div>
+  </header>
+
+  <main class="container" style="padding: 24px 16px;">
+    <h2>Settings</h2>
+
+    <section class="card" style="margin-top: 16px;">
+      <h3>Monarch Money Integration <span class="tier-badge tier-power">power</span></h3>
+      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+        Sync your total BTC holdings to a Monarch Money investment account.
+        Your balance updates automatically and shows up in your net worth.
+      </p>
+
+      {{if not .MonarchUnlocked}}
+        <div style="padding: 12px; border: 1px solid #555; border-radius: 6px; background: #1a1a1a;">
+          <p style="margin: 0; color: #aaa;">
+            Monarch Money sync requires the <strong>Power</strong> tier.
+            {{if .Tier}}Your current tier: <span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>{{end}}
+          </p>
+        </div>
+      {{else if .MonarchConnected}}
+        <div style="margin-bottom: 12px;">
+          <span style="color: #4caf50;">Connected</span> &middot;
+          <code>{{.MonarchToken}}</code>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button hx-post="/api/monarch/sync" hx-target="#monarch-result" class="btn btn-primary">
+            Sync Now
+          </button>
+          <button hx-post="/api/monarch/disconnect" hx-target="#monarch-result" hx-confirm="Disconnect Monarch Money?" class="btn btn-danger">
+            Disconnect
+          </button>
+        </div>
+      {{else}}
+        <form hx-post="/api/monarch/save" hx-target="#monarch-result" style="display: flex; flex-direction: column; gap: 8px; max-width: 400px;">
+          <div>
+            <label for="monarch_email" style="font-size: 0.8rem; color: #aaa;">Email</label>
+            <input type="email" id="monarch_email" name="monarch_email" placeholder="your@email.com" style="width: 100%; margin-top: 4px;" required>
+          </div>
+          <div>
+            <label for="monarch_password" style="font-size: 0.8rem; color: #aaa;">Password</label>
+            <input type="password" id="monarch_password" name="monarch_password" placeholder="Monarch password" style="width: 100%; margin-top: 4px;" required>
+          </div>
+          <button type="submit" class="btn btn-primary" style="align-self: flex-start;">Connect</button>
+        </form>
+        <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
+          Your credentials are used once to obtain a session token. The password is never stored.
+        </p>
+
+        <details style="margin-top: 16px;">
+          <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Manual token (if login fails)</summary>
+          <div style="margin-top: 8px;">
+            <p style="color: #777; font-size: 0.75rem; margin-bottom: 8px;">
+              Open <a href="https://app.monarch.com" target="_blank" style="color: #4fc3f7;">app.monarch.com</a>, open DevTools (F12) &rarr; Application &rarr; Local Storage &rarr; copy the <code>accessToken</code> value.
+            </p>
+            <form hx-post="/api/monarch/token" hx-target="#monarch-result" style="display: flex; gap: 8px; align-items: flex-end;">
+              <input type="text" name="monarch_token" placeholder="Paste token here" style="flex: 1; font-size: 0.8rem;" required>
+              <button type="submit" class="btn btn-primary">Save Token</button>
+            </form>
+          </div>
+        </details>
+      {{end}}
+
+      <div id="monarch-result" style="margin-top: 12px;"></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook</span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}

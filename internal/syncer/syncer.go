@@ -35,12 +35,18 @@ type PriceProvider interface {
 	GetBTCPrice(ctx context.Context) (float64, error)
 }
 
+// MonarchSyncer pushes BTC holdings to Monarch Money.
+type MonarchSyncer interface {
+	SyncHolding(ctx context.Context, btcQuantity float64) error
+}
+
 // Syncer orchestrates LND data synchronization.
 type Syncer struct {
 	lnd            LNDClient
 	store          Store
 	snapshot       SnapshotStore
 	price          PriceProvider
+	monarch        MonarchSyncer
 	logger         *log.Logger
 	syncInterval   time.Duration
 	maxHistoryDays int
@@ -61,6 +67,11 @@ func New(lnd LNDClient, store Store, logger *log.Logger, syncInterval time.Durat
 func (s *Syncer) SetSnapshotStore(ss SnapshotStore, pp PriceProvider) {
 	s.snapshot = ss
 	s.price = pp
+}
+
+// SetMonarchSyncer sets the Monarch Money syncer for recurring holdings sync.
+func (s *Syncer) SetMonarchSyncer(ms MonarchSyncer) {
+	s.monarch = ms
 }
 
 // Run blocks until ctx is cancelled, syncing on startup and then on the configured interval.
@@ -102,7 +113,7 @@ func (s *Syncer) Sync(ctx context.Context) error {
 	return nil
 }
 
-// captureSnapshot records the current total portfolio value.
+// captureSnapshot records the current total portfolio value and syncs to Monarch.
 func (s *Syncer) captureSnapshot(ctx context.Context) {
 	totalSats, err := s.snapshot.TotalPortfolioSats(ctx)
 	if err != nil {
@@ -118,6 +129,14 @@ func (s *Syncer) captureSnapshot(ctx context.Context) {
 
 	if err := s.snapshot.InsertPortfolioSnapshot(ctx, totalSats, btcPrice); err != nil {
 		s.logger.Printf("snapshot: failed to insert: %v", err)
+	}
+
+	// Sync holdings to Monarch Money
+	if s.monarch != nil {
+		btcQuantity := float64(totalSats) / 1e8
+		if err := s.monarch.SyncHolding(ctx, btcQuantity); err != nil {
+			s.logger.Printf("monarch: sync failed: %v", err)
+		}
 	}
 }
 

@@ -216,6 +216,15 @@ var migrations = []string{
 	);
 	INSERT OR IGNORE INTO license_cache (id, tier) VALUES (1, 'free');
 	`,
+
+	// Migration 8: Key-value settings table for user-configurable options.
+	`
+	CREATE TABLE IF NOT EXISTS settings (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.
