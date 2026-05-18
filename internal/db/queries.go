@@ -1296,3 +1296,95 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 		key, value)
 	return err
 }
+
+// UnifiedTransaction represents a single BTC transaction from any source.
+type UnifiedTransaction struct {
+	Source   string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
+	SourceID string   // unique ID within the source
+	Time     time.Time
+	TxType   string   // buy, sell, send, receive, fee_income
+	AmountSat int64   // positive = inflow, negative = outflow
+	AmountUSD float64
+	FeeSat    int64
+	FeeUSD    float64
+	PriceUSD  float64
+	Memo      string
+}
+
+// UnifiedTransactionPage holds paginated results from the unified view.
+type UnifiedTransactionPage struct {
+	Transactions []UnifiedTransaction
+	Total        int
+}
+
+// ListUnifiedTransactions returns paginated transactions from the unified view.
+func (d *DB) ListUnifiedTransactions(ctx context.Context, limit, offset int) (*UnifiedTransactionPage, error) {
+	var total int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM btc_transactions_v`).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count unified transactions: %w", err)
+	}
+
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT source, source_id, ts, tx_type, amount_sat, amount_usd, fee_sat, fee_usd, COALESCE(price_usd, 0), memo
+		 FROM btc_transactions_v
+		 ORDER BY ts DESC
+		 LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list unified transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var txns []UnifiedTransaction
+	for rows.Next() {
+		var tx UnifiedTransaction
+		var ts string
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo); err != nil {
+			return nil, fmt.Errorf("scan unified transaction: %w", err)
+		}
+		tx.Time, _ = time.Parse("2006-01-02T15:04:05Z", ts)
+		if tx.Time.IsZero() {
+			tx.Time, _ = time.Parse("2006-01-02 15:04:05", ts)
+		}
+		if tx.Time.IsZero() {
+			tx.Time, _ = time.Parse(time.RFC3339, ts)
+		}
+		txns = append(txns, tx)
+	}
+
+	return &UnifiedTransactionPage{Transactions: txns, Total: total}, nil
+}
+
+// ListUnifiedTransactionsSince returns transactions after a given timestamp, ordered oldest first.
+// Used for incremental sync (e.g. pushing new transactions to Monarch).
+func (d *DB) ListUnifiedTransactionsSince(ctx context.Context, since time.Time, limit int) ([]UnifiedTransaction, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT source, source_id, ts, tx_type, amount_sat, amount_usd, fee_sat, fee_usd, COALESCE(price_usd, 0), memo
+		 FROM btc_transactions_v
+		 WHERE ts > ?
+		 ORDER BY ts ASC
+		 LIMIT ?`, since.UTC().Format("2006-01-02 15:04:05"), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unified transactions since: %w", err)
+	}
+	defer rows.Close()
+
+	var txns []UnifiedTransaction
+	for rows.Next() {
+		var tx UnifiedTransaction
+		var ts string
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo); err != nil {
+			return nil, fmt.Errorf("scan unified transaction: %w", err)
+		}
+		tx.Time, _ = time.Parse("2006-01-02T15:04:05Z", ts)
+		if tx.Time.IsZero() {
+			tx.Time, _ = time.Parse("2006-01-02 15:04:05", ts)
+		}
+		if tx.Time.IsZero() {
+			tx.Time, _ = time.Parse(time.RFC3339, ts)
+		}
+		txns = append(txns, tx)
+	}
+
+	return txns, nil
+}
