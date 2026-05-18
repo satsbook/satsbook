@@ -287,16 +287,25 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 		merchantName := merchantForTx(tx)
 		notes := notesForTx(tx)
 
-		created, err := s.transactions.Create(ctx, &mm.CreateTransactionParams{
+		params := &mm.CreateTransactionParams{
 			Date:      mm.Date{Time: tx.Time},
 			AccountID: accountID,
 			Amount:    tx.AmountUSD,
 			Merchant:  &mm.Merchant{Name: merchantName},
 			Notes:     notes,
-		})
+		}
+		log.Printf("monarch: creating tx: date=%s account=%s amount=%.2f merchant=%q notes=%q",
+			params.Date.Format("2006-01-02"), params.AccountID, params.Amount, merchantName, notes)
+
+		created, err := s.transactions.Create(ctx, params)
 		if err != nil {
 			log.Printf("monarch: failed to create tx %s: %v", tx.SourceID, err)
 			result.Errors++
+			if i == 0 {
+				// Log full error detail for first failure only
+				log.Printf("monarch: first failure detail — params: date=%s accountId=%s amount=%.2f merchant=%q notes=%q err=%#v",
+					params.Date.Format("2006-01-02"), params.AccountID, params.Amount, merchantName, notes, err)
+			}
 			continue
 		}
 
