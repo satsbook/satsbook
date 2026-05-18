@@ -11,13 +11,16 @@ import (
 )
 
 const (
-	accountName   = "Bitcoin (Satsbook)"
-	btcSecurityID = "90020945152078462"
+	accountName      = "Bitcoin (Satsbook)"
+	txAccountName    = "Bitcoin Transactions (Satsbook)"
+	btcSecurityID    = "90020945152078462"
+	rateLimitDelay   = 500 * time.Millisecond // delay between API calls to avoid rate limiting
 )
 
 // AccountClient is the subset of the Monarch Money client used by Syncer.
 type AccountClient interface {
 	List(ctx context.Context) ([]*mm.Account, error)
+	Create(ctx context.Context, params *mm.CreateAccountParams) (*mm.Account, error)
 	Delete(ctx context.Context, accountID string) error
 	CreateInvestmentsAccount(ctx context.Context, params *mm.CreateInvestmentsAccountParams) (*mm.Account, error)
 	GetHoldings(ctx context.Context, accountID string) ([]*mm.Holding, error)
@@ -49,9 +52,10 @@ type TxSyncResult struct {
 
 // Syncer pushes BTC balance to a Monarch Money manual account.
 type Syncer struct {
-	accounts     AccountClient
-	transactions TransactionClient
-	accountID    string
+	accounts      AccountClient
+	transactions  TransactionClient
+	accountID     string // holdings account
+	txAccountID   string // transactions account (checking type)
 }
 
 // NewSyncer creates a Monarch syncer using a raw auth token.
@@ -215,28 +219,69 @@ func (s *Syncer) SyncHolding(ctx context.Context, btcQuantity float64) error {
 	return s.recreateAccount(ctx, btcQuantity)
 }
 
+// ensureTxAccount finds or creates the checking account used for transaction exports.
+func (s *Syncer) ensureTxAccount(ctx context.Context) (string, error) {
+	if s.txAccountID != "" {
+		return s.txAccountID, nil
+	}
+
+	// Look for existing tx account
+	accounts, err := s.accounts.List(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list accounts: %w", err)
+	}
+	for _, a := range accounts {
+		if a.DisplayName == txAccountName {
+			s.txAccountID = a.ID
+			log.Printf("monarch: found existing tx account %s (%s)", txAccountName, a.ID)
+			return a.ID, nil
+		}
+	}
+
+	// Create a manual checking account for transactions
+	acct, err := s.accounts.Create(ctx, &mm.CreateAccountParams{
+		AccountType:       "depository",
+		AccountSubtype:    "checking",
+		IsAsset:           true,
+		AccountName:       txAccountName,
+		CurrentBalance:    0,
+		IncludeInNetWorth: false,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create tx account: %w", err)
+	}
+	s.txAccountID = acct.ID
+	log.Printf("monarch: created tx account %s (%s)", txAccountName, acct.ID)
+	return acct.ID, nil
+}
+
 // SyncTransactions creates Monarch transactions for a batch of satsbook transactions.
 // It returns the result and a map of source_id -> monarch_tx_id for successful creates.
-// Transactions with zero USD amount are skipped.
+// Transactions with zero USD amount are skipped. Rate-limited to avoid API throttling.
 func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSyncResult, map[string]string, error) {
 	if s.transactions == nil {
 		return nil, nil, fmt.Errorf("transaction client not available")
 	}
 
-	// Ensure we have an account to post transactions to
-	accountID, err := s.ensureAccount(ctx, 0)
+	// Use a separate checking account for transactions
+	accountID, err := s.ensureTxAccount(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ensure account: %w", err)
+		return nil, nil, fmt.Errorf("ensure tx account: %w", err)
 	}
 
 	result := &TxSyncResult{}
 	synced := make(map[string]string)
 
-	for _, tx := range txns {
+	for i, tx := range txns {
 		// Skip transactions with no USD value
 		if math.Abs(tx.AmountUSD) < 0.01 {
 			result.Skipped++
 			continue
+		}
+
+		// Rate limit: pause between API calls
+		if i > 0 {
+			time.Sleep(rateLimitDelay)
 		}
 
 		merchantName := merchantForTx(tx)

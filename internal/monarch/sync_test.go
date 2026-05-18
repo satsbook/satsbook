@@ -29,6 +29,10 @@ func (m *mockAccountClient) List(ctx context.Context) ([]*mm.Account, error) {
 	return m.accounts, m.listErr
 }
 
+func (m *mockAccountClient) Create(ctx context.Context, params *mm.CreateAccountParams) (*mm.Account, error) {
+	return &mm.Account{ID: "new-manual-id", DisplayName: params.AccountName}, nil
+}
+
 func (m *mockAccountClient) Delete(ctx context.Context, accountID string) error {
 	m.deletedAccountID = accountID
 	return m.deleteErr
