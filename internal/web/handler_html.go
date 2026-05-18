@@ -1613,6 +1613,108 @@ func (h *Handler) getTotalSats(ctx context.Context) (int64, error) {
 	return total, nil
 }
 
+// TransactionsPageData holds data for the /transactions page.
+type TransactionsPageData struct {
+	Transactions []db.UnifiedTransaction
+	Total        int
+	Page         int
+	Limit        int
+	TotalPages   int
+	BTCPriceUSD  float64
+}
+
+// HandleTransactionsPage serves GET /transactions.
+func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request) {
+	if h.txStore == nil {
+		http.Error(w, "transaction store not available", http.StatusInternalServerError)
+		return
+	}
+
+	page := parseIntParam(r, "page", 1)
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	result, err := h.txStore.ListUnifiedTransactions(r.Context(), limit, offset)
+	if err != nil {
+		h.logger.Printf("transactions page: %v", err)
+		http.Error(w, "failed to load transactions", http.StatusInternalServerError)
+		return
+	}
+
+	data := TransactionsPageData{
+		Transactions: result.Transactions,
+		Total:        result.Total,
+		Page:         page,
+		Limit:        limit,
+	}
+	if result.Total > 0 {
+		data.TotalPages = (result.Total + limit - 1) / limit
+	}
+
+	if price, err := h.price.GetBTCPrice(r.Context()); err == nil {
+		data.BTCPriceUSD = price
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transactions_layout", data); err != nil {
+		h.logger.Printf("failed to render transactions page: %v", err)
+	}
+}
+
+// txNoteData is passed to the transaction_note_display and _edit partials.
+type txNoteData struct {
+	SourceID string
+	Note     string
+}
+
+// HandleTransactionNoteEdit serves GET /api/transactions/note/edit — returns edit form partial.
+func (h *Handler) HandleTransactionNoteEdit(w http.ResponseWriter, r *http.Request) {
+	sourceID := r.URL.Query().Get("source_id")
+	note := r.URL.Query().Get("note")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transaction_note_edit", txNoteData{SourceID: sourceID, Note: note}); err != nil {
+		h.logger.Printf("render note edit: %v", err)
+	}
+}
+
+// HandleTransactionNoteSave serves POST /api/transactions/note — saves and returns display partial.
+func (h *Handler) HandleTransactionNoteSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.txStore == nil {
+		h.writeError(w, http.StatusInternalServerError, "transaction store not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+
+	sourceID := r.FormValue("source_id")
+	note := r.FormValue("note")
+	if sourceID == "" {
+		h.writeError(w, http.StatusBadRequest, "source_id required")
+		return
+	}
+
+	if err := h.txStore.SetTransactionNote(r.Context(), sourceID, note); err != nil {
+		h.logger.Printf("set transaction note: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "failed to save note")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transaction_note_display", txNoteData{SourceID: sourceID, Note: strings.TrimSpace(note)}); err != nil {
+		h.logger.Printf("render note display: %v", err)
+	}
+}
+
 // maskToken shows only the last 4 characters of a token.
 func maskToken(token string) string {
 	if len(token) <= 4 {

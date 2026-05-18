@@ -75,6 +75,12 @@ type SettingsStore interface {
 	SetSetting(ctx context.Context, key, value string) error
 }
 
+// TransactionStore defines operations for the unified transaction ledger.
+type TransactionStore interface {
+	ListUnifiedTransactions(ctx context.Context, limit, offset int) (*db.UnifiedTransactionPage, error)
+	SetTransactionNote(ctx context.Context, sourceID, note string) error
+}
+
 // MonarchSyncer syncs BTC holdings to Monarch Money.
 type MonarchSyncer interface {
 	SyncHolding(ctx context.Context, btcQuantity float64) error
@@ -82,13 +88,14 @@ type MonarchSyncer interface {
 
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
-	store          DashboardStore
-	node           NodeInfoProvider
-	price          PriceProvider
-	importStore    ImportStore
-	walletStore    WalletStore
-	walletScanner  WalletScanner
-	settingsStore  SettingsStore
+	store            DashboardStore
+	node             NodeInfoProvider
+	price            PriceProvider
+	importStore      ImportStore
+	walletStore      WalletStore
+	walletScanner    WalletScanner
+	settingsStore    SettingsStore
+	txStore          TransactionStore
 	monarchSyncer    MonarchSyncer
 	onMonarchChange  func(MonarchSyncer)
 	pendingMonarch   *monarch.PendingClient
@@ -133,6 +140,11 @@ func (h *Handler) SetWalletScanner(ws WalletScanner) {
 // SetSettingsStore sets the settings store.
 func (h *Handler) SetSettingsStore(ss SettingsStore) {
 	h.settingsStore = ss
+}
+
+// SetTransactionStore sets the transaction store for the unified ledger.
+func (h *Handler) SetTransactionStore(ts TransactionStore) {
+	h.txStore = ts
 }
 
 // SetMonarchSyncer sets the Monarch syncer and notifies any registered listener.

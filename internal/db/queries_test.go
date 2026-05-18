@@ -2574,3 +2574,84 @@ func TestTotalPortfolioSats(t *testing.T) {
 		t.Errorf("expected 100000, got %d", total)
 	}
 }
+
+func TestTransactionNotes(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	// Get note for non-existent source ID returns empty
+	note, err := d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if note != "" {
+		t.Errorf("expected empty note, got %q", note)
+	}
+
+	// Set a note
+	if err := d.SetTransactionNote(ctx, "forward:1", "test routing fee"); err != nil {
+		t.Fatalf("set note: %v", err)
+	}
+
+	// Read it back
+	note, err = d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("get note: %v", err)
+	}
+	if note != "test routing fee" {
+		t.Errorf("expected 'test routing fee', got %q", note)
+	}
+
+	// Update the note
+	if err := d.SetTransactionNote(ctx, "forward:1", "updated note"); err != nil {
+		t.Fatalf("update note: %v", err)
+	}
+	note, err = d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("get updated note: %v", err)
+	}
+	if note != "updated note" {
+		t.Errorf("expected 'updated note', got %q", note)
+	}
+
+	// Delete note by setting empty
+	if err := d.SetTransactionNote(ctx, "forward:1", ""); err != nil {
+		t.Fatalf("delete note: %v", err)
+	}
+	note, err = d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("get deleted note: %v", err)
+	}
+	if note != "" {
+		t.Errorf("expected empty after delete, got %q", note)
+	}
+}
+
+func TestUnifiedTransactionsWithNotes(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	// Seed a forwarding event
+	seedForwardingEvents(t, d, []ForwardingEvent{{
+		Timestamp: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+		ChanIDIn:  1001, ChanIDOut: 1002,
+		AmtInMsat: 10000, AmtOutMsat: 9000, FeeMsat: 1000,
+	}})
+
+	// Add a note for it
+	if err := d.SetTransactionNote(ctx, "forward:1", "my routing note"); err != nil {
+		t.Fatalf("set note: %v", err)
+	}
+
+	// List should include the note
+	page, err := d.ListUnifiedTransactions(ctx, 50, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(page.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction, got %d", len(page.Transactions))
+	}
+	if page.Transactions[0].Note != "my routing note" {
+		t.Errorf("expected note 'my routing note', got %q", page.Transactions[0].Note)
+	}
+}

@@ -1299,16 +1299,31 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 
 // UnifiedTransaction represents a single BTC transaction from any source.
 type UnifiedTransaction struct {
-	Source   string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
-	SourceID string   // unique ID within the source
-	Time     time.Time
-	TxType   string   // buy, sell, send, receive, fee_income
-	AmountSat int64   // positive = inflow, negative = outflow
+	Source    string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
+	SourceID  string   // unique ID within the source
+	Time      time.Time
+	TxType    string   // buy, sell, send, receive, fee_income
+	AmountSat int64    // positive = inflow, negative = outflow
 	AmountUSD float64
 	FeeSat    int64
 	FeeUSD    float64
 	PriceUSD  float64
 	Memo      string
+	Note      string   // user-editable annotation
+}
+
+// parseFlexibleTime tries multiple time formats to parse a timestamp string from SQLite.
+func parseFlexibleTime(ts string) time.Time {
+	for _, fmt := range []string{
+		"2006-01-02T15:04:05Z",
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+	} {
+		if t, err := time.Parse(fmt, ts); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // UnifiedTransactionPage holds paginated results from the unified view.
@@ -1317,7 +1332,8 @@ type UnifiedTransactionPage struct {
 	Total        int
 }
 
-// ListUnifiedTransactions returns paginated transactions from the unified view.
+// ListUnifiedTransactions returns paginated transactions from the unified view,
+// with user notes joined from the transaction_notes table.
 func (d *DB) ListUnifiedTransactions(ctx context.Context, limit, offset int) (*UnifiedTransactionPage, error) {
 	var total int
 	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM btc_transactions_v`).Scan(&total)
@@ -1326,9 +1342,12 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, limit, offset int) (*U
 	}
 
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT source, source_id, ts, tx_type, amount_sat, amount_usd, fee_sat, fee_usd, COALESCE(price_usd, 0), memo
-		 FROM btc_transactions_v
-		 ORDER BY ts DESC
+		`SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
+		        v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo,
+		        COALESCE(n.note, '')
+		 FROM btc_transactions_v v
+		 LEFT JOIN transaction_notes n ON n.source_id = v.source_id
+		 ORDER BY v.ts DESC
 		 LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list unified transactions: %w", err)
@@ -1339,16 +1358,10 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, limit, offset int) (*U
 	for rows.Next() {
 		var tx UnifiedTransaction
 		var ts string
-		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo); err != nil {
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo, &tx.Note); err != nil {
 			return nil, fmt.Errorf("scan unified transaction: %w", err)
 		}
-		tx.Time, _ = time.Parse("2006-01-02T15:04:05Z", ts)
-		if tx.Time.IsZero() {
-			tx.Time, _ = time.Parse("2006-01-02 15:04:05", ts)
-		}
-		if tx.Time.IsZero() {
-			tx.Time, _ = time.Parse(time.RFC3339, ts)
-		}
+		tx.Time = parseFlexibleTime(ts)
 		txns = append(txns, tx)
 	}
 
@@ -1376,15 +1389,32 @@ func (d *DB) ListUnifiedTransactionsSince(ctx context.Context, since time.Time, 
 		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo); err != nil {
 			return nil, fmt.Errorf("scan unified transaction: %w", err)
 		}
-		tx.Time, _ = time.Parse("2006-01-02T15:04:05Z", ts)
-		if tx.Time.IsZero() {
-			tx.Time, _ = time.Parse("2006-01-02 15:04:05", ts)
-		}
-		if tx.Time.IsZero() {
-			tx.Time, _ = time.Parse(time.RFC3339, ts)
-		}
+		tx.Time = parseFlexibleTime(ts)
 		txns = append(txns, tx)
 	}
 
 	return txns, nil
+}
+
+// GetTransactionNote returns the user note for a transaction, or empty string if none.
+func (d *DB) GetTransactionNote(ctx context.Context, sourceID string) (string, error) {
+	var note string
+	err := d.db.QueryRowContext(ctx, `SELECT note FROM transaction_notes WHERE source_id = ?`, sourceID).Scan(&note)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return note, err
+}
+
+// SetTransactionNote upserts a user note for a transaction. Empty note deletes the row.
+func (d *DB) SetTransactionNote(ctx context.Context, sourceID, note string) error {
+	if strings.TrimSpace(note) == "" {
+		_, err := d.db.ExecContext(ctx, `DELETE FROM transaction_notes WHERE source_id = ?`, sourceID)
+		return err
+	}
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO transaction_notes (source_id, note, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(source_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at`,
+		sourceID, strings.TrimSpace(note))
+	return err
 }

@@ -101,8 +101,9 @@ func main() {
 	}
 	handler := web.NewHandler(database, nodeProvider, priceCache, database, httpLogger)
 
-	// Wire up settings store and optional Monarch sync
+	// Wire up settings store, transaction store, and optional Monarch sync
 	handler.SetSettingsStore(database)
+	handler.SetTransactionStore(database)
 	monarchToken, _ := database.GetSetting(context.Background(), "monarch_token")
 	if monarchToken == "" {
 		monarchToken = cfg.MonarchToken // fall back to env var

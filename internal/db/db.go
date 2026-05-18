@@ -226,6 +226,8 @@ var migrations = []string{
 	);
 	`,
 	// Migration 9: Unified BTC transaction view across all sources.
+	// NOTE: The view is defined here and also recreated in migration 10 to add the notes JOIN.
+	// Keeping the original here for schema history.
 	`
 	CREATE VIEW IF NOT EXISTS btc_transactions_v AS
 	-- LND forwarding fee income
@@ -315,6 +317,15 @@ var migrations = []string{
 			NULLIF(ABS(COALESCE(json_extract(raw_data, '$.AmountBTC'), 0)), 0) AS price_usd,
 		'' AS memo
 	FROM exchange_imports;
+	`,
+
+	// Migration 10: Transaction notes table for user-editable annotations.
+	`
+	CREATE TABLE IF NOT EXISTS transaction_notes (
+		source_id  TEXT PRIMARY KEY,
+		note       TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
 	`,
 }
 

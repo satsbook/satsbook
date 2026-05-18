@@ -1,0 +1,99 @@
+{{define "transactions_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Transactions</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <div style="display: flex; align-items: center; gap: 24px;">
+        <a class="logo" href="/">Satsbook</a>
+        {{template "nav" "transactions"}}
+      </div>
+    </div>
+  </header>
+
+  <main class="container" style="padding: 24px 16px;">
+    <h1 style="margin: 0 0 16px; font-size: 1.25rem;">All Transactions</h1>
+
+    {{if .Transactions}}
+    <div style="overflow-x: auto;">
+      <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid var(--border); text-align: left;">
+            <th style="padding: 8px 12px;">Date</th>
+            <th style="padding: 8px 12px;">Source</th>
+            <th style="padding: 8px 12px;">Type</th>
+            <th style="padding: 8px 12px; text-align: right;">Amount (sats)</th>
+            <th style="padding: 8px 12px; text-align: right;">USD</th>
+            <th style="padding: 8px 12px; text-align: right;">Fee</th>
+            <th style="padding: 8px 12px;">Memo</th>
+            <th style="padding: 8px 12px;">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Transactions}}
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 8px 12px; white-space: nowrap;">{{formatDate .Time}}</td>
+            <td style="padding: 8px 12px;">
+              <span style="background: var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.75rem;">{{.Source}}</span>
+            </td>
+            <td style="padding: 8px 12px;">
+              <span style="border-radius: 4px; padding: 1px 6px; font-size: 0.75rem;
+                {{if eq .TxType "buy"}}background: #166534; color: #bbf7d0;
+                {{else if eq .TxType "receive"}}background: #1e3a5f; color: #93c5fd;
+                {{else if eq .TxType "fee_income"}}background: #713f12; color: #fde68a;
+                {{else if eq .TxType "sell"}}background: #7f1d1d; color: #fecaca;
+                {{else if eq .TxType "send"}}background: #4a1d6a; color: #e9d5ff;
+                {{else}}background: var(--border);
+                {{end}}">{{.TxType}}</span>
+            </td>
+            <td style="padding: 8px 12px; text-align: right; font-family: monospace;
+              {{if gt .AmountSat 0}}color: var(--success, #4ade80);{{else if lt .AmountSat 0}}color: var(--danger, #ef4444);{{end}}">
+              {{formatSats .AmountSat}}
+            </td>
+            <td style="padding: 8px 12px; text-align: right;">{{if .AmountUSD}}{{formatUSD .AmountUSD}}{{else}}-{{end}}</td>
+            <td style="padding: 8px 12px; text-align: right;">
+              {{if .FeeSat}}{{formatSats .FeeSat}} sat{{else if .FeeUSD}}{{formatUSD .FeeUSD}}{{else}}-{{end}}
+            </td>
+            <td style="padding: 8px 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.Memo}}">{{if .Memo}}{{truncate .Memo 30}}{{else}}-{{end}}</td>
+            <td class="note-cell" style="padding: 8px 12px; min-width: 120px;">
+              {{template "transaction_note_display" (dict "SourceID" .SourceID "Note" .Note)}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+
+    {{if gt .TotalPages 1}}
+    <div style="display: flex; justify-content: center; gap: 8px; margin-top: 16px; font-size: 0.85rem;">
+      {{if gt .Page 1}}
+      <a href="/transactions?page={{subtract .Page 1}}" style="color: var(--text-muted); text-decoration: none;">&larr; Prev</a>
+      {{end}}
+      <span style="color: var(--text-muted);">Page {{.Page}} of {{.TotalPages}} ({{.Total}} total)</span>
+      {{if lt .Page .TotalPages}}
+      <a href="/transactions?page={{add .Page 1}}" style="color: var(--text-muted); text-decoration: none;">Next &rarr;</a>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{else}}
+    <div style="text-align: center; padding: 40px 16px; color: var(--text-muted);">
+      No transactions yet. <a href="/import" style="color: var(--accent);">Import exchange CSVs</a> or connect an LND node to see transactions here.
+    </div>
+    {{end}}
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook</span>
+      {{if .BTCPriceUSD}}<span>BTC {{formatUSD .BTCPriceUSD}}</span>{{end}}
+    </div>
+  </footer>
+</body>
+</html>{{end}}
