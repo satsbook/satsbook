@@ -61,6 +61,24 @@ func NewRenderer() *Renderer {
 		"tierAtLeast": func(current, required string) bool {
 			return license.TierAtLeast(license.Tier(current), license.Tier(required))
 		},
+		"sortIndicator": func(col, currentCol, currentDir string) template.HTML {
+			if col != currentCol {
+				return template.HTML(`<span style="opacity:0.3">&#x21C5;</span>`)
+			}
+			if currentDir == "asc" {
+				return template.HTML(`<span>&#x25B2;</span>`)
+			}
+			return template.HTML(`<span>&#x25BC;</span>`)
+		},
+		"flipDir": func(col, currentCol, currentDir string) string {
+			if col != currentCol {
+				return "asc"
+			}
+			if currentDir == "asc" {
+				return "desc"
+			}
+			return "asc"
+		},
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of args")

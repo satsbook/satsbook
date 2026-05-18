@@ -1621,6 +1621,30 @@ type TransactionsPageData struct {
 	Limit        int
 	TotalPages   int
 	BTCPriceUSD  float64
+
+	// Current filter/sort state (for preserving in links and form)
+	DateFrom string
+	DateTo   string
+	TxType   string
+	Source   string
+	Search   string
+	SortCol  string
+	SortDir  string
+
+	// Available filter options
+	Sources []string
+	TxTypes []string
+}
+
+// txSources is the list of available transaction sources for the filter dropdown.
+var txSources = []string{
+	"lnd_forward", "lnd_invoice", "lnd_payment", "lnd_onchain",
+	"strike", "river", "coinbase", "swan",
+}
+
+// txTypes is the list of available transaction types for the filter dropdown.
+var txTypes = []string{
+	"buy", "sell", "send", "receive", "fee_income",
 }
 
 // HandleTransactionsPage serves GET /transactions.
@@ -1637,7 +1661,26 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 	limit := 50
 	offset := (page - 1) * limit
 
-	result, err := h.txStore.ListUnifiedTransactions(r.Context(), limit, offset)
+	q := r.URL.Query()
+	sortCol := q.Get("sort")
+	sortDir := q.Get("dir")
+	if sortDir == "" {
+		sortDir = "desc"
+	}
+
+	f := db.TransactionFilter{
+		DateFrom: q.Get("from"),
+		DateTo:   q.Get("to"),
+		TxType:   q.Get("type"),
+		Source:   q.Get("source"),
+		Search:   q.Get("q"),
+		SortCol:  sortCol,
+		SortDir:  sortDir,
+		Limit:    limit,
+		Offset:   offset,
+	}
+
+	result, err := h.txStore.ListUnifiedTransactions(r.Context(), f)
 	if err != nil {
 		h.logger.Printf("transactions page: %v", err)
 		http.Error(w, "failed to load transactions", http.StatusInternalServerError)
@@ -1649,6 +1692,15 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 		Total:        result.Total,
 		Page:         page,
 		Limit:        limit,
+		DateFrom:     f.DateFrom,
+		DateTo:       f.DateTo,
+		TxType:       f.TxType,
+		Source:       f.Source,
+		Search:       f.Search,
+		SortCol:      sortCol,
+		SortDir:      sortDir,
+		Sources:      txSources,
+		TxTypes:      txTypes,
 	}
 	if result.Total > 0 {
 		data.TotalPages = (result.Total + limit - 1) / limit

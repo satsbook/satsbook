@@ -77,7 +77,7 @@ type SettingsStore interface {
 
 // TransactionStore defines operations for the unified transaction ledger.
 type TransactionStore interface {
-	ListUnifiedTransactions(ctx context.Context, limit, offset int) (*db.UnifiedTransactionPage, error)
+	ListUnifiedTransactions(ctx context.Context, f db.TransactionFilter) (*db.UnifiedTransactionPage, error)
 	SetTransactionNote(ctx context.Context, sourceID, note string) error
 }
 

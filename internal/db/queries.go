@@ -1332,23 +1332,91 @@ type UnifiedTransactionPage struct {
 	Total        int
 }
 
+// TransactionFilter holds filter/sort parameters for the unified transaction query.
+type TransactionFilter struct {
+	DateFrom string // "YYYY-MM-DD" or empty
+	DateTo   string // "YYYY-MM-DD" or empty
+	TxType   string // e.g. "buy", "send", or empty for all
+	Source   string // e.g. "strike", "lnd_forward", or empty for all
+	Search   string // free-text search across memo and notes
+	SortCol  string // "ts", "amount_sat", "source", "tx_type", "amount_usd"
+	SortDir  string // "asc" or "desc"
+	Limit    int
+	Offset   int
+}
+
+// validSortColumns is the allowlist of columns that can be sorted on.
+var validSortColumns = map[string]string{
+	"ts":         "v.ts",
+	"source":     "v.source",
+	"tx_type":    "v.tx_type",
+	"amount_sat": "v.amount_sat",
+	"amount_usd": "v.amount_usd",
+	"fee":        "v.fee_sat",
+}
+
 // ListUnifiedTransactions returns paginated transactions from the unified view,
 // with user notes joined from the transaction_notes table.
-func (d *DB) ListUnifiedTransactions(ctx context.Context, limit, offset int) (*UnifiedTransactionPage, error) {
+// Supports filtering by date range, type, source, search, and custom sort.
+func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (*UnifiedTransactionPage, error) {
+	var where []string
+	var args []interface{}
+
+	if f.DateFrom != "" {
+		where = append(where, "v.ts >= ?")
+		args = append(args, f.DateFrom+" 00:00:00")
+	}
+	if f.DateTo != "" {
+		where = append(where, "v.ts <= ?")
+		args = append(args, f.DateTo+" 23:59:59")
+	}
+	if f.TxType != "" {
+		where = append(where, "v.tx_type = ?")
+		args = append(args, f.TxType)
+	}
+	if f.Source != "" {
+		where = append(where, "v.source = ?")
+		args = append(args, f.Source)
+	}
+	if f.Search != "" {
+		where = append(where, "(v.memo LIKE ? OR COALESCE(n.note, '') LIKE ? OR v.source_id LIKE ?)")
+		like := "%" + f.Search + "%"
+		args = append(args, like, like, like)
+	}
+
+	whereClause := ""
+	if len(where) > 0 {
+		whereClause = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	// Count query
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM btc_transactions_v v
+		LEFT JOIN transaction_notes n ON n.source_id = v.source_id %s`, whereClause)
 	var total int
-	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM btc_transactions_v`).Scan(&total)
+	err := d.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, fmt.Errorf("count unified transactions: %w", err)
 	}
 
-	rows, err := d.db.QueryContext(ctx,
-		`SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
-		        v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo,
-		        COALESCE(n.note, '')
-		 FROM btc_transactions_v v
-		 LEFT JOIN transaction_notes n ON n.source_id = v.source_id
-		 ORDER BY v.ts DESC
-		 LIMIT ? OFFSET ?`, limit, offset)
+	// Sort
+	orderCol := "v.ts"
+	if col, ok := validSortColumns[f.SortCol]; ok {
+		orderCol = col
+	}
+	orderDir := "DESC"
+	if f.SortDir == "asc" {
+		orderDir = "ASC"
+	}
+
+	dataQuery := fmt.Sprintf(`SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
+		v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo,
+		COALESCE(n.note, '')
+		FROM btc_transactions_v v
+		LEFT JOIN transaction_notes n ON n.source_id = v.source_id
+		%s ORDER BY %s %s LIMIT ? OFFSET ?`, whereClause, orderCol, orderDir)
+
+	dataArgs := append(args, f.Limit, f.Offset)
+	rows, err := d.db.QueryContext(ctx, dataQuery, dataArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("list unified transactions: %w", err)
 	}

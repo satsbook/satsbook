@@ -2451,7 +2451,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 		t.Fatalf("seed data: %v", err)
 	}
 
-	page, err := d.ListUnifiedTransactions(ctx, 100, 0)
+	page, err := d.ListUnifiedTransactions(ctx, TransactionFilter{Limit: 100, Offset: 0})
 	if err != nil {
 		t.Fatalf("ListUnifiedTransactions: %v", err)
 	}
@@ -2506,6 +2506,85 @@ func TestListUnifiedTransactions(t *testing.T) {
 				t.Errorf("onchain: expected 100000 sat, got %d", tx.AmountSat)
 			}
 		}
+	}
+}
+
+func TestListUnifiedTransactionsFilters(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed diverse data
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		if err := tx.InsertForwardingEvents([]ForwardingEvent{{
+			Timestamp: time.Date(2024, 3, 10, 12, 0, 0, 0, time.UTC),
+			ChanIDIn: 1001, ChanIDOut: 1002,
+			AmtInMsat: 10000, AmtOutMsat: 9000, FeeMsat: 1000,
+		}}); err != nil {
+			return err
+		}
+		if err := tx.UpsertInvoices([]Invoice{{
+			PaymentHash: "inv-filter-1", AmtPaidMsat: 50_000_000,
+			CreatedAt: time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC),
+			SettledAt: func() *time.Time { t := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC); return &t }(),
+		}}); err != nil {
+			return err
+		}
+		return tx.UpsertPayments([]Payment{{
+			PaymentHash: "pay-filter-1", ValueMsat: 25_000_000, FeeMsat: 100,
+			CreatedAt: time.Date(2024, 6, 20, 12, 0, 0, 0, time.UTC),
+			Status: "SUCCEEDED",
+		}})
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Filter by type
+	page, err := d.ListUnifiedTransactions(ctx, TransactionFilter{TxType: "fee_income", Limit: 100})
+	if err != nil {
+		t.Fatalf("filter by type: %v", err)
+	}
+	if page.Total != 1 {
+		t.Errorf("type filter: expected 1, got %d", page.Total)
+	}
+
+	// Filter by source
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{Source: "lnd_invoice", Limit: 100})
+	if err != nil {
+		t.Fatalf("filter by source: %v", err)
+	}
+	if page.Total != 1 {
+		t.Errorf("source filter: expected 1, got %d", page.Total)
+	}
+
+	// Filter by date range
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{
+		DateFrom: "2024-06-01", DateTo: "2024-06-30", Limit: 100,
+	})
+	if err != nil {
+		t.Fatalf("filter by date: %v", err)
+	}
+	if page.Total != 2 { // invoice + payment
+		t.Errorf("date filter: expected 2, got %d", page.Total)
+	}
+
+	// Sort by amount ascending
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{SortCol: "amount_sat", SortDir: "asc", Limit: 100})
+	if err != nil {
+		t.Fatalf("sort: %v", err)
+	}
+	if len(page.Transactions) == 3 && page.Transactions[0].AmountSat > page.Transactions[2].AmountSat {
+		t.Errorf("expected ascending sort by amount")
+	}
+
+	// Search by memo
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{Search: "routing fee", Limit: 100})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if page.Total != 1 {
+		t.Errorf("search: expected 1, got %d", page.Total)
 	}
 }
 
@@ -2644,7 +2723,7 @@ func TestUnifiedTransactionsWithNotes(t *testing.T) {
 	}
 
 	// List should include the note
-	page, err := d.ListUnifiedTransactions(ctx, 50, 0)
+	page, err := d.ListUnifiedTransactions(ctx, TransactionFilter{Limit: 50, Offset: 0})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
