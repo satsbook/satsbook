@@ -113,6 +113,7 @@ func main() {
 	if s != nil {
 		handler.OnMonarchChange(func(ms web.MonarchSyncer) {
 			s.SetMonarchSyncer(ms)
+			s.SetMonarchTxSync(database, database)
 		})
 	}
 	if monarchToken != "" {
@@ -121,6 +122,9 @@ func main() {
 			log.Printf("monarch: failed to create syncer: %v", err)
 		} else {
 			handler.SetMonarchSyncer(monarchSyncer)
+			if s != nil {
+				s.SetMonarchTxSync(database, database)
+			}
 			log.Printf("monarch: sync enabled")
 		}
 	}
