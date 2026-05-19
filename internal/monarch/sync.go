@@ -344,13 +344,15 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 		merchantName := merchantForTx(tx)
 		notes := notesForTx(tx)
 
+		noBalance := false
 		params := &mm.CreateTransactionParams{
-			Date:       mm.Date{Time: tx.Time},
-			AccountID:  accountID,
-			Amount:     -tx.AmountUSD,
-			Merchant:   &mm.Merchant{Name: merchantName},
-			CategoryID: categoryID,
-			Notes:      notes,
+			Date:                mm.Date{Time: tx.Time},
+			AccountID:           accountID,
+			Amount:              tx.AmountUSD,
+			Merchant:            &mm.Merchant{Name: merchantName},
+			CategoryID:          categoryID,
+			Notes:               notes,
+			ShouldUpdateBalance: &noBalance,
 		}
 		created, err := s.transactions.Create(ctx, params)
 		if err != nil {
