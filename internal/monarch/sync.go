@@ -347,7 +347,7 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 		params := &mm.CreateTransactionParams{
 			Date:       mm.Date{Time: tx.Time},
 			AccountID:  accountID,
-			Amount:     tx.AmountUSD,
+			Amount:     -tx.AmountUSD,
 			Merchant:   &mm.Merchant{Name: merchantName},
 			CategoryID: categoryID,
 			Notes:      notes,
