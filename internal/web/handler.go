@@ -90,7 +90,7 @@ type MonarchSyncer interface {
 
 // MonarchTxStore defines DB operations for Monarch transaction sync tracking.
 type MonarchTxStore interface {
-	ListUnsyncedTransactions(ctx context.Context, txTypes []string) ([]db.UnifiedTransaction, error)
+	ListUnsyncedTransactions(ctx context.Context, txTypes []string, sources []string) ([]db.UnifiedTransaction, error)
 	MarkTransactionSynced(ctx context.Context, sourceID, monarchTxID string) error
 	MonarchSyncedCount(ctx context.Context) (int, error)
 	DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error)

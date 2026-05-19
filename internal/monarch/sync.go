@@ -368,9 +368,19 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 	return result, synced, nil
 }
 
-// merchantForTx builds a merchant name for a Monarch transaction.
+// merchantForTx builds a descriptive merchant name for a Monarch transaction.
+// When a memo is available it is appended: "Strike - Bill Pay to SOLAR CO".
 func merchantForTx(tx TxToSync) string {
-	switch tx.Source {
+	base := sourceLabel(tx.Source)
+	if tx.Memo != "" {
+		return base + " - " + tx.Memo
+	}
+	return base
+}
+
+// sourceLabel returns a human-readable label for a transaction source.
+func sourceLabel(source string) string {
+	switch source {
 	case "strike":
 		return "Strike"
 	case "river":
@@ -388,17 +398,13 @@ func merchantForTx(tx TxToSync) string {
 	case "lnd_onchain":
 		return "On-chain"
 	default:
-		return tx.Source
+		return source
 	}
 }
 
 // notesForTx builds the notes string for a Monarch transaction.
 func notesForTx(tx TxToSync) string {
-	note := fmt.Sprintf("[%s] %s", tx.TxType, tx.SourceID)
-	if tx.Memo != "" {
-		note = tx.Memo + " | " + note
-	}
-	return note
+	return fmt.Sprintf("[%s] %s", tx.TxType, tx.SourceID)
 }
 
 // recreateAccount deletes the existing account and creates a fresh one.

@@ -1518,18 +1518,30 @@ func (d *DB) SetTransactionNote(ctx context.Context, sourceID, note string) erro
 	return err
 }
 
-// ListUnsyncedTransactions returns unified transactions of the given types that
-// have not yet been synced to Monarch Money.
-func (d *DB) ListUnsyncedTransactions(ctx context.Context, txTypes []string) ([]UnifiedTransaction, error) {
+// ListUnsyncedTransactions returns unified transactions of the given types and sources
+// that have not yet been synced to Monarch Money.
+// If sources is empty, all sources are included.
+func (d *DB) ListUnsyncedTransactions(ctx context.Context, txTypes []string, sources []string) ([]UnifiedTransaction, error) {
 	if len(txTypes) == 0 {
 		return nil, nil
 	}
 
-	placeholders := make([]string, len(txTypes))
+	typePH := make([]string, len(txTypes))
 	args := make([]interface{}, len(txTypes))
 	for i, t := range txTypes {
-		placeholders[i] = "?"
+		typePH[i] = "?"
 		args[i] = t
+	}
+
+	whereClause := fmt.Sprintf("v.tx_type IN (%s)", strings.Join(typePH, ","))
+
+	if len(sources) > 0 {
+		srcPH := make([]string, len(sources))
+		for i, s := range sources {
+			srcPH[i] = "?"
+			args = append(args, s)
+		}
+		whereClause += fmt.Sprintf(" AND v.source IN (%s)", strings.Join(srcPH, ","))
 	}
 
 	query := fmt.Sprintf(`
@@ -1537,9 +1549,8 @@ func (d *DB) ListUnsyncedTransactions(ctx context.Context, txTypes []string) ([]
 		       v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo
 		FROM btc_transactions_v v
 		LEFT JOIN monarch_tx_sync m ON m.source_id = v.source_id
-		WHERE v.tx_type IN (%s) AND m.source_id IS NULL
-		ORDER BY v.ts ASC`,
-		strings.Join(placeholders, ","))
+		WHERE %s AND m.source_id IS NULL
+		ORDER BY v.ts ASC`, whereClause)
 
 	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {

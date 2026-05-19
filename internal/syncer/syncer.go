@@ -45,7 +45,7 @@ type MonarchSyncer interface {
 
 // MonarchTxStore reads unsynced transactions and records synced ones.
 type MonarchTxStore interface {
-	ListUnsyncedTransactions(ctx context.Context, txTypes []string) ([]db.UnifiedTransaction, error)
+	ListUnsyncedTransactions(ctx context.Context, txTypes []string, sources []string) ([]db.UnifiedTransaction, error)
 	MarkTransactionSynced(ctx context.Context, sourceID, monarchTxID string) error
 }
 
@@ -175,7 +175,13 @@ func (s *Syncer) syncMonarchTransactions(ctx context.Context) {
 	}
 
 	types := strings.Split(syncTypes, ",")
-	txns, err := s.monarchTxStore.ListUnsyncedTransactions(ctx, types)
+
+	var sources []string
+	if v, err := s.settings.GetSetting(ctx, "monarch_sync_sources"); err == nil && v != "" {
+		sources = strings.Split(v, ",")
+	}
+
+	txns, err := s.monarchTxStore.ListUnsyncedTransactions(ctx, types, sources)
 	if err != nil {
 		s.logger.Printf("monarch tx sync: list unsynced: %v", err)
 		return

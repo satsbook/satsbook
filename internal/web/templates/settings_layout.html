@@ -98,7 +98,20 @@
       {{end}}
 
       <form hx-post="/api/monarch/sync-types" hx-target="#monarch-tx-result" style="margin-bottom: 12px;">
-        <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px;">
+        <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Sources</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
+          {{range .AvailableSources}}
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+            <input type="checkbox" name="sync_sources" value="{{.}}"
+              {{if contains $.MonarchSyncSources .}}checked{{end}}
+              style="accent-color: var(--accent);">
+            {{sourceLabel .}}
+          </label>
+          {{end}}
+        </div>
+
+        <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Transaction Types</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
           {{range .AvailableTxTypes}}
           <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
             <input type="checkbox" name="sync_types" value="{{.}}"

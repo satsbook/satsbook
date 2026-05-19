@@ -1377,7 +1377,9 @@ type SettingsPageData struct {
 	Error            string
 	// Monarch transaction sync
 	MonarchSyncTypes    []string // currently selected tx types
+	MonarchSyncSources  []string // currently selected sources
 	AvailableTxTypes    []string // all tx types from data
+	AvailableSources    []string // all sources from data
 	MonarchSyncedCount  int      // how many transactions have been synced
 }
 
@@ -1400,11 +1402,16 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		if syncTypes != "" {
 			data.MonarchSyncTypes = strings.Split(syncTypes, ",")
 		}
+		syncSources, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_sources")
+		if syncSources != "" {
+			data.MonarchSyncSources = strings.Split(syncSources, ",")
+		}
 
-		// Load available tx types from data
+		// Load available tx types and sources from data
 		if h.monarchTxStore != nil {
-			_, txTypes, _ := h.monarchTxStore.DistinctTransactionValues(r.Context())
+			sources, txTypes, _ := h.monarchTxStore.DistinctTransactionValues(r.Context())
 			data.AvailableTxTypes = txTypes
+			data.AvailableSources = sources
 			count, _ := h.monarchTxStore.MonarchSyncedCount(r.Context())
 			data.MonarchSyncedCount = count
 		}
@@ -1649,20 +1656,26 @@ func (h *Handler) HandleMonarchSyncTypes(w http.ResponseWriter, r *http.Request)
 	}
 
 	selectedTypes := r.Form["sync_types"]
-	value := strings.Join(selectedTypes, ",")
+	selectedSources := r.Form["sync_sources"]
 
-	if err := h.settingsStore.SetSetting(r.Context(), "monarch_sync_types", value); err != nil {
+	if err := h.settingsStore.SetSetting(r.Context(), "monarch_sync_types", strings.Join(selectedTypes, ",")); err != nil {
 		h.logger.Printf("monarch: failed to save sync types: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to save preferences.</div>`)
+		return
+	}
+	if err := h.settingsStore.SetSetting(r.Context(), "monarch_sync_sources", strings.Join(selectedSources, ",")); err != nil {
+		h.logger.Printf("monarch: failed to save sync sources: %v", err)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<div style="color:var(--red);">Failed to save preferences.</div>`)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if len(selectedTypes) == 0 {
-		fmt.Fprint(w, `<div style="color:var(--green);">Transaction sync disabled — no types selected.</div>`)
+	if len(selectedTypes) == 0 && len(selectedSources) == 0 {
+		fmt.Fprint(w, `<div style="color:var(--green);">Transaction sync disabled — no filters selected.</div>`)
 	} else {
-		fmt.Fprintf(w, `<div style="color:var(--green);">Saved %d transaction type(s) for sync.</div>`, len(selectedTypes))
+		fmt.Fprintf(w, `<div style="color:var(--green);">Saved preferences: %d type(s), %d source(s).</div>`, len(selectedTypes), len(selectedSources))
 	}
 }
 
@@ -1695,7 +1708,7 @@ func (h *Handler) HandleMonarchTxSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read selected sync types
+	// Read selected sync types and sources
 	syncTypes, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_types")
 	if syncTypes == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1704,9 +1717,13 @@ func (h *Handler) HandleMonarchTxSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	types := strings.Split(syncTypes, ",")
+	var sources []string
+	if v, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_sources"); v != "" {
+		sources = strings.Split(v, ",")
+	}
 
 	// Get unsynced transactions
-	txns, err := h.monarchTxStore.ListUnsyncedTransactions(r.Context(), types)
+	txns, err := h.monarchTxStore.ListUnsyncedTransactions(r.Context(), types, sources)
 	if err != nil {
 		h.logger.Printf("monarch tx sync: list unsynced: %v", err)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -87,6 +87,7 @@ func NewRenderer() *Renderer {
 			}
 			return false
 		},
+		"sourceLabel": templateSourceLabel,
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of args")
@@ -245,6 +246,30 @@ func seq(n int) []int {
 		s[i] = i
 	}
 	return s
+}
+
+// templateSourceLabel returns a human-readable label for a transaction source.
+func templateSourceLabel(source string) string {
+	switch source {
+	case "strike":
+		return "Strike"
+	case "river":
+		return "River"
+	case "coinbase":
+		return "Coinbase"
+	case "swan":
+		return "Swan"
+	case "lnd_forward":
+		return "Lightning Routing"
+	case "lnd_invoice":
+		return "Lightning Invoice"
+	case "lnd_payment":
+		return "Lightning Payment"
+	case "lnd_onchain":
+		return "On-chain"
+	default:
+		return source
+	}
 }
 
 // portfolioChart generates an inline SVG line chart from portfolio snapshots.
