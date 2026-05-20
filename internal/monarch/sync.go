@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	mm "github.com/eshaffer321/monarchmoney-go/pkg/monarch"
@@ -74,6 +75,7 @@ type Syncer struct {
 	accountID         string // holdings account
 	txAccountID       string // transactions account (checking type)
 	defaultCategoryID string // cached "Uncategorized" category ID
+	txSyncMu          sync.Mutex // prevents concurrent transaction syncs
 }
 
 // NewSyncer creates a Monarch syncer using a raw auth token.
@@ -312,6 +314,9 @@ func (s *Syncer) ensureDefaultCategory(ctx context.Context) (string, error) {
 // Transactions with zero USD amount are skipped. Rate-limited to avoid API throttling.
 // Existing transactions in Monarch are detected by notes and skipped to prevent duplicates.
 func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSyncResult, map[string]string, error) {
+	s.txSyncMu.Lock()
+	defer s.txSyncMu.Unlock()
+
 	if s.transactions == nil {
 		return nil, nil, fmt.Errorf("transaction client not available")
 	}
