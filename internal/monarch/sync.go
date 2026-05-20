@@ -29,9 +29,10 @@ type AccountClient interface {
 	CreateHolding(ctx context.Context, params *mm.CreateHoldingParams) (*mm.Holding, error)
 }
 
-// TransactionClient creates transactions in Monarch.
+// TransactionClient creates and queries transactions in Monarch.
 type TransactionClient interface {
 	Create(ctx context.Context, params *mm.CreateTransactionParams) (*mm.Transaction, error)
+	Query() mm.TransactionQueryBuilder
 }
 
 // CategoryLister lists Monarch transaction categories.
@@ -309,6 +310,7 @@ func (s *Syncer) ensureDefaultCategory(ctx context.Context) (string, error) {
 // SyncTransactions creates Monarch transactions for a batch of satsbook transactions.
 // It returns the result and a map of source_id -> monarch_tx_id for successful creates.
 // Transactions with zero USD amount are skipped. Rate-limited to avoid API throttling.
+// Existing transactions in Monarch are detected by notes and skipped to prevent duplicates.
 func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSyncResult, map[string]string, error) {
 	if s.transactions == nil {
 		return nil, nil, fmt.Errorf("transaction client not available")
@@ -326,12 +328,23 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 		return nil, nil, fmt.Errorf("resolve default category: %w", err)
 	}
 
+	// Fetch existing transactions from Monarch to detect duplicates.
+	// Notes contain source_id so we can match without creating duplicates.
+	existing := s.fetchExistingSourceIDs(ctx, accountID)
+
 	result := &TxSyncResult{}
 	synced := make(map[string]string)
 
 	for i, tx := range txns {
 		// Skip transactions with no USD value
 		if math.Abs(tx.AmountUSD) < 0.01 {
+			result.Skipped++
+			continue
+		}
+
+		// Skip if already in Monarch (dedup by source_id found in notes)
+		if monarchID, ok := existing[tx.SourceID]; ok {
+			synced[tx.SourceID] = monarchID
 			result.Skipped++
 			continue
 		}
@@ -366,6 +379,39 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 	}
 
 	return result, synced, nil
+}
+
+// fetchExistingSourceIDs queries Monarch for all transactions on the given account
+// and extracts source_ids from the notes field. Returns a map of source_id -> monarch_tx_id.
+func (s *Syncer) fetchExistingSourceIDs(ctx context.Context, accountID string) map[string]string {
+	existing := make(map[string]string)
+	if s.transactions == nil {
+		return existing
+	}
+
+	txList, err := s.transactions.Query().
+		WithAccounts(accountID).
+		Limit(10000).
+		Execute(ctx)
+	if err != nil {
+		log.Printf("monarch: dedup check failed (will create without dedup): %v", err)
+		return existing
+	}
+
+	for _, tx := range txList.Transactions {
+		if tx.Notes == "" {
+			continue
+		}
+		// Notes format: "[tx_type] source_id"
+		// Extract source_id after the last "] "
+		if idx := strings.LastIndex(tx.Notes, "] "); idx >= 0 {
+			sourceID := tx.Notes[idx+2:]
+			existing[sourceID] = tx.ID
+		}
+	}
+
+	log.Printf("monarch: found %d existing transactions for dedup", len(existing))
+	return existing
 }
 
 // merchantForTx builds a descriptive merchant name for a Monarch transaction.
