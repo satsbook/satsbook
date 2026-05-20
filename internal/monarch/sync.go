@@ -317,6 +317,8 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 	s.txSyncMu.Lock()
 	defer s.txSyncMu.Unlock()
 
+	log.Printf("monarch tx sync: starting batch of %d transactions", len(txns))
+
 	if s.transactions == nil {
 		return nil, nil, fmt.Errorf("transaction client not available")
 	}
@@ -339,6 +341,7 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 
 	result := &TxSyncResult{}
 	synced := make(map[string]string)
+	dedupSkipped := 0
 
 	for i, tx := range txns {
 		// Skip transactions with no USD value
@@ -351,6 +354,7 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 		if monarchID, ok := existing[tx.SourceID]; ok {
 			synced[tx.SourceID] = monarchID
 			result.Skipped++
+			dedupSkipped++
 			continue
 		}
 
@@ -383,6 +387,8 @@ func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSync
 		result.Created++
 	}
 
+	log.Printf("monarch tx sync: done — %d created, %d skipped (%d dedup), %d errors, %d total synced",
+		result.Created, result.Skipped, dedupSkipped, result.Errors, len(synced))
 	return result, synced, nil
 }
 
@@ -403,8 +409,11 @@ func (s *Syncer) fetchExistingSourceIDs(ctx context.Context, accountID string) m
 		return existing
 	}
 
+	noNotes := 0
+	noParse := 0
 	for _, tx := range txList.Transactions {
 		if tx.Notes == "" {
+			noNotes++
 			continue
 		}
 		// Notes format: "[tx_type] source_id"
@@ -412,10 +421,13 @@ func (s *Syncer) fetchExistingSourceIDs(ctx context.Context, accountID string) m
 		if idx := strings.LastIndex(tx.Notes, "] "); idx >= 0 {
 			sourceID := tx.Notes[idx+2:]
 			existing[sourceID] = tx.ID
+		} else {
+			noParse++
 		}
 	}
 
-	log.Printf("monarch: found %d existing transactions for dedup", len(existing))
+	log.Printf("monarch: dedup fetched %d monarch txns, matched %d source_ids (%d no notes, %d unparseable)",
+		len(txList.Transactions), len(existing), noNotes, noParse)
 	return existing
 }
 
