@@ -1375,6 +1375,12 @@ type SettingsPageData struct {
 	MonarchUnlocked  bool
 	Message          string
 	Error            string
+	// Monarch transaction sync
+	MonarchSyncTypes    []string // currently selected tx types
+	MonarchSyncSources  []string // currently selected sources
+	AvailableTxTypes    []string // all tx types from data
+	AvailableSources    []string // all sources from data
+	MonarchSyncedCount  int      // how many transactions have been synced
 }
 
 // HandleSettingsPage serves GET /settings.
@@ -1389,6 +1395,25 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		if token != "" {
 			data.MonarchToken = maskToken(token)
 			data.MonarchConnected = true
+		}
+
+		// Load tx sync preferences
+		syncTypes, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_types")
+		if syncTypes != "" {
+			data.MonarchSyncTypes = strings.Split(syncTypes, ",")
+		}
+		syncSources, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_sources")
+		if syncSources != "" {
+			data.MonarchSyncSources = strings.Split(syncSources, ",")
+		}
+
+		// Load available tx types and sources from data
+		if h.monarchTxStore != nil {
+			sources, txTypes, _ := h.monarchTxStore.DistinctTransactionValues(r.Context())
+			data.AvailableTxTypes = txTypes
+			data.AvailableSources = sources
+			count, _ := h.monarchTxStore.MonarchSyncedCount(r.Context())
+			data.MonarchSyncedCount = count
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1611,6 +1636,292 @@ func (h *Handler) getTotalSats(ctx context.Context) (int64, error) {
 	}
 
 	return total, nil
+}
+
+// HandleMonarchSyncTypes handles POST /api/monarch/sync-types — saves which tx types to sync.
+func (h *Handler) HandleMonarchSyncTypes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to parse form.</div>`)
+		return
+	}
+
+	selectedTypes := r.Form["sync_types"]
+	selectedSources := r.Form["sync_sources"]
+
+	if err := h.settingsStore.SetSetting(r.Context(), "monarch_sync_types", strings.Join(selectedTypes, ",")); err != nil {
+		h.logger.Printf("monarch: failed to save sync types: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to save preferences.</div>`)
+		return
+	}
+	if err := h.settingsStore.SetSetting(r.Context(), "monarch_sync_sources", strings.Join(selectedSources, ",")); err != nil {
+		h.logger.Printf("monarch: failed to save sync sources: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to save preferences.</div>`)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if len(selectedTypes) == 0 && len(selectedSources) == 0 {
+		fmt.Fprint(w, `<div style="color:var(--green);">Transaction sync disabled — no filters selected.</div>`)
+	} else {
+		fmt.Fprintf(w, `<div style="color:var(--green);">Saved preferences: %d type(s), %d source(s).</div>`, len(selectedTypes), len(selectedSources))
+	}
+}
+
+// HandleMonarchTxSync handles POST /api/monarch/tx-sync — syncs transactions to Monarch.
+func (h *Handler) HandleMonarchTxSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Ensure Monarch syncer is available
+	if h.monarchSyncer == nil && h.settingsStore != nil {
+		token, _ := h.settingsStore.GetSetting(r.Context(), "monarch_token")
+		if token != "" {
+			syncer, err := monarch.NewSyncer(token, "")
+			if err == nil {
+				h.monarchSyncer = syncer
+			}
+		}
+	}
+	if h.monarchSyncer == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Monarch not connected. Log in first.</div>`)
+		return
+	}
+
+	if h.settingsStore == nil || h.monarchTxStore == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Transaction sync not available.</div>`)
+		return
+	}
+
+	// Read selected sync types and sources
+	syncTypes, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_types")
+	if syncTypes == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">No transaction types selected. Save preferences first.</div>`)
+		return
+	}
+
+	types := strings.Split(syncTypes, ",")
+	var sources []string
+	if v, _ := h.settingsStore.GetSetting(r.Context(), "monarch_sync_sources"); v != "" {
+		sources = strings.Split(v, ",")
+	}
+
+	// Get unsynced transactions
+	txns, err := h.monarchTxStore.ListUnsyncedTransactions(r.Context(), types, sources)
+	if err != nil {
+		h.logger.Printf("monarch tx sync: list unsynced: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--red);">Failed to query transactions.</div>`)
+		return
+	}
+
+	if len(txns) == 0 {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div style="color:var(--green);">All transactions are already synced.</div>`)
+		return
+	}
+
+	// Convert to TxToSync
+	toSync := make([]monarch.TxToSync, len(txns))
+	for i, tx := range txns {
+		toSync[i] = monarch.TxToSync{
+			SourceID:  tx.SourceID,
+			Source:    tx.Source,
+			TxType:   tx.TxType,
+			Time:     tx.Time,
+			AmountUSD: tx.AmountUSD,
+			Memo:     tx.Memo,
+		}
+	}
+
+	// Respond immediately — sync runs in the background
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div style="color:var(--accent);">Syncing %d transactions to Monarch in the background. You can leave this page.</div>`, len(toSync))
+
+	// Capture references for the goroutine
+	syncer := h.monarchSyncer
+	txStore := h.monarchTxStore
+	logger := h.logger
+
+	go func() {
+		ctx := context.Background()
+		result, synced, err := syncer.SyncTransactions(ctx, toSync)
+		if err != nil {
+			logger.Printf("monarch tx sync failed: %v", err)
+			return
+		}
+
+		for sourceID, monarchTxID := range synced {
+			if err := txStore.MarkTransactionSynced(ctx, sourceID, monarchTxID); err != nil {
+				logger.Printf("monarch: failed to mark %s synced: %v", sourceID, err)
+			}
+		}
+
+		logger.Printf("monarch tx sync complete: %d created, %d skipped, %d errors", result.Created, result.Skipped, result.Errors)
+	}()
+}
+
+// TransactionsPageData holds data for the /transactions page.
+type TransactionsPageData struct {
+	Transactions []db.UnifiedTransaction
+	Total        int
+	Page         int
+	Limit        int
+	TotalPages   int
+	BTCPriceUSD  float64
+
+	// Current filter/sort state (for preserving in links and form)
+	DateFrom string
+	DateTo   string
+	TxType   string
+	Source   string
+	Search   string
+	SortCol  string
+	SortDir  string
+
+	// Available filter options
+	Sources []string
+	TxTypes []string
+}
+
+// HandleTransactionsPage serves GET /transactions.
+func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request) {
+	if h.txStore == nil {
+		http.Error(w, "transaction store not available", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	page := parseIntParam(r, "page", 1)
+	if page < 1 {
+		page = 1
+	}
+	limit := 50
+	offset := (page - 1) * limit
+
+	q := r.URL.Query()
+	sortCol := q.Get("sort")
+	sortDir := q.Get("dir")
+	if sortDir == "" {
+		sortDir = "desc"
+	}
+
+	f := db.TransactionFilter{
+		DateFrom: q.Get("from"),
+		DateTo:   q.Get("to"),
+		TxType:   q.Get("type"),
+		Source:   q.Get("source"),
+		Search:   q.Get("q"),
+		SortCol:  sortCol,
+		SortDir:  sortDir,
+		Limit:    limit,
+		Offset:   offset,
+	}
+
+	result, err := h.txStore.ListUnifiedTransactions(ctx, f)
+	if err != nil {
+		h.logger.Printf("transactions page: %v", err)
+		http.Error(w, "failed to load transactions", http.StatusInternalServerError)
+		return
+	}
+
+	// Pull actual sources and types from the data
+	sources, txTypes, _ := h.txStore.DistinctTransactionValues(ctx)
+
+	data := TransactionsPageData{
+		Transactions: result.Transactions,
+		Total:        result.Total,
+		Page:         page,
+		Limit:        limit,
+		DateFrom:     f.DateFrom,
+		DateTo:       f.DateTo,
+		TxType:       f.TxType,
+		Source:       f.Source,
+		Search:       f.Search,
+		SortCol:      sortCol,
+		SortDir:      sortDir,
+		Sources:      sources,
+		TxTypes:      txTypes,
+	}
+	if result.Total > 0 {
+		data.TotalPages = (result.Total + limit - 1) / limit
+	}
+
+	if price, err := h.price.GetBTCPrice(ctx); err == nil {
+		data.BTCPriceUSD = price
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transactions_layout", data); err != nil {
+		h.logger.Printf("failed to render transactions page: %v", err)
+	}
+}
+
+// txNoteData is passed to the transaction_note_display and _edit partials.
+type txNoteData struct {
+	SourceID string
+	Note     string
+}
+
+// HandleTransactionNoteEdit serves GET /api/transactions/note/edit — returns edit form partial.
+func (h *Handler) HandleTransactionNoteEdit(w http.ResponseWriter, r *http.Request) {
+	sourceID := r.URL.Query().Get("source_id")
+	note := r.URL.Query().Get("note")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transaction_note_edit", txNoteData{SourceID: sourceID, Note: note}); err != nil {
+		h.logger.Printf("render note edit: %v", err)
+	}
+}
+
+// HandleTransactionNoteSave serves POST /api/transactions/note — saves and returns display partial.
+func (h *Handler) HandleTransactionNoteSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.txStore == nil {
+		h.writeError(w, http.StatusInternalServerError, "transaction store not available")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid form")
+		return
+	}
+
+	sourceID := r.FormValue("source_id")
+	note := r.FormValue("note")
+	if sourceID == "" {
+		h.writeError(w, http.StatusBadRequest, "source_id required")
+		return
+	}
+
+	if err := h.txStore.SetTransactionNote(r.Context(), sourceID, note); err != nil {
+		h.logger.Printf("set transaction note: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "failed to save note")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transaction_note_display", txNoteData{SourceID: sourceID, Note: strings.TrimSpace(note)}); err != nil {
+		h.logger.Printf("render note display: %v", err)
+	}
 }
 
 // maskToken shows only the last 4 characters of a token.

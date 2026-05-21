@@ -225,6 +225,209 @@ var migrations = []string{
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	`,
+	// Migration 9: Unified BTC transaction view across all sources.
+	// NOTE: The view is defined here and also recreated in migration 10 to add the notes JOIN.
+	// Keeping the original here for schema history.
+	`
+	CREATE VIEW IF NOT EXISTS btc_transactions_v AS
+	-- LND forwarding fee income
+	SELECT
+		'lnd_forward' AS source,
+		'forward:' || id AS source_id,
+		timestamp AS ts,
+		'fee_income' AS tx_type,
+		fee_msat / 1000 AS amount_sat,
+		0.0 AS amount_usd,
+		0 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		'routing fee: ' || chan_id_in || ' → ' || chan_id_out AS memo
+	FROM forwarding_events
+
+	UNION ALL
+
+	-- LND invoices received (settled only)
+	SELECT
+		'lnd_invoice' AS source,
+		payment_hash AS source_id,
+		COALESCE(settled_at, created_at) AS ts,
+		'receive' AS tx_type,
+		amt_paid_msat / 1000 AS amount_sat,
+		0.0 AS amount_usd,
+		0 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		'' AS memo
+	FROM invoices
+	WHERE settled_at IS NOT NULL
+
+	UNION ALL
+
+	-- LND payments sent (succeeded only)
+	SELECT
+		'lnd_payment' AS source,
+		payment_hash AS source_id,
+		created_at AS ts,
+		'send' AS tx_type,
+		-(value_msat / 1000) AS amount_sat,
+		0.0 AS amount_usd,
+		fee_msat / 1000 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		'' AS memo
+	FROM payments
+	WHERE status = 'SUCCEEDED'
+
+	UNION ALL
+
+	-- LND on-chain transactions
+	SELECT
+		'lnd_onchain' AS source,
+		tx_hash AS source_id,
+		timestamp AS ts,
+		CASE WHEN amount_sat >= 0 THEN 'receive' ELSE 'send' END AS tx_type,
+		amount_sat AS amount_sat,
+		0.0 AS amount_usd,
+		0 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		COALESCE(label, '') AS memo
+	FROM onchain_txns
+	WHERE num_confirmations > 0
+
+	UNION ALL
+
+	-- Exchange imports (Strike, River, Coinbase, Swan)
+	SELECT
+		source AS source,
+		source || ':' || external_id || ':' || tx_type AS source_id,
+		COALESCE(json_extract(raw_data, '$.Date'), imported_at) AS ts,
+		CASE
+			WHEN LOWER(tx_type) IN ('buy', 'purchase') THEN 'buy'
+			WHEN LOWER(tx_type) IN ('sale', 'sell') THEN 'sell'
+			WHEN LOWER(tx_type) IN ('send', 'withdrawal') THEN 'send'
+			WHEN LOWER(tx_type) IN ('receive', 'deposit') THEN 'receive'
+			ELSE tx_type
+		END AS tx_type,
+		CAST(COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) * 100000000 AS INTEGER) AS amount_sat,
+		COALESCE(json_extract(raw_data, '$.AmountUSD'), 0.0) AS amount_usd,
+		0 AS fee_sat,
+		COALESCE(json_extract(raw_data, '$.FeeUSD'), 0.0) AS fee_usd,
+		COALESCE(json_extract(raw_data, '$.CostBasisUSD'), 0.0) /
+			NULLIF(ABS(COALESCE(json_extract(raw_data, '$.AmountBTC'), 0)), 0) AS price_usd,
+		'' AS memo
+	FROM exchange_imports;
+	`,
+
+	// Migration 10: Transaction notes table for user-editable annotations.
+	`
+	CREATE TABLE IF NOT EXISTS transaction_notes (
+		source_id  TEXT PRIMARY KEY,
+		note       TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	`,
+
+	// Migration 11: Recreate unified view to surface Description in memo column.
+	`
+	DROP VIEW IF EXISTS btc_transactions_v;
+	CREATE VIEW btc_transactions_v AS
+	-- LND forwarding fee income
+	SELECT
+		'lnd_forward' AS source,
+		'forward:' || id AS source_id,
+		timestamp AS ts,
+		'fee_income' AS tx_type,
+		fee_msat / 1000 AS amount_sat,
+		0.0 AS amount_usd,
+		0 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		'routing fee: ' || chan_id_in || ' → ' || chan_id_out AS memo
+	FROM forwarding_events
+
+	UNION ALL
+
+	-- LND invoices received (settled only)
+	SELECT
+		'lnd_invoice' AS source,
+		payment_hash AS source_id,
+		COALESCE(settled_at, created_at) AS ts,
+		'receive' AS tx_type,
+		amt_paid_msat / 1000 AS amount_sat,
+		0.0 AS amount_usd,
+		0 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		'' AS memo
+	FROM invoices
+	WHERE settled_at IS NOT NULL
+
+	UNION ALL
+
+	-- LND payments sent (succeeded only)
+	SELECT
+		'lnd_payment' AS source,
+		payment_hash AS source_id,
+		created_at AS ts,
+		'send' AS tx_type,
+		-(value_msat / 1000) AS amount_sat,
+		0.0 AS amount_usd,
+		fee_msat / 1000 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		'' AS memo
+	FROM payments
+	WHERE status = 'SUCCEEDED'
+
+	UNION ALL
+
+	-- LND on-chain transactions
+	SELECT
+		'lnd_onchain' AS source,
+		tx_hash AS source_id,
+		timestamp AS ts,
+		CASE WHEN amount_sat >= 0 THEN 'receive' ELSE 'send' END AS tx_type,
+		amount_sat AS amount_sat,
+		0.0 AS amount_usd,
+		0 AS fee_sat,
+		0.0 AS fee_usd,
+		0.0 AS price_usd,
+		COALESCE(label, '') AS memo
+	FROM onchain_txns
+	WHERE num_confirmations > 0
+
+	UNION ALL
+
+	-- Exchange imports (Strike, River, Coinbase, Swan)
+	SELECT
+		source AS source,
+		source || ':' || external_id || ':' || tx_type AS source_id,
+		COALESCE(json_extract(raw_data, '$.Date'), imported_at) AS ts,
+		CASE
+			WHEN LOWER(tx_type) IN ('buy', 'purchase') THEN 'buy'
+			WHEN LOWER(tx_type) IN ('sale', 'sell') THEN 'sell'
+			WHEN LOWER(tx_type) IN ('send', 'withdrawal') THEN 'send'
+			WHEN LOWER(tx_type) IN ('receive', 'deposit') THEN 'receive'
+			ELSE tx_type
+		END AS tx_type,
+		CAST(COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) * 100000000 AS INTEGER) AS amount_sat,
+		COALESCE(json_extract(raw_data, '$.AmountUSD'), 0.0) AS amount_usd,
+		0 AS fee_sat,
+		COALESCE(json_extract(raw_data, '$.FeeUSD'), 0.0) AS fee_usd,
+		COALESCE(json_extract(raw_data, '$.CostBasisUSD'), 0.0) /
+			NULLIF(ABS(COALESCE(json_extract(raw_data, '$.AmountBTC'), 0)), 0) AS price_usd,
+		COALESCE(json_extract(raw_data, '$.Description'), '') AS memo
+	FROM exchange_imports;
+	`,
+	// Migration 12: Monarch transaction sync tracking.
+	`
+	CREATE TABLE IF NOT EXISTS monarch_tx_sync (
+		source_id     TEXT PRIMARY KEY,
+		monarch_tx_id TEXT NOT NULL,
+		synced_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

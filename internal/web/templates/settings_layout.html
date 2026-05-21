@@ -10,10 +10,13 @@
 <body>
   <header>
     <div class="container header-inner">
-      <div style="display: flex; align-items: center; gap: 24px;">
+      <div class="header-top">
         <a class="logo" href="/">Satsbook</a>
-        {{template "nav" "settings"}}
+        <button class="hamburger" id="hamburger" aria-label="Toggle menu" onclick="document.getElementById('main-nav').classList.toggle('nav-open'); this.classList.toggle('hamburger-open');">
+          <span></span><span></span><span></span>
+        </button>
       </div>
+      {{template "nav" "settings"}}
     </div>
   </header>
 
@@ -79,6 +82,59 @@
 
       <div id="monarch-result" style="margin-top: 12px;"></div>
     </section>
+
+    {{if and .MonarchUnlocked .MonarchConnected}}
+    <section class="card" style="margin-top: 16px;">
+      <h3>Transaction Export to Monarch</h3>
+      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+        Select which transaction types to export as Monarch transactions.
+        Each transaction is synced once — duplicates are automatically skipped.
+      </p>
+
+      {{if .MonarchSyncedCount}}
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;">
+        {{.MonarchSyncedCount}} transaction(s) already synced.
+      </p>
+      {{end}}
+
+      <form hx-post="/api/monarch/sync-types" hx-target="#monarch-tx-result" style="margin-bottom: 12px;">
+        <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Sources</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
+          {{range .AvailableSources}}
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+            <input type="checkbox" name="sync_sources" value="{{.}}"
+              {{if contains $.MonarchSyncSources .}}checked{{end}}
+              style="accent-color: var(--accent);">
+            {{sourceLabel .}}
+          </label>
+          {{end}}
+        </div>
+
+        <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Transaction Types</p>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
+          {{range .AvailableTxTypes}}
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+            <input type="checkbox" name="sync_types" value="{{.}}"
+              {{if contains $.MonarchSyncTypes .}}checked{{end}}
+              style="accent-color: var(--accent);">
+            {{.}}
+          </label>
+          {{end}}
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="submit" style="background: var(--accent); color: #000; border: none; border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
+            Save Preferences
+          </button>
+          <button type="button" hx-post="/api/monarch/tx-sync" hx-target="#monarch-tx-result"
+            style="background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">
+            Sync Transactions Now
+          </button>
+        </div>
+      </form>
+
+      <div id="monarch-tx-result"></div>
+    </section>
+    {{end}}
   </main>
 
   <footer>

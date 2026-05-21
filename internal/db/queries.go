@@ -1296,3 +1296,298 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 		key, value)
 	return err
 }
+
+// UnifiedTransaction represents a single BTC transaction from any source.
+type UnifiedTransaction struct {
+	Source    string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
+	SourceID  string   // unique ID within the source
+	Time      time.Time
+	TxType    string   // buy, sell, send, receive, fee_income
+	AmountSat int64    // positive = inflow, negative = outflow
+	AmountUSD float64
+	FeeSat    int64
+	FeeUSD    float64
+	PriceUSD  float64
+	Memo      string
+	Note      string   // user-editable annotation
+}
+
+// parseFlexibleTime tries multiple time formats to parse a timestamp string from SQLite.
+func parseFlexibleTime(ts string) time.Time {
+	for _, fmt := range []string{
+		"2006-01-02T15:04:05Z",
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+	} {
+		if t, err := time.Parse(fmt, ts); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// UnifiedTransactionPage holds paginated results from the unified view.
+type UnifiedTransactionPage struct {
+	Transactions []UnifiedTransaction
+	Total        int
+}
+
+// DistinctTransactionValues returns the distinct sources and tx_types from the unified view.
+func (d *DB) DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT DISTINCT source FROM btc_transactions_v WHERE source != '' ORDER BY source`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("distinct sources: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, nil, err
+		}
+		sources = append(sources, s)
+	}
+
+	rows2, err := d.db.QueryContext(ctx, `SELECT DISTINCT tx_type FROM btc_transactions_v WHERE tx_type != '' ORDER BY tx_type`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("distinct tx_types: %w", err)
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var t string
+		if err := rows2.Scan(&t); err != nil {
+			return nil, nil, err
+		}
+		txTypes = append(txTypes, t)
+	}
+
+	return sources, txTypes, nil
+}
+
+// TransactionFilter holds filter/sort parameters for the unified transaction query.
+type TransactionFilter struct {
+	DateFrom string // "YYYY-MM-DD" or empty
+	DateTo   string // "YYYY-MM-DD" or empty
+	TxType   string // e.g. "buy", "send", or empty for all
+	Source   string // e.g. "strike", "lnd_forward", or empty for all
+	Search   string // free-text search across memo and notes
+	SortCol  string // "ts", "amount_sat", "source", "tx_type", "amount_usd"
+	SortDir  string // "asc" or "desc"
+	Limit    int
+	Offset   int
+}
+
+// validSortColumns is the allowlist of columns that can be sorted on.
+var validSortColumns = map[string]string{
+	"ts":         "v.ts",
+	"source":     "v.source",
+	"tx_type":    "v.tx_type",
+	"amount_sat": "v.amount_sat",
+	"amount_usd": "v.amount_usd",
+	"fee":        "v.fee_sat",
+}
+
+// ListUnifiedTransactions returns paginated transactions from the unified view,
+// with user notes joined from the transaction_notes table.
+// Supports filtering by date range, type, source, search, and custom sort.
+func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (*UnifiedTransactionPage, error) {
+	var where []string
+	var args []interface{}
+
+	if f.DateFrom != "" {
+		where = append(where, "v.ts >= ?")
+		args = append(args, f.DateFrom+" 00:00:00")
+	}
+	if f.DateTo != "" {
+		where = append(where, "v.ts <= ?")
+		args = append(args, f.DateTo+" 23:59:59")
+	}
+	if f.TxType != "" {
+		where = append(where, "v.tx_type = ?")
+		args = append(args, f.TxType)
+	}
+	if f.Source != "" {
+		where = append(where, "v.source = ?")
+		args = append(args, f.Source)
+	}
+	if f.Search != "" {
+		where = append(where, "(v.memo LIKE ? OR COALESCE(n.note, '') LIKE ? OR v.source_id LIKE ?)")
+		like := "%" + f.Search + "%"
+		args = append(args, like, like, like)
+	}
+
+	whereClause := ""
+	if len(where) > 0 {
+		whereClause = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	// Count query
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM btc_transactions_v v
+		LEFT JOIN transaction_notes n ON n.source_id = v.source_id %s`, whereClause)
+	var total int
+	err := d.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, fmt.Errorf("count unified transactions: %w", err)
+	}
+
+	// Sort
+	orderCol := "v.ts"
+	if col, ok := validSortColumns[f.SortCol]; ok {
+		orderCol = col
+	}
+	orderDir := "DESC"
+	if f.SortDir == "asc" {
+		orderDir = "ASC"
+	}
+
+	dataQuery := fmt.Sprintf(`SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
+		v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo,
+		COALESCE(n.note, '')
+		FROM btc_transactions_v v
+		LEFT JOIN transaction_notes n ON n.source_id = v.source_id
+		%s ORDER BY %s %s LIMIT ? OFFSET ?`, whereClause, orderCol, orderDir)
+
+	dataArgs := append(args, f.Limit, f.Offset)
+	rows, err := d.db.QueryContext(ctx, dataQuery, dataArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("list unified transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var txns []UnifiedTransaction
+	for rows.Next() {
+		var tx UnifiedTransaction
+		var ts string
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo, &tx.Note); err != nil {
+			return nil, fmt.Errorf("scan unified transaction: %w", err)
+		}
+		tx.Time = parseFlexibleTime(ts)
+		txns = append(txns, tx)
+	}
+
+	return &UnifiedTransactionPage{Transactions: txns, Total: total}, nil
+}
+
+// ListUnifiedTransactionsSince returns transactions after a given timestamp, ordered oldest first.
+// Used for incremental sync (e.g. pushing new transactions to Monarch).
+func (d *DB) ListUnifiedTransactionsSince(ctx context.Context, since time.Time, limit int) ([]UnifiedTransaction, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT source, source_id, ts, tx_type, amount_sat, amount_usd, fee_sat, fee_usd, COALESCE(price_usd, 0), memo
+		 FROM btc_transactions_v
+		 WHERE ts > ?
+		 ORDER BY ts ASC
+		 LIMIT ?`, since.UTC().Format("2006-01-02 15:04:05"), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unified transactions since: %w", err)
+	}
+	defer rows.Close()
+
+	var txns []UnifiedTransaction
+	for rows.Next() {
+		var tx UnifiedTransaction
+		var ts string
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo); err != nil {
+			return nil, fmt.Errorf("scan unified transaction: %w", err)
+		}
+		tx.Time = parseFlexibleTime(ts)
+		txns = append(txns, tx)
+	}
+
+	return txns, nil
+}
+
+// GetTransactionNote returns the user note for a transaction, or empty string if none.
+func (d *DB) GetTransactionNote(ctx context.Context, sourceID string) (string, error) {
+	var note string
+	err := d.db.QueryRowContext(ctx, `SELECT note FROM transaction_notes WHERE source_id = ?`, sourceID).Scan(&note)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return note, err
+}
+
+// SetTransactionNote upserts a user note for a transaction. Empty note deletes the row.
+func (d *DB) SetTransactionNote(ctx context.Context, sourceID, note string) error {
+	if strings.TrimSpace(note) == "" {
+		_, err := d.db.ExecContext(ctx, `DELETE FROM transaction_notes WHERE source_id = ?`, sourceID)
+		return err
+	}
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO transaction_notes (source_id, note, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(source_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at`,
+		sourceID, strings.TrimSpace(note))
+	return err
+}
+
+// ListUnsyncedTransactions returns unified transactions of the given types and sources
+// that have not yet been synced to Monarch Money.
+// If sources is empty, all sources are included.
+func (d *DB) ListUnsyncedTransactions(ctx context.Context, txTypes []string, sources []string) ([]UnifiedTransaction, error) {
+	if len(txTypes) == 0 {
+		return nil, nil
+	}
+
+	typePH := make([]string, len(txTypes))
+	args := make([]interface{}, len(txTypes))
+	for i, t := range txTypes {
+		typePH[i] = "?"
+		args[i] = t
+	}
+
+	whereClause := fmt.Sprintf("v.tx_type IN (%s)", strings.Join(typePH, ","))
+
+	if len(sources) > 0 {
+		srcPH := make([]string, len(sources))
+		for i, s := range sources {
+			srcPH[i] = "?"
+			args = append(args, s)
+		}
+		whereClause += fmt.Sprintf(" AND v.source IN (%s)", strings.Join(srcPH, ","))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
+		       v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo
+		FROM btc_transactions_v v
+		LEFT JOIN monarch_tx_sync m ON m.source_id = v.source_id
+		WHERE %s AND m.source_id IS NULL
+		ORDER BY v.ts ASC`, whereClause)
+
+	rows, err := d.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list unsynced transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var txns []UnifiedTransaction
+	for rows.Next() {
+		var tx UnifiedTransaction
+		var ts string
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo); err != nil {
+			return nil, fmt.Errorf("scan unsynced transaction: %w", err)
+		}
+		tx.Time = parseFlexibleTime(ts)
+		txns = append(txns, tx)
+	}
+	return txns, nil
+}
+
+// MarkTransactionSynced records that a transaction was synced to Monarch.
+func (d *DB) MarkTransactionSynced(ctx context.Context, sourceID, monarchTxID string) error {
+	_, err := d.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO monarch_tx_sync (source_id, monarch_tx_id) VALUES (?, ?)`,
+		sourceID, monarchTxID)
+	return err
+}
+
+// MonarchSyncedCount returns the number of transactions synced to Monarch.
+func (d *DB) MonarchSyncedCount(ctx context.Context) (int, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM monarch_tx_sync`).Scan(&count)
+	return count, err
+}
+
+// ClearMonarchSyncState removes all Monarch sync tracking records.
+func (d *DB) ClearMonarchSyncState(ctx context.Context) error {
+	_, err := d.db.ExecContext(ctx, `DELETE FROM monarch_tx_sync`)
+	return err
+}

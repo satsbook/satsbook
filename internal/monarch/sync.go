@@ -4,18 +4,25 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
+	"strings"
+	"sync"
+	"time"
 
 	mm "github.com/eshaffer321/monarchmoney-go/pkg/monarch"
 )
 
 const (
-	accountName   = "Bitcoin (Satsbook)"
-	btcSecurityID = "90020945152078462"
+	accountName      = "Bitcoin (Satsbook)"
+	txAccountName    = "Bitcoin Transactions (Satsbook)"
+	btcSecurityID    = "90020945152078462"
+	rateLimitDelay   = 500 * time.Millisecond // delay between API calls to avoid rate limiting
 )
 
 // AccountClient is the subset of the Monarch Money client used by Syncer.
 type AccountClient interface {
 	List(ctx context.Context) ([]*mm.Account, error)
+	Create(ctx context.Context, params *mm.CreateAccountParams) (*mm.Account, error)
 	Delete(ctx context.Context, accountID string) error
 	CreateInvestmentsAccount(ctx context.Context, params *mm.CreateInvestmentsAccountParams) (*mm.Account, error)
 	GetHoldings(ctx context.Context, accountID string) ([]*mm.Holding, error)
@@ -23,10 +30,52 @@ type AccountClient interface {
 	CreateHolding(ctx context.Context, params *mm.CreateHoldingParams) (*mm.Holding, error)
 }
 
+// TransactionClient creates and queries transactions in Monarch.
+type TransactionClient interface {
+	Create(ctx context.Context, params *mm.CreateTransactionParams) (*mm.Transaction, error)
+	Query() mm.TransactionQueryBuilder
+}
+
+// CategoryLister lists Monarch transaction categories.
+type CategoryLister interface {
+	ListCategories(ctx context.Context) ([]*mm.TransactionCategory, error)
+}
+
+// monarchCategoryLister wraps the Monarch client's category service.
+type monarchCategoryLister struct {
+	svc mm.TransactionCategoryService
+}
+
+func (m *monarchCategoryLister) ListCategories(ctx context.Context) ([]*mm.TransactionCategory, error) {
+	return m.svc.List(ctx)
+}
+
+// TxToSync represents a satsbook transaction ready for Monarch export.
+type TxToSync struct {
+	SourceID  string
+	Source    string
+	TxType   string
+	Time      time.Time
+	AmountUSD float64
+	Memo      string
+}
+
+// TxSyncResult holds the outcome of a transaction sync batch.
+type TxSyncResult struct {
+	Created int
+	Skipped int
+	Errors  int
+}
+
 // Syncer pushes BTC balance to a Monarch Money manual account.
 type Syncer struct {
-	accounts  AccountClient
-	accountID string
+	accounts          AccountClient
+	transactions      TransactionClient
+	categories        CategoryLister
+	accountID         string // holdings account
+	txAccountID       string // transactions account (checking type)
+	defaultCategoryID string // cached "Uncategorized" category ID
+	txSyncMu          sync.Mutex // prevents concurrent transaction syncs
 }
 
 // NewSyncer creates a Monarch syncer using a raw auth token.
@@ -35,7 +84,12 @@ func NewSyncer(token, accountID string) (*Syncer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create monarch client: %w", err)
 	}
-	return &Syncer{accounts: client.Accounts, accountID: accountID}, nil
+	return &Syncer{
+		accounts:     client.Accounts,
+		transactions: client.Transactions,
+		categories:   &monarchCategoryLister{svc: client.Transactions.Categories()},
+		accountID:    accountID,
+	}, nil
 }
 
 // NewSyncerWithLogin creates a Monarch syncer by logging in with email/password.
@@ -56,7 +110,7 @@ func NewSyncerWithLogin(ctx context.Context, email, password, accountID string) 
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("get session: %w", err)
 	}
-	return &Syncer{accounts: client.Accounts, accountID: accountID}, sess.Token, nil, nil
+	return &Syncer{accounts: client.Accounts, transactions: client.Transactions, categories: &monarchCategoryLister{svc: client.Transactions.Categories()}, accountID: accountID}, sess.Token, nil, nil
 }
 
 // ErrOTPRequired indicates that a second factor is needed.
@@ -77,12 +131,17 @@ func (p *PendingClient) CompleteOTP(ctx context.Context, email, password, otpCod
 	if err != nil {
 		return nil, "", fmt.Errorf("get session: %w", err)
 	}
-	return &Syncer{accounts: p.Client.Accounts, accountID: p.AccountID}, sess.Token, nil
+	return &Syncer{accounts: p.Client.Accounts, transactions: p.Client.Transactions, categories: &monarchCategoryLister{svc: p.Client.Transactions.Categories()}, accountID: p.AccountID}, sess.Token, nil
 }
 
 // NewSyncerWithClient creates a Syncer with a provided AccountClient (for testing).
 func NewSyncerWithClient(accounts AccountClient, accountID string) *Syncer {
 	return &Syncer{accounts: accounts, accountID: accountID}
+}
+
+// NewSyncerWithClients creates a Syncer with both account and transaction clients (for testing).
+func NewSyncerWithClients(accounts AccountClient, transactions TransactionClient, accountID string) *Syncer {
+	return &Syncer{accounts: accounts, transactions: transactions, accountID: accountID}
 }
 
 // findAccount looks for an existing satsbook account by name.
@@ -179,6 +238,236 @@ func (s *Syncer) SyncHolding(ctx context.Context, btcQuantity float64) error {
 	// No BTC holding found (shouldn't happen but handle it)
 	log.Printf("monarch: no BTC holding found, recreating account")
 	return s.recreateAccount(ctx, btcQuantity)
+}
+
+// ensureTxAccount finds or creates the checking account used for transaction exports.
+func (s *Syncer) ensureTxAccount(ctx context.Context) (string, error) {
+	if s.txAccountID != "" {
+		return s.txAccountID, nil
+	}
+
+	// Look for existing tx account
+	accounts, err := s.accounts.List(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list accounts: %w", err)
+	}
+	for _, a := range accounts {
+		if a.DisplayName == txAccountName {
+			s.txAccountID = a.ID
+			log.Printf("monarch: found existing tx account %s (%s)", txAccountName, a.ID)
+			return a.ID, nil
+		}
+	}
+
+	// Create a manual checking account for transactions
+	acct, err := s.accounts.Create(ctx, &mm.CreateAccountParams{
+		AccountType:       "depository",
+		AccountSubtype:    "checking",
+		IsAsset:           true,
+		AccountName:       txAccountName,
+		CurrentBalance:    0,
+		IncludeInNetWorth: false,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create tx account: %w", err)
+	}
+	s.txAccountID = acct.ID
+	log.Printf("monarch: created tx account %s (%s)", txAccountName, acct.ID)
+	return acct.ID, nil
+}
+
+// ensureDefaultCategory finds the "Uncategorized" category ID (required by Monarch API).
+func (s *Syncer) ensureDefaultCategory(ctx context.Context) (string, error) {
+	if s.defaultCategoryID != "" {
+		return s.defaultCategoryID, nil
+	}
+	if s.categories == nil {
+		return "", fmt.Errorf("category lister not available")
+	}
+
+	cats, err := s.categories.ListCategories(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list categories: %w", err)
+	}
+
+	// Look for "Uncategorized" (case-insensitive)
+	for _, c := range cats {
+		if strings.EqualFold(c.Name, "uncategorized") {
+			s.defaultCategoryID = c.ID
+			log.Printf("monarch: using category %q (%s)", c.Name, c.ID)
+			return c.ID, nil
+		}
+	}
+
+	// Fallback: use the first category
+	if len(cats) > 0 {
+		s.defaultCategoryID = cats[0].ID
+		log.Printf("monarch: no 'Uncategorized' found, using %q (%s)", cats[0].Name, cats[0].ID)
+		return cats[0].ID, nil
+	}
+
+	return "", fmt.Errorf("no categories found in Monarch")
+}
+
+// SyncTransactions creates Monarch transactions for a batch of satsbook transactions.
+// It returns the result and a map of source_id -> monarch_tx_id for successful creates.
+// Transactions with zero USD amount are skipped. Rate-limited to avoid API throttling.
+// Existing transactions in Monarch are detected by notes and skipped to prevent duplicates.
+func (s *Syncer) SyncTransactions(ctx context.Context, txns []TxToSync) (*TxSyncResult, map[string]string, error) {
+	s.txSyncMu.Lock()
+	defer s.txSyncMu.Unlock()
+
+	log.Printf("monarch tx sync: starting batch of %d transactions", len(txns))
+
+	if s.transactions == nil {
+		return nil, nil, fmt.Errorf("transaction client not available")
+	}
+
+	// Use a separate checking account for transactions
+	accountID, err := s.ensureTxAccount(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ensure tx account: %w", err)
+	}
+
+	// Resolve the default category ID ("Uncategorized") — required by Monarch API
+	categoryID, err := s.ensureDefaultCategory(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve default category: %w", err)
+	}
+
+	// Fetch existing transactions from Monarch to detect duplicates.
+	// Notes contain source_id so we can match without creating duplicates.
+	existing := s.fetchExistingSourceIDs(ctx, accountID)
+
+	result := &TxSyncResult{}
+	synced := make(map[string]string)
+	dedupSkipped := 0
+
+	for i, tx := range txns {
+		// Skip transactions with no USD value
+		if math.Abs(tx.AmountUSD) < 0.01 {
+			result.Skipped++
+			continue
+		}
+
+		// Skip if already in Monarch (dedup by source_id found in notes)
+		if monarchID, ok := existing[tx.SourceID]; ok {
+			synced[tx.SourceID] = monarchID
+			result.Skipped++
+			dedupSkipped++
+			continue
+		}
+
+		// Rate limit: pause between API calls
+		if i > 0 {
+			time.Sleep(rateLimitDelay)
+		}
+
+		merchantName := merchantForTx(tx)
+		notes := notesForTx(tx)
+
+		noBalance := false
+		params := &mm.CreateTransactionParams{
+			Date:                mm.Date{Time: tx.Time},
+			AccountID:           accountID,
+			Amount:              tx.AmountUSD,
+			Merchant:            &mm.Merchant{Name: merchantName},
+			CategoryID:          categoryID,
+			Notes:               notes,
+			ShouldUpdateBalance: &noBalance,
+		}
+		created, err := s.transactions.Create(ctx, params)
+		if err != nil {
+			log.Printf("monarch: failed to create tx %s: %v", tx.SourceID, err)
+			result.Errors++
+			continue
+		}
+
+		synced[tx.SourceID] = created.ID
+		result.Created++
+	}
+
+	log.Printf("monarch tx sync: done — %d created, %d skipped (%d dedup), %d errors, %d total synced",
+		result.Created, result.Skipped, dedupSkipped, result.Errors, len(synced))
+	return result, synced, nil
+}
+
+// fetchExistingSourceIDs queries Monarch for all transactions on the given account
+// and extracts source_ids from the notes field. Returns a map of source_id -> monarch_tx_id.
+func (s *Syncer) fetchExistingSourceIDs(ctx context.Context, accountID string) map[string]string {
+	existing := make(map[string]string)
+	if s.transactions == nil {
+		return existing
+	}
+
+	txList, err := s.transactions.Query().
+		WithAccounts(accountID).
+		Limit(10000).
+		Execute(ctx)
+	if err != nil {
+		log.Printf("monarch: dedup check failed (will create without dedup): %v", err)
+		return existing
+	}
+
+	noNotes := 0
+	noParse := 0
+	for _, tx := range txList.Transactions {
+		if tx.Notes == "" {
+			noNotes++
+			continue
+		}
+		// Notes format: "[tx_type] source_id"
+		// Extract source_id after the last "] "
+		if idx := strings.LastIndex(tx.Notes, "] "); idx >= 0 {
+			sourceID := tx.Notes[idx+2:]
+			existing[sourceID] = tx.ID
+		} else {
+			noParse++
+		}
+	}
+
+	log.Printf("monarch: dedup fetched %d monarch txns, matched %d source_ids (%d no notes, %d unparseable)",
+		len(txList.Transactions), len(existing), noNotes, noParse)
+	return existing
+}
+
+// merchantForTx builds a descriptive merchant name for a Monarch transaction.
+// When a memo is available it is appended: "Strike - Bill Pay to SOLAR CO".
+func merchantForTx(tx TxToSync) string {
+	base := sourceLabel(tx.Source)
+	if tx.Memo != "" {
+		return base + " - " + tx.Memo
+	}
+	return base
+}
+
+// sourceLabel returns a human-readable label for a transaction source.
+func sourceLabel(source string) string {
+	switch source {
+	case "strike":
+		return "Strike"
+	case "river":
+		return "River"
+	case "coinbase":
+		return "Coinbase"
+	case "swan":
+		return "Swan"
+	case "lnd_forward":
+		return "Lightning Routing"
+	case "lnd_invoice":
+		return "Lightning Invoice"
+	case "lnd_payment":
+		return "Lightning Payment"
+	case "lnd_onchain":
+		return "On-chain"
+	default:
+		return source
+	}
+}
+
+// notesForTx builds the notes string for a Monarch transaction.
+func notesForTx(tx TxToSync) string {
+	return fmt.Sprintf("[%s] %s", tx.TxType, tx.SourceID)
 }
 
 // recreateAccount deletes the existing account and creates a fresh one.

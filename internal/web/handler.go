@@ -75,21 +75,39 @@ type SettingsStore interface {
 	SetSetting(ctx context.Context, key, value string) error
 }
 
+// TransactionStore defines operations for the unified transaction ledger.
+type TransactionStore interface {
+	ListUnifiedTransactions(ctx context.Context, f db.TransactionFilter) (*db.UnifiedTransactionPage, error)
+	SetTransactionNote(ctx context.Context, sourceID, note string) error
+	DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error)
+}
+
 // MonarchSyncer syncs BTC holdings to Monarch Money.
 type MonarchSyncer interface {
 	SyncHolding(ctx context.Context, btcQuantity float64) error
+	SyncTransactions(ctx context.Context, txns []monarch.TxToSync) (*monarch.TxSyncResult, map[string]string, error)
+}
+
+// MonarchTxStore defines DB operations for Monarch transaction sync tracking.
+type MonarchTxStore interface {
+	ListUnsyncedTransactions(ctx context.Context, txTypes []string, sources []string) ([]db.UnifiedTransaction, error)
+	MarkTransactionSynced(ctx context.Context, sourceID, monarchTxID string) error
+	MonarchSyncedCount(ctx context.Context) (int, error)
+	DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error)
 }
 
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
-	store          DashboardStore
-	node           NodeInfoProvider
-	price          PriceProvider
-	importStore    ImportStore
-	walletStore    WalletStore
-	walletScanner  WalletScanner
-	settingsStore  SettingsStore
+	store            DashboardStore
+	node             NodeInfoProvider
+	price            PriceProvider
+	importStore      ImportStore
+	walletStore      WalletStore
+	walletScanner    WalletScanner
+	settingsStore    SettingsStore
+	txStore          TransactionStore
 	monarchSyncer    MonarchSyncer
+	monarchTxStore   MonarchTxStore
 	onMonarchChange  func(MonarchSyncer)
 	pendingMonarch   *monarch.PendingClient
 	logger           *log.Logger
@@ -133,6 +151,16 @@ func (h *Handler) SetWalletScanner(ws WalletScanner) {
 // SetSettingsStore sets the settings store.
 func (h *Handler) SetSettingsStore(ss SettingsStore) {
 	h.settingsStore = ss
+}
+
+// SetTransactionStore sets the transaction store for the unified ledger.
+func (h *Handler) SetTransactionStore(ts TransactionStore) {
+	h.txStore = ts
+}
+
+// SetMonarchTxStore sets the store for Monarch transaction sync tracking.
+func (h *Handler) SetMonarchTxStore(ts MonarchTxStore) {
+	h.monarchTxStore = ts
 }
 
 // SetMonarchSyncer sets the Monarch syncer and notifies any registered listener.

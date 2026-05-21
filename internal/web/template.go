@@ -61,6 +61,33 @@ func NewRenderer() *Renderer {
 		"tierAtLeast": func(current, required string) bool {
 			return license.TierAtLeast(license.Tier(current), license.Tier(required))
 		},
+		"sortIndicator": func(col, currentCol, currentDir string) template.HTML {
+			if col != currentCol {
+				return template.HTML(`<span style="opacity:0.3">&#x21C5;</span>`)
+			}
+			if currentDir == "asc" {
+				return template.HTML(`<span>&#x25B2;</span>`)
+			}
+			return template.HTML(`<span>&#x25BC;</span>`)
+		},
+		"flipDir": func(col, currentCol, currentDir string) string {
+			if col != currentCol {
+				return "asc"
+			}
+			if currentDir == "asc" {
+				return "desc"
+			}
+			return "asc"
+		},
+		"contains": func(slice []string, val string) bool {
+			for _, s := range slice {
+				if s == val {
+					return true
+				}
+			}
+			return false
+		},
+		"sourceLabel": templateSourceLabel,
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {
 				return nil, fmt.Errorf("dict requires even number of args")
@@ -97,6 +124,8 @@ func NewRenderer() *Renderer {
 			"templates/exchange_detail.html",
 			"templates/wallet_detail.html",
 			"templates/settings_layout.html",
+			"templates/transactions_layout.html",
+			"templates/partials/transaction_note.html",
 			"templates/partials/upgrade_required.html",
 		),
 	)
@@ -217,6 +246,30 @@ func seq(n int) []int {
 		s[i] = i
 	}
 	return s
+}
+
+// templateSourceLabel returns a human-readable label for a transaction source.
+func templateSourceLabel(source string) string {
+	switch source {
+	case "strike":
+		return "Strike"
+	case "river":
+		return "River"
+	case "coinbase":
+		return "Coinbase"
+	case "swan":
+		return "Swan"
+	case "lnd_forward":
+		return "Lightning Routing"
+	case "lnd_invoice":
+		return "Lightning Invoice"
+	case "lnd_payment":
+		return "Lightning Payment"
+	case "lnd_onchain":
+		return "On-chain"
+	default:
+		return source
+	}
 }
 
 // portfolioChart generates an inline SVG line chart from portfolio snapshots.

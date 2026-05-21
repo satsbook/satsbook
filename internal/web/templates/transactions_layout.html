@@ -1,0 +1,186 @@
+{{define "transactions_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Transactions</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    .tx-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 16px; }
+    .tx-filters label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px; }
+    .tx-filters input, .tx-filters select { font-size: 0.8rem; padding: 4px 8px; background: var(--bg-card, #1a1a2e); color: var(--text, #e0e0e0); border: 1px solid var(--border); border-radius: 4px; }
+    .tx-filters input[type="date"] { width: 130px; }
+    .tx-filters select { min-width: 100px; }
+    .tx-filters input[type="search"] { width: 180px; }
+    .tx-filters .btn-filter { font-size: 0.8rem; padding: 5px 12px; background: var(--accent, #f7931a); color: #000; border: none; border-radius: 4px; cursor: pointer; }
+    .tx-filters .btn-clear { font-size: 0.8rem; padding: 5px 12px; background: transparent; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; text-decoration: none; }
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { color: var(--accent, #f7931a); }
+    .tx-summary { display: flex; gap: 16px; margin-bottom: 12px; font-size: 0.8rem; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <div class="header-top">
+        <a class="logo" href="/">Satsbook</a>
+        <button class="hamburger" id="hamburger" aria-label="Toggle menu" onclick="document.getElementById('main-nav').classList.toggle('nav-open'); this.classList.toggle('hamburger-open');">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+      {{template "nav" "transactions"}}
+    </div>
+  </header>
+
+  <main class="container" style="padding: 24px 16px;">
+    <h1 style="margin: 0 0 16px; font-size: 1.25rem;">All Transactions</h1>
+
+    <!-- Filters -->
+    <form method="GET" action="/transactions" class="tx-filters">
+      <div>
+        <label>From</label>
+        <input type="date" name="from" value="{{.DateFrom}}">
+      </div>
+      <div>
+        <label>To</label>
+        <input type="date" name="to" value="{{.DateTo}}">
+      </div>
+      <div>
+        <label>Type</label>
+        <select name="type">
+          <option value="">All types</option>
+          {{range .TxTypes}}
+          <option value="{{.}}"{{if eq . $.TxType}} selected{{end}}>{{.}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div>
+        <label>Source</label>
+        <select name="source">
+          <option value="">All sources</option>
+          {{range .Sources}}
+          <option value="{{.}}"{{if eq . $.Source}} selected{{end}}>{{.}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div>
+        <label>Search</label>
+        <input type="search" name="q" value="{{.Search}}" placeholder="memo, note, ID...">
+      </div>
+      {{if .SortCol}}<input type="hidden" name="sort" value="{{.SortCol}}">{{end}}
+      {{if .SortDir}}<input type="hidden" name="dir" value="{{.SortDir}}">{{end}}
+      <div style="display: flex; gap: 6px; align-items: flex-end;">
+        <button type="submit" class="btn-filter">Filter</button>
+        <a href="/transactions" class="btn-clear">Clear</a>
+      </div>
+    </form>
+
+    {{if .Total}}
+    <div class="tx-summary">
+      <span>{{.Total}} transactions</span>
+      {{if or .DateFrom .DateTo .TxType .Source .Search}}<span>(filtered)</span>{{end}}
+    </div>
+    {{end}}
+
+    {{if .Transactions}}
+    <div style="overflow-x: auto;">
+      <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid var(--border); text-align: left;">
+            <th class="sortable" style="padding: 8px 12px;"
+              onclick="window.location='/transactions?{{template "filter_params" .}}&sort=ts&dir={{flipDir "ts" .SortCol .SortDir}}&page=1'">
+              Date {{sortIndicator "ts" .SortCol .SortDir}}
+            </th>
+            <th class="sortable" style="padding: 8px 12px;"
+              onclick="window.location='/transactions?{{template "filter_params" .}}&sort=source&dir={{flipDir "source" .SortCol .SortDir}}&page=1'">
+              Source {{sortIndicator "source" .SortCol .SortDir}}
+            </th>
+            <th class="sortable" style="padding: 8px 12px;"
+              onclick="window.location='/transactions?{{template "filter_params" .}}&sort=tx_type&dir={{flipDir "tx_type" .SortCol .SortDir}}&page=1'">
+              Type {{sortIndicator "tx_type" .SortCol .SortDir}}
+            </th>
+            <th class="sortable" style="padding: 8px 12px; text-align: right;"
+              onclick="window.location='/transactions?{{template "filter_params" .}}&sort=amount_sat&dir={{flipDir "amount_sat" .SortCol .SortDir}}&page=1'">
+              Amount (sats) {{sortIndicator "amount_sat" .SortCol .SortDir}}
+            </th>
+            <th class="sortable" style="padding: 8px 12px; text-align: right;"
+              onclick="window.location='/transactions?{{template "filter_params" .}}&sort=amount_usd&dir={{flipDir "amount_usd" .SortCol .SortDir}}&page=1'">
+              USD {{sortIndicator "amount_usd" .SortCol .SortDir}}
+            </th>
+            <th class="sortable" style="padding: 8px 12px; text-align: right;"
+              onclick="window.location='/transactions?{{template "filter_params" .}}&sort=fee&dir={{flipDir "fee" .SortCol .SortDir}}&page=1'">
+              Fee {{sortIndicator "fee" .SortCol .SortDir}}
+            </th>
+            <th style="padding: 8px 12px;">Memo</th>
+            <th style="padding: 8px 12px;">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Transactions}}
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 8px 12px; white-space: nowrap;">{{formatDate .Time}}</td>
+            <td style="padding: 8px 12px;">
+              <span style="background: var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.75rem;">{{.Source}}</span>
+            </td>
+            <td style="padding: 8px 12px;">
+              <span style="border-radius: 4px; padding: 1px 6px; font-size: 0.75rem;
+                {{if eq .TxType "buy"}}background: #166534; color: #bbf7d0;
+                {{else if eq .TxType "receive"}}background: #1e3a5f; color: #93c5fd;
+                {{else if eq .TxType "fee_income"}}background: #713f12; color: #fde68a;
+                {{else if eq .TxType "sell"}}background: #7f1d1d; color: #fecaca;
+                {{else if eq .TxType "send"}}background: #4a1d6a; color: #e9d5ff;
+                {{else}}background: var(--border);
+                {{end}}">{{.TxType}}</span>
+            </td>
+            <td style="padding: 8px 12px; text-align: right; font-family: monospace;
+              {{if gt .AmountSat 0}}color: var(--success, #4ade80);{{else if lt .AmountSat 0}}color: var(--danger, #ef4444);{{end}}">
+              {{formatSats .AmountSat}}
+            </td>
+            <td style="padding: 8px 12px; text-align: right;">{{if .AmountUSD}}{{formatUSD .AmountUSD}}{{else}}-{{end}}</td>
+            <td style="padding: 8px 12px; text-align: right;">
+              {{if .FeeSat}}{{formatSats .FeeSat}} sat{{else if .FeeUSD}}{{formatUSD .FeeUSD}}{{else}}-{{end}}
+            </td>
+            <td style="padding: 8px 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.Memo}}">{{if .Memo}}{{truncate .Memo 30}}{{else}}-{{end}}</td>
+            <td class="note-cell" style="padding: 8px 12px; min-width: 120px;">
+              {{template "transaction_note_display" (dict "SourceID" .SourceID "Note" .Note)}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+
+    {{if gt .TotalPages 1}}
+    <div style="display: flex; justify-content: center; gap: 8px; margin-top: 16px; font-size: 0.85rem;">
+      {{if gt .Page 1}}
+      <a href="/transactions?{{template "filter_params" .}}&sort={{.SortCol}}&dir={{.SortDir}}&page={{subtract .Page 1}}" style="color: var(--text-muted); text-decoration: none;">&larr; Prev</a>
+      {{end}}
+      <span style="color: var(--text-muted);">Page {{.Page}} of {{.TotalPages}} ({{.Total}} total)</span>
+      {{if lt .Page .TotalPages}}
+      <a href="/transactions?{{template "filter_params" .}}&sort={{.SortCol}}&dir={{.SortDir}}&page={{add .Page 1}}" style="color: var(--text-muted); text-decoration: none;">Next &rarr;</a>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{else}}
+    <div style="text-align: center; padding: 40px 16px; color: var(--text-muted);">
+      {{if or .DateFrom .DateTo .TxType .Source .Search}}
+        No transactions match your filters. <a href="/transactions" style="color: var(--accent);">Clear filters</a>
+      {{else}}
+        No transactions yet. <a href="/import" style="color: var(--accent);">Import exchange CSVs</a> or connect an LND node to see transactions here.
+      {{end}}
+    </div>
+    {{end}}
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook</span>
+      {{if .BTCPriceUSD}}<span>BTC {{formatUSD .BTCPriceUSD}}</span>{{end}}
+    </div>
+  </footer>
+</body>
+</html>{{end}}
+
+{{define "filter_params"}}from={{.DateFrom}}&to={{.DateTo}}&type={{.TxType}}&source={{.Source}}&q={{.Search}}{{end}}

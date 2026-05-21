@@ -101,8 +101,10 @@ func main() {
 	}
 	handler := web.NewHandler(database, nodeProvider, priceCache, database, httpLogger)
 
-	// Wire up settings store and optional Monarch sync
+	// Wire up settings store, transaction store, and optional Monarch sync
 	handler.SetSettingsStore(database)
+	handler.SetTransactionStore(database)
+	handler.SetMonarchTxStore(database)
 	monarchToken, _ := database.GetSetting(context.Background(), "monarch_token")
 	if monarchToken == "" {
 		monarchToken = cfg.MonarchToken // fall back to env var
@@ -111,6 +113,7 @@ func main() {
 	if s != nil {
 		handler.OnMonarchChange(func(ms web.MonarchSyncer) {
 			s.SetMonarchSyncer(ms)
+			s.SetMonarchTxSync(database, database)
 		})
 	}
 	if monarchToken != "" {
@@ -119,6 +122,9 @@ func main() {
 			log.Printf("monarch: failed to create syncer: %v", err)
 		} else {
 			handler.SetMonarchSyncer(monarchSyncer)
+			if s != nil {
+				s.SetMonarchTxSync(database, database)
+			}
 			log.Printf("monarch: sync enabled")
 		}
 	}

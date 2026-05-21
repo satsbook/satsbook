@@ -2361,6 +2361,264 @@ func TestBackfillPortfolioSnapshots_PreservesLiveSnapshots(t *testing.T) {
 	}
 }
 
+func TestListUnifiedTransactions(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Seed data from multiple sources
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		// Forwarding event (fee income)
+		if err := tx.InsertForwardingEvents([]ForwardingEvent{{
+			Timestamp:  now.Add(-4 * time.Hour),
+			ChanIDIn:   1001,
+			ChanIDOut:  1002,
+			AmtInMsat:  10_000_000,
+			AmtOutMsat: 9_500_000,
+			FeeMsat:    500_000,
+		}}); err != nil {
+			return err
+		}
+
+		// Invoice received
+		settled := now.Add(-3 * time.Hour)
+		if err := tx.UpsertInvoices([]Invoice{{
+			PaymentHash: "inv-hash-1",
+			AmtPaidMsat: 50_000_000,
+			CreatedAt:   now.Add(-4 * time.Hour),
+			SettledAt:   &settled,
+		}}); err != nil {
+			return err
+		}
+
+		// Unsettled invoice (should NOT appear)
+		if err := tx.UpsertInvoices([]Invoice{{
+			PaymentHash: "inv-hash-unsettled",
+			AmtPaidMsat: 10_000_000,
+			CreatedAt:   now.Add(-2 * time.Hour),
+		}}); err != nil {
+			return err
+		}
+
+		// Payment sent
+		if err := tx.UpsertPayments([]Payment{{
+			PaymentHash: "pay-hash-1",
+			ValueMsat:   25_000_000,
+			FeeMsat:     1_000,
+			CreatedAt:   now.Add(-2 * time.Hour),
+			Status:      "SUCCEEDED",
+		}}); err != nil {
+			return err
+		}
+
+		// Failed payment (should NOT appear)
+		if err := tx.UpsertPayments([]Payment{{
+			PaymentHash: "pay-hash-failed",
+			ValueMsat:   5_000_000,
+			FeeMsat:     500,
+			CreatedAt:   now.Add(-1 * time.Hour),
+			Status:      "FAILED",
+		}}); err != nil {
+			return err
+		}
+
+		// On-chain receive (confirmed)
+		if err := tx.UpsertOnchainTxns([]OnchainTx{{
+			TxHash:           "onchain-tx-1",
+			AmountSat:        100_000,
+			NumConfirmations: 6,
+			Timestamp:        now.Add(-1 * time.Hour),
+			Label:            "deposit",
+		}}); err != nil {
+			return err
+		}
+
+		// On-chain unconfirmed (should NOT appear)
+		if err := tx.UpsertOnchainTxns([]OnchainTx{{
+			TxHash:           "onchain-tx-unconfirmed",
+			AmountSat:        50_000,
+			NumConfirmations: 0,
+			Timestamp:        now,
+		}}); err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("seed data: %v", err)
+	}
+
+	page, err := d.ListUnifiedTransactions(ctx, TransactionFilter{Limit: 100, Offset: 0})
+	if err != nil {
+		t.Fatalf("ListUnifiedTransactions: %v", err)
+	}
+
+	// Expect: forward + invoice + payment + onchain = 4
+	// (unsettled invoice, failed payment, unconfirmed onchain excluded)
+	if page.Total != 4 {
+		t.Errorf("expected 4 transactions, got %d", page.Total)
+		for _, tx := range page.Transactions {
+			t.Logf("  %s %s %s %d sat", tx.Source, tx.TxType, tx.SourceID, tx.AmountSat)
+		}
+	}
+
+	// Check that results are ordered by time DESC
+	for i := 1; i < len(page.Transactions); i++ {
+		if page.Transactions[i].Time.After(page.Transactions[i-1].Time) {
+			t.Errorf("transactions not in descending order at index %d", i)
+		}
+	}
+
+	// Verify types
+	typeMap := map[string]bool{}
+	for _, tx := range page.Transactions {
+		typeMap[tx.TxType] = true
+		switch tx.Source {
+		case "lnd_forward":
+			if tx.TxType != "fee_income" {
+				t.Errorf("forward should be fee_income, got %s", tx.TxType)
+			}
+			if tx.AmountSat != 500 { // 500_000 msat = 500 sat
+				t.Errorf("forward fee: expected 500 sat, got %d", tx.AmountSat)
+			}
+		case "lnd_invoice":
+			if tx.TxType != "receive" {
+				t.Errorf("invoice should be receive, got %s", tx.TxType)
+			}
+			if tx.AmountSat != 50_000 {
+				t.Errorf("invoice: expected 50000 sat, got %d", tx.AmountSat)
+			}
+		case "lnd_payment":
+			if tx.TxType != "send" {
+				t.Errorf("payment should be send, got %s", tx.TxType)
+			}
+			if tx.AmountSat != -25_000 {
+				t.Errorf("payment: expected -25000 sat, got %d", tx.AmountSat)
+			}
+		case "lnd_onchain":
+			if tx.TxType != "receive" {
+				t.Errorf("onchain should be receive, got %s", tx.TxType)
+			}
+			if tx.AmountSat != 100_000 {
+				t.Errorf("onchain: expected 100000 sat, got %d", tx.AmountSat)
+			}
+		}
+	}
+}
+
+func TestListUnifiedTransactionsFilters(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed diverse data
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		if err := tx.InsertForwardingEvents([]ForwardingEvent{{
+			Timestamp: time.Date(2024, 3, 10, 12, 0, 0, 0, time.UTC),
+			ChanIDIn: 1001, ChanIDOut: 1002,
+			AmtInMsat: 10000, AmtOutMsat: 9000, FeeMsat: 1000,
+		}}); err != nil {
+			return err
+		}
+		if err := tx.UpsertInvoices([]Invoice{{
+			PaymentHash: "inv-filter-1", AmtPaidMsat: 50_000_000,
+			CreatedAt: time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC),
+			SettledAt: func() *time.Time { t := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC); return &t }(),
+		}}); err != nil {
+			return err
+		}
+		return tx.UpsertPayments([]Payment{{
+			PaymentHash: "pay-filter-1", ValueMsat: 25_000_000, FeeMsat: 100,
+			CreatedAt: time.Date(2024, 6, 20, 12, 0, 0, 0, time.UTC),
+			Status: "SUCCEEDED",
+		}})
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Filter by type
+	page, err := d.ListUnifiedTransactions(ctx, TransactionFilter{TxType: "fee_income", Limit: 100})
+	if err != nil {
+		t.Fatalf("filter by type: %v", err)
+	}
+	if page.Total != 1 {
+		t.Errorf("type filter: expected 1, got %d", page.Total)
+	}
+
+	// Filter by source
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{Source: "lnd_invoice", Limit: 100})
+	if err != nil {
+		t.Fatalf("filter by source: %v", err)
+	}
+	if page.Total != 1 {
+		t.Errorf("source filter: expected 1, got %d", page.Total)
+	}
+
+	// Filter by date range
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{
+		DateFrom: "2024-06-01", DateTo: "2024-06-30", Limit: 100,
+	})
+	if err != nil {
+		t.Fatalf("filter by date: %v", err)
+	}
+	if page.Total != 2 { // invoice + payment
+		t.Errorf("date filter: expected 2, got %d", page.Total)
+	}
+
+	// Sort by amount ascending
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{SortCol: "amount_sat", SortDir: "asc", Limit: 100})
+	if err != nil {
+		t.Fatalf("sort: %v", err)
+	}
+	if len(page.Transactions) == 3 && page.Transactions[0].AmountSat > page.Transactions[2].AmountSat {
+		t.Errorf("expected ascending sort by amount")
+	}
+
+	// Search by memo
+	page, err = d.ListUnifiedTransactions(ctx, TransactionFilter{Search: "routing fee", Limit: 100})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if page.Total != 1 {
+		t.Errorf("search: expected 1, got %d", page.Total)
+	}
+}
+
+func TestListUnifiedTransactionsSince(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		return tx.UpsertOnchainTxns([]OnchainTx{
+			{TxHash: "old-tx", AmountSat: 1000, NumConfirmations: 6, Timestamp: now.Add(-2 * time.Hour)},
+			{TxHash: "new-tx", AmountSat: 2000, NumConfirmations: 3, Timestamp: now.Add(-30 * time.Minute)},
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Only get transactions after 1 hour ago
+	txns, err := d.ListUnifiedTransactionsSince(ctx, now.Add(-1*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("ListUnifiedTransactionsSince: %v", err)
+	}
+
+	if len(txns) != 1 {
+		t.Fatalf("expected 1 transaction, got %d", len(txns))
+	}
+	if txns[0].SourceID != "new-tx" {
+		t.Errorf("expected new-tx, got %s", txns[0].SourceID)
+	}
+}
+
 func TestTotalPortfolioSats(t *testing.T) {
 	d := newTestDB(t)
 	defer d.Close()
@@ -2393,5 +2651,86 @@ func TestTotalPortfolioSats(t *testing.T) {
 	}
 	if total != 100_000 {
 		t.Errorf("expected 100000, got %d", total)
+	}
+}
+
+func TestTransactionNotes(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	// Get note for non-existent source ID returns empty
+	note, err := d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if note != "" {
+		t.Errorf("expected empty note, got %q", note)
+	}
+
+	// Set a note
+	if err := d.SetTransactionNote(ctx, "forward:1", "test routing fee"); err != nil {
+		t.Fatalf("set note: %v", err)
+	}
+
+	// Read it back
+	note, err = d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("get note: %v", err)
+	}
+	if note != "test routing fee" {
+		t.Errorf("expected 'test routing fee', got %q", note)
+	}
+
+	// Update the note
+	if err := d.SetTransactionNote(ctx, "forward:1", "updated note"); err != nil {
+		t.Fatalf("update note: %v", err)
+	}
+	note, err = d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("get updated note: %v", err)
+	}
+	if note != "updated note" {
+		t.Errorf("expected 'updated note', got %q", note)
+	}
+
+	// Delete note by setting empty
+	if err := d.SetTransactionNote(ctx, "forward:1", ""); err != nil {
+		t.Fatalf("delete note: %v", err)
+	}
+	note, err = d.GetTransactionNote(ctx, "forward:1")
+	if err != nil {
+		t.Fatalf("get deleted note: %v", err)
+	}
+	if note != "" {
+		t.Errorf("expected empty after delete, got %q", note)
+	}
+}
+
+func TestUnifiedTransactionsWithNotes(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	// Seed a forwarding event
+	seedForwardingEvents(t, d, []ForwardingEvent{{
+		Timestamp: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
+		ChanIDIn:  1001, ChanIDOut: 1002,
+		AmtInMsat: 10000, AmtOutMsat: 9000, FeeMsat: 1000,
+	}})
+
+	// Add a note for it
+	if err := d.SetTransactionNote(ctx, "forward:1", "my routing note"); err != nil {
+		t.Fatalf("set note: %v", err)
+	}
+
+	// List should include the note
+	page, err := d.ListUnifiedTransactions(ctx, TransactionFilter{Limit: 50, Offset: 0})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(page.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction, got %d", len(page.Transactions))
+	}
+	if page.Transactions[0].Note != "my routing note" {
+		t.Errorf("expected note 'my routing note', got %q", page.Transactions[0].Note)
 	}
 }

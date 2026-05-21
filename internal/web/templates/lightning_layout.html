@@ -10,10 +10,13 @@
 <body>
   <header>
     <div class="container header-inner">
-      <div style="display: flex; align-items: center; gap: 24px;">
+      <div class="header-top">
         <a class="logo" href="/">Satsbook</a>
-        {{template "nav" "lightning"}}
+        <button class="hamburger" id="hamburger" aria-label="Toggle menu" onclick="document.getElementById('main-nav').classList.toggle('nav-open'); this.classList.toggle('hamburger-open');">
+          <span></span><span></span><span></span>
+        </button>
       </div>
+      {{template "nav" "lightning"}}
       <div class="node-info-bar">
         {{if .NodeAlias}}
           <strong>{{.NodeAlias}}</strong> &middot;

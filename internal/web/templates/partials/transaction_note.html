@@ -1,0 +1,23 @@
+{{define "transaction_note_display"}}
+{{- if .Note -}}
+<span style="font-size: 0.8rem; cursor: pointer;" title="Click to edit"
+  hx-get="/api/transactions/note/edit?source_id={{.SourceID}}&note={{.Note}}"
+  hx-target="closest .note-cell"
+  hx-swap="innerHTML">{{.Note}}</span>
+{{- else -}}
+<span style="color: var(--text-muted); cursor: pointer; font-size: 0.8rem;"
+  hx-get="/api/transactions/note/edit?source_id={{.SourceID}}&note="
+  hx-target="closest .note-cell"
+  hx-swap="innerHTML">+ note</span>
+{{- end -}}
+{{end}}
+
+{{define "transaction_note_edit"}}
+<form hx-post="/api/transactions/note" hx-target="closest .note-cell" hx-swap="innerHTML"
+  style="display: flex; gap: 4px; align-items: center;">
+  <input type="hidden" name="source_id" value="{{.SourceID}}">
+  <input type="text" name="note" value="{{.Note}}" placeholder="Add note..."
+    style="font-size: 0.8rem; width: 120px; padding: 2px 6px;" autofocus>
+  <button type="submit" style="font-size: 0.75rem; padding: 2px 6px;">Save</button>
+</form>
+{{end}}

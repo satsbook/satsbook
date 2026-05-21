@@ -32,6 +32,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/partials/forwarding", handler.HandleForwardingPartial)
 	mux.HandleFunc("/partials/portfolio-chart", handler.HandlePortfolioChartPartial)
 	mux.HandleFunc("/settings", handler.HandleSettingsPage)
+	mux.HandleFunc("/transactions", handler.HandleTransactionsPage)
 
 	// Static assets (embedded)
 	staticSub, _ := fs.Sub(staticFS, "static")
@@ -51,6 +52,8 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/wallets/refresh", handler.HandleRefreshWallet)
 	mux.HandleFunc("/api/wallets/refresh-all", handler.HandleRefreshAll)
 	mux.HandleFunc("/api/portfolio/backfill", handler.HandlePortfolioBackfill)
+	mux.HandleFunc("/api/transactions/note", handler.HandleTransactionNoteSave)
+	mux.HandleFunc("/api/transactions/note/edit", handler.HandleTransactionNoteEdit)
 	mux.Handle("/api/import/strike/clear", handler.HandleClearImport("strike"))
 	mux.Handle("/api/import/river/clear", handler.HandleClearImport("river"))
 	mux.Handle("/api/import/coinbase/clear", handler.HandleClearImport("coinbase"))
@@ -60,6 +63,8 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/monarch/token", monarchGate(handler.HandleMonarchToken))
 	mux.HandleFunc("/api/monarch/disconnect", monarchGate(handler.HandleMonarchDisconnect))
 	mux.HandleFunc("/api/monarch/sync", monarchGate(handler.HandleMonarchSync))
+	mux.HandleFunc("/api/monarch/sync-types", monarchGate(handler.HandleMonarchSyncTypes))
+	mux.HandleFunc("/api/monarch/tx-sync", monarchGate(handler.HandleMonarchTxSync))
 
 	return &Server{
 		httpServer: &http.Server{

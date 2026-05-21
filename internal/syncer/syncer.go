@@ -3,10 +3,12 @@ package syncer
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/lnd"
+	"github.com/satsbook/satsbook/internal/monarch"
 )
 
 // LNDClient defines the interface for interacting with the LND node.
@@ -38,6 +40,18 @@ type PriceProvider interface {
 // MonarchSyncer pushes BTC holdings to Monarch Money.
 type MonarchSyncer interface {
 	SyncHolding(ctx context.Context, btcQuantity float64) error
+	SyncTransactions(ctx context.Context, txns []monarch.TxToSync) (*monarch.TxSyncResult, map[string]string, error)
+}
+
+// MonarchTxStore reads unsynced transactions and records synced ones.
+type MonarchTxStore interface {
+	ListUnsyncedTransactions(ctx context.Context, txTypes []string, sources []string) ([]db.UnifiedTransaction, error)
+	MarkTransactionSynced(ctx context.Context, sourceID, monarchTxID string) error
+}
+
+// SettingsReader reads app settings.
+type SettingsReader interface {
+	GetSetting(ctx context.Context, key string) (string, error)
 }
 
 // Syncer orchestrates LND data synchronization.
@@ -47,6 +61,8 @@ type Syncer struct {
 	snapshot       SnapshotStore
 	price          PriceProvider
 	monarch        MonarchSyncer
+	monarchTxStore MonarchTxStore
+	settings       SettingsReader
 	logger         *log.Logger
 	syncInterval   time.Duration
 	maxHistoryDays int
@@ -72,6 +88,12 @@ func (s *Syncer) SetSnapshotStore(ss SnapshotStore, pp PriceProvider) {
 // SetMonarchSyncer sets the Monarch Money syncer for recurring holdings sync.
 func (s *Syncer) SetMonarchSyncer(ms MonarchSyncer) {
 	s.monarch = ms
+}
+
+// SetMonarchTxSync sets the stores needed for automatic Monarch transaction syncing.
+func (s *Syncer) SetMonarchTxSync(txStore MonarchTxStore, settings SettingsReader) {
+	s.monarchTxStore = txStore
+	s.settings = settings
 }
 
 // Run blocks until ctx is cancelled, syncing on startup and then on the configured interval.
@@ -110,6 +132,11 @@ func (s *Syncer) Sync(ctx context.Context) error {
 		s.captureSnapshot(ctx)
 	}
 
+	// Sync transactions to Monarch if configured
+	if s.monarch != nil && s.monarchTxStore != nil && s.settings != nil {
+		s.syncMonarchTransactions(ctx)
+	}
+
 	return nil
 }
 
@@ -138,6 +165,56 @@ func (s *Syncer) captureSnapshot(ctx context.Context) {
 			s.logger.Printf("monarch: sync failed: %v", err)
 		}
 	}
+}
+
+// syncMonarchTransactions syncs unsynced transactions to Monarch Money.
+func (s *Syncer) syncMonarchTransactions(ctx context.Context) {
+	syncTypes, err := s.settings.GetSetting(ctx, "monarch_sync_types")
+	if err != nil || syncTypes == "" {
+		return // no types configured, skip
+	}
+
+	types := strings.Split(syncTypes, ",")
+
+	var sources []string
+	if v, err := s.settings.GetSetting(ctx, "monarch_sync_sources"); err == nil && v != "" {
+		sources = strings.Split(v, ",")
+	}
+
+	txns, err := s.monarchTxStore.ListUnsyncedTransactions(ctx, types, sources)
+	if err != nil {
+		s.logger.Printf("monarch tx sync: list unsynced: %v", err)
+		return
+	}
+	if len(txns) == 0 {
+		return
+	}
+
+	toSync := make([]monarch.TxToSync, len(txns))
+	for i, tx := range txns {
+		toSync[i] = monarch.TxToSync{
+			SourceID:  tx.SourceID,
+			Source:    tx.Source,
+			TxType:   tx.TxType,
+			Time:     tx.Time,
+			AmountUSD: tx.AmountUSD,
+			Memo:     tx.Memo,
+		}
+	}
+
+	result, synced, err := s.monarch.SyncTransactions(ctx, toSync)
+	if err != nil {
+		s.logger.Printf("monarch tx sync failed: %v", err)
+		return
+	}
+
+	for sourceID, monarchTxID := range synced {
+		if err := s.monarchTxStore.MarkTransactionSynced(ctx, sourceID, monarchTxID); err != nil {
+			s.logger.Printf("monarch: failed to mark %s synced: %v", sourceID, err)
+		}
+	}
+
+	s.logger.Printf("monarch tx sync: %d created, %d skipped, %d errors", result.Created, result.Skipped, result.Errors)
 }
 
 // syncCycle is the core sync logic, executed within a transaction.
