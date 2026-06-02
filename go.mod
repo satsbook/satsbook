@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/btcsuite/btcd v0.24.3-0.20240921052913-67b8efd3ba53
 	github.com/btcsuite/btcd/btcutil v1.1.5
-	github.com/eshaffer321/monarchmoney-go v1.0.5
+	github.com/eshaffer321/monarchmoney-go v1.1.0
 	github.com/lightningnetwork/lnd v0.18.4-beta
 	github.com/mr-tron/base58 v1.3.0
 	google.golang.org/grpc v1.79.3
@@ -13,8 +13,6 @@ require (
 )
 
 replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-display v1.30.0-hex-display
-
-replace github.com/eshaffer321/monarchmoney-go => github.com/brewgator/monarchmoney-go v1.0.6-0.20260519210223-8c21a08caefd
 
 require (
 	dario.cat/mergo v1.0.1 // indirect

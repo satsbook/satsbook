@@ -63,8 +63,6 @@ github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24
 github.com/beorn7/perks v1.0.0/go.mod h1:KWe93zE9D1o94FZ5RNwFwVgaQK1VOXiVxmqh+CedLV8=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
-github.com/brewgator/monarchmoney-go v1.0.6-0.20260519210223-8c21a08caefd h1:OA5PyeYhCuh4FiqAKQwtbB4PslzaGc/H5UCirrM27uE=
-github.com/brewgator/monarchmoney-go v1.0.6-0.20260519210223-8c21a08caefd/go.mod h1:ZKPCYT7NcsKGI+YpJ2EqPtfE3dKfuPbiTUrj6J84ot4=
 github.com/btcsuite/btcd v0.20.1-beta/go.mod h1:wVuoA8VJLEcwgqHBwHmzLRazpKxTv13Px/pDuV7OomQ=
 github.com/btcsuite/btcd v0.22.0-beta.0.20220111032746-97732e52810c/go.mod h1:tjmYdS6MLJ5/s0Fj4DbLgSbDHbEqLJrtnHecBFkdz5M=
 github.com/btcsuite/btcd v0.23.5-0.20231215221805-96c9fd8078fd/go.mod h1:nm3Bko6zh6bWP60UxwoT5LzdGJsQJaPo6HjduXq9p6A=
@@ -189,6 +187,8 @@ github.com/envoyproxy/go-control-plane v0.9.10-0.20210907150352-cf90f659a021/go.
 github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
 github.com/envoyproxy/protoc-gen-validate v1.3.0 h1:TvGH1wof4H33rezVKWSpqKz5NXWg5VPuZ0uONDT6eb4=
 github.com/envoyproxy/protoc-gen-validate v1.3.0/go.mod h1:HvYl7zwPa5mffgyeTUHA9zHIH36nmrm7oCbo4YKoSWA=
+github.com/eshaffer321/monarchmoney-go v1.1.0 h1:tB7O6EuvUyoNTRfpnkf0thGrz6chkKKEW4sJ1NZo5A4=
+github.com/eshaffer321/monarchmoney-go v1.1.0/go.mod h1:ZKPCYT7NcsKGI+YpJ2EqPtfE3dKfuPbiTUrj6J84ot4=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/fergusstrange/embedded-postgres v1.25.0 h1:sa+k2Ycrtz40eCRPOzI7Ry7TtkWXXJ+YRsxpKMDhxK0=
