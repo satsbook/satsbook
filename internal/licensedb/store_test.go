@@ -51,6 +51,57 @@ func TestCreateAndLookup(t *testing.T) {
 	}
 }
 
+func TestCreateWithStripeParams(t *testing.T) {
+	s := testStore(t)
+
+	lic, err := s.Create("stripe@test.com", "pro", &CreateParams{
+		StripeCustomerID:     "cus_test123",
+		StripeSubscriptionID: "sub_test456",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	found, err := s.Lookup(lic.LicenseKey)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if found.StripeCustomerID != "cus_test123" {
+		t.Errorf("stripe customer id: got %q", found.StripeCustomerID)
+	}
+	if found.StripeSubscriptionID != "sub_test456" {
+		t.Errorf("stripe subscription id: got %q", found.StripeSubscriptionID)
+	}
+}
+
+func TestLookupByStripeSubscription(t *testing.T) {
+	s := testStore(t)
+
+	lic, _ := s.Create("sub@test.com", "power", &CreateParams{
+		StripeSubscriptionID: "sub_lookup789",
+	})
+
+	found, err := s.LookupByStripeSubscription("sub_lookup789")
+	if err != nil {
+		t.Fatalf("lookup by sub: %v", err)
+	}
+	if found == nil {
+		t.Fatal("expected license, got nil")
+	}
+	if found.LicenseKey != lic.LicenseKey {
+		t.Errorf("key mismatch: %s vs %s", found.LicenseKey, lic.LicenseKey)
+	}
+
+	// Not found case
+	notFound, err := s.LookupByStripeSubscription("sub_nonexistent")
+	if err != nil {
+		t.Fatalf("lookup by sub: %v", err)
+	}
+	if notFound != nil {
+		t.Errorf("expected nil, got %+v", notFound)
+	}
+}
+
 func TestLookupNotFound(t *testing.T) {
 	s := testStore(t)
 
@@ -87,7 +138,7 @@ func TestIsValid_Cancelled(t *testing.T) {
 func TestIsValid_Expired(t *testing.T) {
 	s := testStore(t)
 	past := time.Now().Add(-24 * time.Hour)
-	lic, _ := s.Create("a@b.com", "pro", &past)
+	lic, _ := s.Create("a@b.com", "pro", &CreateParams{ExpiresAt: &past})
 
 	found, _ := s.Lookup(lic.LicenseKey)
 	if found.IsValid() {
@@ -98,7 +149,7 @@ func TestIsValid_Expired(t *testing.T) {
 func TestIsValid_FutureExpiry(t *testing.T) {
 	s := testStore(t)
 	future := time.Now().Add(30 * 24 * time.Hour)
-	lic, _ := s.Create("a@b.com", "pro", &future)
+	lic, _ := s.Create("a@b.com", "pro", &CreateParams{ExpiresAt: &future})
 
 	found, _ := s.Lookup(lic.LicenseKey)
 	if !found.IsValid() {

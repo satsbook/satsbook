@@ -21,7 +21,7 @@ func TestValidateFlow(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Create a license
+	// Create a license (nil params = no expiry, no Stripe IDs)
 	lic, err := store.Create("user@test.com", "pro", nil)
 	if err != nil {
 		t.Fatal(err)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/satsbook/satsbook/internal/license"
 	"github.com/satsbook/satsbook/internal/licensedb"
+	stripeutil "github.com/satsbook/satsbook/internal/stripe"
 )
 
 func main() {
@@ -99,6 +101,17 @@ func cmdServe(args []string) {
 	})
 	mux.HandleFunc("/v1/license/validate", validateHandler(store, priv))
 
+	// Stripe integration (optional — only enabled if STRIPE_SECRET_KEY is set)
+	if sc := loadStripeConfig(); sc != nil {
+		client := &stripeutil.Client{SecretKey: sc.secretKey}
+		mux.HandleFunc("/v1/checkout", checkoutHandler(client, sc))
+		mux.HandleFunc("/v1/stripe/webhook", webhookHandler(store, client, sc))
+		mux.HandleFunc("/v1/checkout/success", successHandler(store, client))
+		log.Printf("stripe integration enabled")
+	} else {
+		log.Printf("stripe integration disabled (STRIPE_SECRET_KEY not set)")
+	}
+
 	addr := ":" + p
 	log.Printf("license server listening on %s (db=%s)", addr, getDBPath())
 	log.Fatal(http.ListenAndServe(addr, mux))
@@ -168,16 +181,16 @@ func cmdCreate(args []string) {
 	days := fs.Int("days", 0, "days until expiry (0 = no expiry)")
 	fs.Parse(args)
 
-	var expiresAt *time.Time
+	var params *licensedb.CreateParams
 	if *days > 0 {
 		t := time.Now().Add(time.Duration(*days) * 24 * time.Hour)
-		expiresAt = &t
+		params = &licensedb.CreateParams{ExpiresAt: &t}
 	}
 
 	store := openStore()
 	defer store.Close()
 
-	lic, err := store.Create(*email, *tier, expiresAt)
+	lic, err := store.Create(*email, *tier, params)
 	if err != nil {
 		log.Fatalf("create: %v", err)
 	}
@@ -225,6 +238,296 @@ func cmdUpgrade(args []string) {
 		log.Fatalf("upgrade: %v", err)
 	}
 	fmt.Printf("Upgraded %s to %s\n", fs.Arg(0), *tier)
+}
+
+// --- Stripe integration ---
+
+type stripeConfig struct {
+	secretKey     string
+	webhookSecret string
+	pricePro      string
+	pricePower    string
+	baseURL       string
+}
+
+func loadStripeConfig() *stripeConfig {
+	sk := os.Getenv("STRIPE_SECRET_KEY")
+	if sk == "" {
+		return nil
+	}
+	return &stripeConfig{
+		secretKey:     sk,
+		webhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		pricePro:      os.Getenv("STRIPE_PRICE_PRO"),
+		pricePower:    os.Getenv("STRIPE_PRICE_POWER"),
+		baseURL:       os.Getenv("SATSBOOK_BASE_URL"),
+	}
+}
+
+func (sc *stripeConfig) priceForTier(tier string) string {
+	switch tier {
+	case "pro":
+		return sc.pricePro
+	case "power":
+		return sc.pricePower
+	default:
+		return ""
+	}
+}
+
+func (sc *stripeConfig) tierForPrice(priceID string) string {
+	switch priceID {
+	case sc.pricePro:
+		return "pro"
+	case sc.pricePower:
+		return "power"
+	default:
+		return ""
+	}
+}
+
+func checkoutHandler(client *stripeutil.Client, sc *stripeConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			Tier string `json:"tier"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+
+		priceID := sc.priceForTier(req.Tier)
+		if priceID == "" {
+			http.Error(w, "invalid tier", http.StatusBadRequest)
+			return
+		}
+
+		session, err := client.CreateCheckoutSession(stripeutil.CheckoutParams{
+			PriceID:    priceID,
+			SuccessURL: sc.baseURL + "/v1/checkout/success?session_id={CHECKOUT_SESSION_ID}",
+			CancelURL:  sc.baseURL + "/v1/checkout/cancel",
+			Tier:       req.Tier,
+		})
+		if err != nil {
+			log.Printf("create checkout: %v", err)
+			http.Error(w, "failed to create checkout session", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"url": session.URL})
+	}
+}
+
+func webhookHandler(store *licensedb.Store, client *stripeutil.Client, sc *stripeConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		body, err := io.ReadAll(io.LimitReader(r.Body, 65536))
+		if err != nil {
+			http.Error(w, "read error", http.StatusBadRequest)
+			return
+		}
+
+		event, err := stripeutil.VerifyWebhookSignature(body, r.Header.Get("Stripe-Signature"), sc.webhookSecret)
+		if err != nil {
+			log.Printf("webhook signature error: %v", err)
+			http.Error(w, "invalid signature", http.StatusBadRequest)
+			return
+		}
+
+		switch event.Type {
+		case "checkout.session.completed":
+			handleCheckoutCompleted(store, client, sc, event)
+		case "customer.subscription.deleted":
+			handleSubscriptionDeleted(store, event)
+		case "customer.subscription.updated":
+			handleSubscriptionUpdated(store, client, sc, event)
+		default:
+			log.Printf("webhook: ignoring event type %s", event.Type)
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func handleCheckoutCompleted(store *licensedb.Store, client *stripeutil.Client, sc *stripeConfig, event *stripeutil.WebhookEvent) {
+	var session stripeutil.CheckoutSession
+	if err := json.Unmarshal(event.ObjectRaw(), &session); err != nil {
+		log.Printf("webhook: decode session: %v", err)
+		return
+	}
+
+	tier := session.Metadata["tier"]
+	if tier == "" {
+		// Try to determine from subscription
+		if session.SubscriptionID != "" {
+			sub, err := client.GetSubscription(session.SubscriptionID)
+			if err == nil && len(sub.Items.Data) > 0 {
+				tier = sc.tierForPrice(sub.Items.Data[0].Price.ID)
+			}
+			if tier == "" {
+				tier = sub.Metadata["tier"]
+			}
+		}
+	}
+	if tier == "" {
+		tier = "pro" // default
+	}
+
+	email := session.Email()
+	customerID := session.CustomerID
+
+	// Check if we already created a license for this subscription (idempotent).
+	if session.SubscriptionID != "" {
+		existing, _ := store.LookupByStripeSubscription(session.SubscriptionID)
+		if existing != nil {
+			log.Printf("webhook: license already exists for subscription %s", session.SubscriptionID)
+			return
+		}
+	}
+
+	lic, err := store.Create(email, tier, &licensedb.CreateParams{
+		StripeCustomerID:     customerID,
+		StripeSubscriptionID: session.SubscriptionID,
+	})
+	if err != nil {
+		log.Printf("webhook: create license: %v", err)
+		return
+	}
+
+	log.Printf("webhook: created license %s (tier=%s, email=%s, sub=%s)", lic.LicenseKey, tier, email, session.SubscriptionID)
+}
+
+func handleSubscriptionDeleted(store *licensedb.Store, event *stripeutil.WebhookEvent) {
+	var sub struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(event.ObjectRaw(), &sub); err != nil {
+		log.Printf("webhook: decode subscription: %v", err)
+		return
+	}
+
+	lic, err := store.LookupByStripeSubscription(sub.ID)
+	if err != nil || lic == nil {
+		log.Printf("webhook: no license for subscription %s", sub.ID)
+		return
+	}
+
+	if err := store.Revoke(lic.LicenseKey); err != nil {
+		log.Printf("webhook: revoke license %s: %v", lic.LicenseKey, err)
+		return
+	}
+	log.Printf("webhook: revoked license %s (sub=%s cancelled)", lic.LicenseKey, sub.ID)
+}
+
+func handleSubscriptionUpdated(store *licensedb.Store, client *stripeutil.Client, sc *stripeConfig, event *stripeutil.WebhookEvent) {
+	var sub stripeutil.Subscription
+	if err := json.Unmarshal(event.ObjectRaw(), &sub); err != nil {
+		log.Printf("webhook: decode subscription: %v", err)
+		return
+	}
+
+	lic, err := store.LookupByStripeSubscription(sub.ID)
+	if err != nil || lic == nil {
+		log.Printf("webhook: no license for subscription %s (update ignored)", sub.ID)
+		return
+	}
+
+	// Determine new tier from the subscription's current price.
+	newTier := ""
+	if len(sub.Items.Data) > 0 {
+		newTier = sc.tierForPrice(sub.Items.Data[0].Price.ID)
+	}
+	if newTier == "" {
+		newTier = sub.Metadata["tier"]
+	}
+	if newTier == "" || newTier == lic.Tier {
+		return // no tier change
+	}
+
+	if err := store.Upgrade(lic.LicenseKey, newTier); err != nil {
+		log.Printf("webhook: upgrade license %s to %s: %v", lic.LicenseKey, newTier, err)
+		return
+	}
+	log.Printf("webhook: upgraded license %s from %s to %s", lic.LicenseKey, lic.Tier, newTier)
+}
+
+func successHandler(store *licensedb.Store, client *stripeutil.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.URL.Query().Get("session_id")
+		if sessionID == "" {
+			http.Error(w, "missing session_id", http.StatusBadRequest)
+			return
+		}
+
+		// Fetch the checkout session from Stripe to get the subscription ID.
+		session, err := client.GetCheckoutSession(sessionID)
+		if err != nil {
+			log.Printf("success: get session %s: %v", sessionID, err)
+			http.Error(w, "could not retrieve session", http.StatusInternalServerError)
+			return
+		}
+
+		if session.PaymentStatus != "paid" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(successPage("", "Payment is still processing. Please check back shortly.")))
+			return
+		}
+
+		// Look up the license by subscription ID.
+		var lic *licensedb.License
+		if session.SubscriptionID != "" {
+			lic, _ = store.LookupByStripeSubscription(session.SubscriptionID)
+		}
+
+		if lic == nil {
+			// Webhook may not have arrived yet — show a waiting message.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(successPage("", "Your payment was successful! Your license key is being generated. Please refresh this page in a few seconds.")))
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte(successPage(lic.LicenseKey, "")))
+	}
+}
+
+func successPage(licenseKey, message string) string {
+	content := ""
+	if licenseKey != "" {
+		content = `
+		<h2>Thank you for subscribing!</h2>
+		<p>Your license key:</p>
+		<div style="background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:16px;margin:16px 0;font-family:monospace;font-size:1.2rem;word-break:break-all;user-select:all;">` + licenseKey + `</div>
+		<p>Copy this key and set it in your Satsbook settings:</p>
+		<pre style="background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:12px;overflow-x:auto;">SATSBOOK_LICENSE_KEY=` + licenseKey + `</pre>
+		<p style="color:#999;margin-top:16px;font-size:0.85rem;">Save this key — you will need it if you reinstall Satsbook.</p>`
+	} else {
+		content = `<h2>` + message + `</h2>`
+	}
+
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Satsbook — License</title>
+	<style>
+		body { font-family: -apple-system, sans-serif; background: #0d1117; color: #e6e6e6; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+		h2 { color: #f7931a; }
+		a { color: #4fc3f7; }
+	</style>
+</head>
+<body>` + content + `</body></html>`
 }
 
 func cmdList(args []string) {
