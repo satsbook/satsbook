@@ -13,6 +13,7 @@ import (
 	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
+	"github.com/satsbook/satsbook/internal/tax"
 )
 
 // DashboardStore defines the read operations needed by dashboard handlers.
@@ -96,6 +97,12 @@ type MonarchTxStore interface {
 	DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error)
 }
 
+// TaxStore defines DB operations for tax/cost basis calculations.
+type TaxStore interface {
+	ListBTCLots(ctx context.Context) ([]db.BTCLot, error)
+	ListDisposals(ctx context.Context) ([]db.DisposalRow, error)
+}
+
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
 	store            DashboardStore
@@ -108,6 +115,7 @@ type Handler struct {
 	txStore          TransactionStore
 	monarchSyncer    MonarchSyncer
 	monarchTxStore   MonarchTxStore
+	taxStore         TaxStore
 	onMonarchChange  func(MonarchSyncer)
 	pendingMonarch   *monarch.PendingClient
 	logger           *log.Logger
@@ -169,6 +177,11 @@ func (h *Handler) SetMonarchSyncer(ms MonarchSyncer) {
 	if h.onMonarchChange != nil {
 		h.onMonarchChange(ms)
 	}
+}
+
+// SetTaxStore sets the tax store for cost basis calculations.
+func (h *Handler) SetTaxStore(ts TaxStore) {
+	h.taxStore = ts
 }
 
 // OnMonarchChange registers a callback invoked when the Monarch syncer changes.
@@ -914,4 +927,166 @@ func (h *Handler) HandleClearImport(source string) http.HandlerFunc {
 			h.logger.Printf("failed to render clear result: %v", err)
 		}
 	}
+}
+
+// HandleTaxExport generates and downloads a Form 8949 CSV file.
+func (h *Handler) HandleTaxExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.taxStore == nil {
+		http.Error(w, "tax export not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Load lots from DB.
+	dbLots, err := h.taxStore.ListBTCLots(ctx)
+	if err != nil {
+		h.logger.Printf("tax export: list lots: %v", err)
+		http.Error(w, "failed to load lots", http.StatusInternalServerError)
+		return
+	}
+
+	// Load disposals from DB.
+	dbDisposals, err := h.taxStore.ListDisposals(ctx)
+	if err != nil {
+		h.logger.Printf("tax export: list disposals: %v", err)
+		http.Error(w, "failed to load disposals", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to tax engine types.
+	lots := make([]tax.Lot, len(dbLots))
+	for i, l := range dbLots {
+		lots[i] = tax.Lot{
+			ID:         l.ID,
+			AcquiredAt: l.AcquiredAt,
+			AmountSat:  l.AmountSat,
+			PriceUSD:   l.PriceUSD,
+			Source:     l.Source,
+			ExternalID: l.ExternalID,
+		}
+	}
+
+	disposals := make([]tax.Disposal, len(dbDisposals))
+	for i, d := range dbDisposals {
+		disposals[i] = tax.Disposal{
+			DisposedAt:  d.DisposedAt,
+			AmountSat:   d.AmountSat,
+			ProceedsUSD: d.ProceedsUSD,
+			TxType:      d.TxType,
+			Source:      d.Source,
+			ExternalID:  d.ExternalID,
+		}
+	}
+
+	// Determine method (default FIFO).
+	method := tax.FIFO
+	if m := r.URL.Query().Get("method"); m == "lifo" {
+		method = tax.LIFO
+	}
+
+	// Run the cost basis engine.
+	result, err := tax.Match(lots, disposals, method)
+	if err != nil {
+		h.logger.Printf("tax export: match: %v", err)
+		http.Error(w, "failed to calculate cost basis", http.StatusInternalServerError)
+		return
+	}
+
+	// Filter by tax year if specified.
+	year := r.URL.Query().Get("year")
+	if year != "" {
+		yearInt, err := strconv.Atoi(year)
+		if err == nil {
+			var filtered []tax.TaxableEvent
+			for _, e := range result.Events {
+				if e.DisposedAt.Year() == yearInt {
+					filtered = append(filtered, e)
+				}
+			}
+			result.Events = filtered
+		}
+	}
+
+	// Return JSON summary or CSV download.
+	format := r.URL.Query().Get("format")
+	if format == "json" {
+		summary := tax.Summarize(result)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"summary":      summary,
+			"events_count": len(result.Events),
+			"method":       string(method),
+		})
+		return
+	}
+
+	// Default: CSV download.
+	filename := "form8949"
+	if year != "" {
+		filename += "_" + year
+	}
+	filename += "_" + string(method) + ".csv"
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	if err := tax.WriteForm8949CSV(w, result.Events); err != nil {
+		h.logger.Printf("tax export: write csv: %v", err)
+	}
+}
+
+// HandleTaxSummary returns a JSON summary of tax calculations.
+func (h *Handler) HandleTaxSummary(w http.ResponseWriter, r *http.Request) {
+	if h.taxStore == nil {
+		http.Error(w, "tax not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+	dbLots, err := h.taxStore.ListBTCLots(ctx)
+	if err != nil {
+		http.Error(w, "failed to load lots", http.StatusInternalServerError)
+		return
+	}
+
+	dbDisposals, err := h.taxStore.ListDisposals(ctx)
+	if err != nil {
+		http.Error(w, "failed to load disposals", http.StatusInternalServerError)
+		return
+	}
+
+	lots := make([]tax.Lot, len(dbLots))
+	for i, l := range dbLots {
+		lots[i] = tax.Lot{
+			ID: l.ID, AcquiredAt: l.AcquiredAt, AmountSat: l.AmountSat,
+			PriceUSD: l.PriceUSD, Source: l.Source, ExternalID: l.ExternalID,
+		}
+	}
+	disposals := make([]tax.Disposal, len(dbDisposals))
+	for i, d := range dbDisposals {
+		disposals[i] = tax.Disposal{
+			DisposedAt: d.DisposedAt, AmountSat: d.AmountSat, ProceedsUSD: d.ProceedsUSD,
+			TxType: d.TxType, Source: d.Source, ExternalID: d.ExternalID,
+		}
+	}
+
+	method := tax.FIFO
+	if m := r.URL.Query().Get("method"); m == "lifo" {
+		method = tax.LIFO
+	}
+
+	result, err := tax.Match(lots, disposals, method)
+	if err != nil {
+		http.Error(w, "failed to calculate", http.StatusInternalServerError)
+		return
+	}
+
+	summary := tax.Summarize(result)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
 }

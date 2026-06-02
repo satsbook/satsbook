@@ -105,6 +105,7 @@ func main() {
 	handler.SetSettingsStore(database)
 	handler.SetTransactionStore(database)
 	handler.SetMonarchTxStore(database)
+	handler.SetTaxStore(database)
 	monarchToken, _ := database.GetSetting(context.Background(), "monarch_token")
 	if monarchToken == "" {
 		monarchToken = cfg.MonarchToken // fall back to env var

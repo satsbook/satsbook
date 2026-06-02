@@ -65,6 +65,9 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/monarch/sync", monarchGate(handler.HandleMonarchSync))
 	mux.HandleFunc("/api/monarch/sync-types", monarchGate(handler.HandleMonarchSyncTypes))
 	mux.HandleFunc("/api/monarch/tx-sync", monarchGate(handler.HandleMonarchTxSync))
+	proGate := requireTier(license.TierPro, handler.renderer)
+	mux.HandleFunc("/api/tax/export", proGate(handler.HandleTaxExport))
+	mux.HandleFunc("/api/tax/summary", proGate(handler.HandleTaxSummary))
 
 	return &Server{
 		httpServer: &http.Server{
