@@ -54,12 +54,43 @@
       {{end}}
 
       {{if not (tierAtLeast .Tier "pro")}}
-      <div style="margin-bottom: 12px;">
-        <a href="https://satsbook.io" target="_blank"
-           style="display: inline-block; padding: 8px 20px; border-radius: var(--radius, 6px); background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
-          Subscribe to Pro
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+        <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
+          <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Pro</h4>
+          <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+            <li>FIFO / LIFO cost basis engine</li>
+            <li>Form 8949 CSV export</li>
+            <li>Tax summary dashboard</li>
+          </ul>
+          <a href="/api/subscribe?tier=pro"
+             style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+            Subscribe to Pro
+          </a>
+        </div>
+        <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
+          <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Power</h4>
+          <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+            <li>Everything in Pro</li>
+            <li>Monarch Money net worth sync</li>
+            <li>Transaction export to Monarch</li>
+          </ul>
+          <a href="/api/subscribe?tier=power"
+             style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+            Subscribe to Power
+          </a>
+        </div>
+      </div>
+      {{else if not (tierAtLeast .Tier "power")}}
+      <div style="margin-bottom: 12px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; max-width: 300px;">
+        <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Upgrade to Power</h4>
+        <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+          <li>Monarch Money net worth sync</li>
+          <li>Transaction export to Monarch</li>
+        </ul>
+        <a href="/api/subscribe?tier=power"
+           style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+          Upgrade to Power
         </a>
-        <span style="color: #666; font-size: 0.8rem; margin-left: 8px;">$9/month — tax export, cost basis tracking</span>
       </div>
       {{end}}
 

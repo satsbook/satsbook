@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -118,6 +119,7 @@ type Handler struct {
 	monarchTxStore   MonarchTxStore
 	taxStore         TaxStore
 	licenseChecker   *license.DefaultChecker
+	checkoutBaseURL  string // e.g. "https://api.satsbook.io"
 	onMonarchChange  func(MonarchSyncer)
 	pendingMonarch   *monarch.PendingClient
 	logger           *log.Logger
@@ -189,6 +191,11 @@ func (h *Handler) SetTaxStore(ts TaxStore) {
 // SetLicenseChecker sets the license checker for runtime activation.
 func (h *Handler) SetLicenseChecker(lc *license.DefaultChecker) {
 	h.licenseChecker = lc
+}
+
+// SetCheckoutBaseURL sets the base URL for the license server (e.g. "https://api.satsbook.io").
+func (h *Handler) SetCheckoutBaseURL(url string) {
+	h.checkoutBaseURL = url
 }
 
 // OnMonarchChange registers a callback invoked when the Monarch syncer changes.
@@ -1166,4 +1173,66 @@ func (h *Handler) HandleLicenseVerify(w http.ResponseWriter, r *http.Request) {
 	tier := h.licenseChecker.CurrentTier()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<div class="alert alert-success">License verified. Tier: <strong>%s</strong></div>`, tier)
+}
+
+// HandleSubscribe handles GET /api/subscribe?tier=pro|power.
+// It calls the license server's checkout API and redirects to Stripe Checkout.
+func (h *Handler) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
+	tier := r.URL.Query().Get("tier")
+	if tier != "pro" && tier != "power" {
+		http.Error(w, "invalid tier — must be pro or power", http.StatusBadRequest)
+		return
+	}
+
+	if h.checkoutBaseURL == "" {
+		http.Error(w, "subscription not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Build the return URL — after Stripe payment, redirect back to our settings page
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	returnURL := fmt.Sprintf("%s://%s/settings", scheme, r.Host)
+
+	// Call the license server's checkout endpoint
+	reqBody, _ := json.Marshal(map[string]string{
+		"tier":       tier,
+		"return_url": returnURL,
+	})
+
+	ctx := r.Context()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.checkoutBaseURL+"/v1/checkout", bytes.NewReader(reqBody))
+	if err != nil {
+		h.logger.Printf("subscribe: create request: %v", err)
+		http.Error(w, "failed to create checkout", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.logger.Printf("subscribe: call checkout API: %v", err)
+		http.Error(w, "failed to reach subscription service", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		h.logger.Printf("subscribe: checkout API returned %d", resp.StatusCode)
+		http.Error(w, "subscription service error", http.StatusBadGateway)
+		return
+	}
+
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.URL == "" {
+		h.logger.Printf("subscribe: decode response: %v", err)
+		http.Error(w, "invalid response from subscription service", http.StatusBadGateway)
+		return
+	}
+
+	http.Redirect(w, r, result.URL, http.StatusFound)
 }

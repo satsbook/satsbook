@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -114,6 +115,9 @@ func main() {
 	handler.SetMonarchTxStore(database)
 	handler.SetTaxStore(database)
 	handler.SetLicenseChecker(lc)
+	// Derive checkout base URL from the validation URL (strip /v1/license/validate)
+	checkoutBase := strings.TrimSuffix(cfg.LicenseValidationURL, "/v1/license/validate")
+	handler.SetCheckoutBaseURL(checkoutBase)
 	monarchToken, _ := database.GetSetting(context.Background(), "monarch_token")
 	if monarchToken == "" {
 		monarchToken = cfg.MonarchToken // fall back to env var
