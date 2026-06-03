@@ -33,6 +33,9 @@ type DashboardStore interface {
 	PortfolioPosition(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
 	PortfolioSnapshots(ctx context.Context, days int) ([]db.PortfolioSnapshot, error)
 	BackfillPortfolioSnapshots(ctx context.Context) (int, error)
+	PortfolioBreakdownQuery(ctx context.Context) (*db.PortfolioBreakdown, error)
+	PortfolioSnapshotsWithDetails(ctx context.Context, days int) ([]db.PortfolioSnapshotDetail, error)
+	NetFlowSummary(ctx context.Context, since time.Time) (*db.NetFlowResult, error)
 }
 
 // NodeInfoProvider fetches node info from LND.

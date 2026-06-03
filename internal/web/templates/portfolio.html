@@ -1,0 +1,125 @@
+{{define "portfolio_content"}}
+
+<!-- Period selector -->
+<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; align-items: center;">
+  <span style="font-size: 0.85rem; color: var(--text-muted);">Period:</span>
+  {{range .Periods}}
+  <a href="/portfolio?period={{.Value}}"
+     style="padding: 4px 12px; border-radius: var(--radius); font-size: 0.85rem; text-decoration: none;
+            {{if .Active}}background: var(--accent); color: #000; font-weight: 600;{{else}}background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border);{{end}}">
+    {{.Label}}
+  </a>
+  {{end}}
+</div>
+
+<!-- Total Holdings -->
+<div class="cards">
+  <div class="card" style="flex: 2; min-width: 280px;">
+    <div class="card-label">Total Holdings</div>
+    <div class="card-value" style="font-size: 1.6rem;">{{formatSats .TotalSats}} sats</div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .TotalUSD}}</div>{{end}}
+  </div>
+</div>
+
+<!-- Allocation: Donut + Table -->
+{{if .Items}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Allocation</h2>
+<div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; margin-bottom: 24px;">
+  <div style="flex-shrink: 0;">
+    {{donutChart .Items}}
+  </div>
+  <div style="flex: 1; min-width: 280px;">
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+      <thead>
+        <tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);">
+          <th style="text-align: left; padding: 6px 8px;"></th>
+          <th style="text-align: left; padding: 6px 8px;">Source</th>
+          <th style="text-align: right; padding: 6px 8px;">Sats</th>
+          {{if $.BTCPriceUSD}}<th style="text-align: right; padding: 6px 8px;">USD</th>{{end}}
+          <th style="text-align: right; padding: 6px 8px;">%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range $i, $item := .Items}}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 6px 8px; width: 12px;">
+            <span style="display:inline-block; width:12px; height:12px; border-radius:2px; background:{{index $.DonutColors $i}};"></span>
+          </td>
+          <td style="padding: 6px 8px;">{{$item.Label}}</td>
+          <td style="text-align: right; padding: 6px 8px;">{{formatSats $item.Sats}}</td>
+          {{if $.BTCPriceUSD}}<td style="text-align: right; padding: 6px 8px;">{{formatUSD $item.USD}}</td>{{end}}
+          <td style="text-align: right; padding: 6px 8px;">{{printf "%.1f" $item.Pct}}%</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{else}}
+<div class="chart-empty" style="margin: 24px 0;">No portfolio data yet. Import exchange data or connect your LND node to see your allocation breakdown.</div>
+{{end}}
+
+<!-- Per-Source Historical Sparklines -->
+{{if .HistorySources}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Historical by Source</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 16px; margin-bottom: 24px;">
+  {{range .HistorySources}}
+  <div class="card">
+    <div class="card-label">{{portfolioSourceLabel .}}</div>
+    <div class="chart-container" style="margin-top: 8px;">
+      {{$snapshots := index $.HistoryBySource .}}
+      {{portfolioChart $snapshots}}
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+<!-- Net Flows -->
+{{if .NetFlow}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Net Flows</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Inflows</div>
+    <div class="card-value gain">+{{formatSats .NetFlow.InflowSats}} sats</div>
+    <div class="card-sub">{{.NetFlow.InflowCount}} transactions{{if .NetFlow.InflowUSD}} &middot; {{formatUSD .NetFlow.InflowUSD}}{{end}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Outflows</div>
+    <div class="card-value loss">-{{formatSats .NetFlow.OutflowSats}} sats</div>
+    <div class="card-sub">{{.NetFlow.OutflowCount}} transactions{{if .NetFlow.OutflowUSD}} &middot; {{formatUSD .NetFlow.OutflowUSD}}{{end}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Net Change</div>
+    {{$net := sub64 .NetFlow.InflowSats .NetFlow.OutflowSats}}
+    <div class="card-value {{if ge $net (int64 0)}}gain{{else}}loss{{end}}">{{formatSats $net}} sats</div>
+  </div>
+</div>
+{{end}}
+
+<!-- Cost Basis Summary -->
+{{if .TotalCostBasisUSD}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Cost Basis</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Total Cost Basis</div>
+    <div class="card-value">{{formatUSD .TotalCostBasisUSD}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Avg Cost per BTC</div>
+    <div class="card-value">{{formatUSD .AvgCostPerBTC}}</div>
+  </div>
+  {{if .CurrentValueUSD}}
+  <div class="card">
+    <div class="card-label">Current Value</div>
+    <div class="card-value">{{formatUSD .CurrentValueUSD}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Unrealized Gain / Loss</div>
+    <div class="card-value {{if ge .UnrealizedGainUSD 0.0}}gain{{else}}loss{{end}}">{{formatUSD .UnrealizedGainUSD}}</div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{end}}

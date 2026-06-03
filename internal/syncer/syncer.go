@@ -30,6 +30,8 @@ type Store interface {
 type SnapshotStore interface {
 	TotalPortfolioSats(ctx context.Context) (int64, error)
 	InsertPortfolioSnapshot(ctx context.Context, totalSats int64, btcPriceUSD float64) error
+	PortfolioBreakdownQuery(ctx context.Context) (*db.PortfolioBreakdown, error)
+	InsertPortfolioSnapshotWithDetails(ctx context.Context, totalSats int64, btcPriceUSD float64, details map[string]int64) error
 }
 
 // PriceProvider fetches the current BTC/USD price for snapshots.
@@ -140,11 +142,11 @@ func (s *Syncer) Sync(ctx context.Context) error {
 	return nil
 }
 
-// captureSnapshot records the current total portfolio value and syncs to Monarch.
+// captureSnapshot records the current total portfolio value with per-source breakdown.
 func (s *Syncer) captureSnapshot(ctx context.Context) {
-	totalSats, err := s.snapshot.TotalPortfolioSats(ctx)
+	breakdown, err := s.snapshot.PortfolioBreakdownQuery(ctx)
 	if err != nil {
-		s.logger.Printf("snapshot: failed to compute total sats: %v", err)
+		s.logger.Printf("snapshot: failed to compute breakdown: %v", err)
 		return
 	}
 
@@ -154,13 +156,28 @@ func (s *Syncer) captureSnapshot(ctx context.Context) {
 		btcPrice = price
 	}
 
-	if err := s.snapshot.InsertPortfolioSnapshot(ctx, totalSats, btcPrice); err != nil {
+	// Build per-source detail map
+	details := make(map[string]int64)
+	if breakdown.OnChainSats != 0 {
+		details["onchain"] = breakdown.OnChainSats
+	}
+	if breakdown.ChannelSats != 0 {
+		details["channels"] = breakdown.ChannelSats
+	}
+	if breakdown.ColdStorageSats != 0 {
+		details["cold_storage"] = breakdown.ColdStorageSats
+	}
+	for source, sats := range breakdown.ExchangeSats {
+		details[source] = sats
+	}
+
+	if err := s.snapshot.InsertPortfolioSnapshotWithDetails(ctx, breakdown.TotalSats, btcPrice, details); err != nil {
 		s.logger.Printf("snapshot: failed to insert: %v", err)
 	}
 
 	// Sync holdings to Monarch Money
 	if s.monarch != nil {
-		btcQuantity := float64(totalSats) / 1e8
+		btcQuantity := float64(breakdown.TotalSats) / 1e8
 		if err := s.monarch.SyncHolding(ctx, btcQuantity); err != nil {
 			s.logger.Printf("monarch: sync failed: %v", err)
 		}

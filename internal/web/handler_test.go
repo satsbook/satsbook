@@ -96,6 +96,15 @@ func (m *mockStore) PortfolioSnapshots(ctx context.Context, days int) ([]db.Port
 func (m *mockStore) BackfillPortfolioSnapshots(ctx context.Context) (int, error) {
 	return 0, nil
 }
+func (m *mockStore) PortfolioBreakdownQuery(ctx context.Context) (*db.PortfolioBreakdown, error) {
+	return &db.PortfolioBreakdown{ExchangeSats: map[string]int64{}}, nil
+}
+func (m *mockStore) PortfolioSnapshotsWithDetails(ctx context.Context, days int) ([]db.PortfolioSnapshotDetail, error) {
+	return nil, nil
+}
+func (m *mockStore) NetFlowSummary(ctx context.Context, since time.Time) (*db.NetFlowResult, error) {
+	return &db.NetFlowResult{}, nil
+}
 
 type mockNodeInfo struct {
 	info *lnd.NodeInfo

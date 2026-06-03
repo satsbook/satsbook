@@ -1711,3 +1711,170 @@ func (d *DB) SaveDisposals(ctx context.Context, events []struct {
 
 	return tx.Commit()
 }
+
+// --- Portfolio Breakdown Queries ---
+
+// PortfolioBreakdown holds the current BTC holdings broken down by source category.
+type PortfolioBreakdown struct {
+	OnChainSats     int64
+	ChannelSats     int64
+	ColdStorageSats int64
+	ExchangeSats    map[string]int64 // per-exchange (strike, river, coinbase, swan)
+	TotalSats       int64
+}
+
+// PortfolioBreakdownQuery computes the current point-in-time breakdown of BTC across all sources.
+func (d *DB) PortfolioBreakdownQuery(ctx context.Context) (*PortfolioBreakdown, error) {
+	b := &PortfolioBreakdown{
+		ExchangeSats: make(map[string]int64),
+	}
+
+	// On-chain wallet balance (latest snapshot)
+	var walletSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT total_sat FROM wallet_balance_snapshots ORDER BY captured_at DESC LIMIT 1`,
+	).Scan(&walletSats)
+	if walletSats.Valid {
+		b.OnChainSats = walletSats.Int64
+	}
+
+	// Channel local balances
+	var channelSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT SUM(local_balance) FROM channels WHERE active = 1`,
+	).Scan(&channelSats)
+	if channelSats.Valid {
+		b.ChannelSats = channelSats.Int64
+	}
+
+	// Cold storage wallets
+	var coldSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT SUM(balance_sats) FROM watched_wallets`,
+	).Scan(&coldSats)
+	if coldSats.Valid {
+		b.ColdStorageSats = coldSats.Int64
+	}
+
+	// Exchange balances (per source)
+	for _, source := range []string{"strike", "river", "coinbase", "swan"} {
+		bal, err := d.ExchangeBalance(ctx, source)
+		if err == nil && bal != 0 {
+			b.ExchangeSats[source] = bal
+		}
+	}
+
+	b.TotalSats = b.OnChainSats + b.ChannelSats + b.ColdStorageSats
+	for _, v := range b.ExchangeSats {
+		b.TotalSats += v
+	}
+
+	return b, nil
+}
+
+// InsertPortfolioSnapshotWithDetails records a portfolio snapshot with per-source breakdown.
+func (d *DB) InsertPortfolioSnapshotWithDetails(ctx context.Context, totalSats int64, btcPriceUSD float64, details map[string]int64) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("snapshot details: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshots (total_sats, btc_price_usd) VALUES (?, ?)`,
+		totalSats, btcPriceUSD)
+	if err != nil {
+		return fmt.Errorf("snapshot details: insert snapshot: %w", err)
+	}
+
+	snapshotID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("snapshot details: last insert id: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("snapshot details: prepare: %w", err)
+	}
+	defer stmt.Close()
+
+	for source, sats := range details {
+		if _, err := stmt.ExecContext(ctx, snapshotID, source, sats); err != nil {
+			return fmt.Errorf("snapshot details: insert %s: %w", source, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// PortfolioSnapshotDetail represents a single source's value at a point in time.
+type PortfolioSnapshotDetail struct {
+	CapturedAt  time.Time
+	Source      string
+	Sats        int64
+	BTCPriceUSD float64
+}
+
+// PortfolioSnapshotsWithDetails returns per-source snapshot data for the given number of days.
+func (d *DB) PortfolioSnapshotsWithDetails(ctx context.Context, days int) ([]PortfolioSnapshotDetail, error) {
+	since := time.Now().AddDate(0, 0, -days).UTC().Format(time.RFC3339)
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT DATE(p.captured_at) as day, d.source, d.sats, MAX(p.btc_price_usd, 0)
+		 FROM portfolio_snapshots p
+		 INNER JOIN portfolio_snapshot_details d ON d.snapshot_id = p.id
+		 INNER JOIN (
+			SELECT MAX(id) as max_id
+			FROM portfolio_snapshots
+			WHERE captured_at >= ?
+			GROUP BY DATE(captured_at)
+		 ) g ON p.id = g.max_id
+		 ORDER BY day ASC, d.source ASC`, since)
+	if err != nil {
+		return nil, fmt.Errorf("portfolio snapshot details: %w", err)
+	}
+	defer rows.Close()
+
+	var details []PortfolioSnapshotDetail
+	for rows.Next() {
+		var d PortfolioSnapshotDetail
+		var day string
+		if err := rows.Scan(&day, &d.Source, &d.Sats, &d.BTCPriceUSD); err != nil {
+			return nil, fmt.Errorf("scan portfolio snapshot detail: %w", err)
+		}
+		d.CapturedAt, _ = time.Parse("2006-01-02", day)
+		details = append(details, d)
+	}
+	return details, rows.Err()
+}
+
+// NetFlowResult holds inflow/outflow totals for a period.
+type NetFlowResult struct {
+	InflowSats   int64
+	OutflowSats  int64
+	InflowCount  int
+	OutflowCount int
+	InflowUSD    float64
+	OutflowUSD   float64
+}
+
+// NetFlowSummary computes inflows and outflows over a period from the unified transaction view.
+func (d *DB) NetFlowSummary(ctx context.Context, since time.Time) (*NetFlowResult, error) {
+	var result NetFlowResult
+	err := d.db.QueryRowContext(ctx,
+		`SELECT
+			COALESCE(SUM(CASE WHEN amount_sat > 0 THEN amount_sat ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN amount_sat < 0 THEN ABS(amount_sat) ELSE 0 END), 0),
+			COALESCE(COUNT(CASE WHEN amount_sat > 0 THEN 1 END), 0),
+			COALESCE(COUNT(CASE WHEN amount_sat < 0 THEN 1 END), 0),
+			COALESCE(SUM(CASE WHEN amount_usd > 0 THEN amount_usd ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN amount_usd < 0 THEN ABS(amount_usd) ELSE 0 END), 0)
+		 FROM btc_transactions_v
+		 WHERE ts >= ?`, since.UTC().Format("2006-01-02 15:04:05"),
+	).Scan(&result.InflowSats, &result.OutflowSats, &result.InflowCount, &result.OutflowCount,
+		&result.InflowUSD, &result.OutflowUSD)
+	if err != nil {
+		return nil, fmt.Errorf("net flow summary: %w", err)
+	}
+	return &result, nil
+}

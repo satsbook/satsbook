@@ -3116,3 +3116,177 @@ func TestDistinctTransactionValues(t *testing.T) {
 	}
 }
 
+// --- Portfolio Breakdown tests ---
+
+func TestPortfolioBreakdownQuery(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed exchange imports
+	seedExchangeImport(t, d, "strike", "pb1", "Purchase", 0.01, 500.0, "2024-01-01T12:00:00Z")
+	seedExchangeImport(t, d, "river", "pb2", "Purchase", 0.02, 1000.0, "2024-01-02T12:00:00Z")
+
+	b, err := d.PortfolioBreakdownQuery(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have exchange balances for strike and river
+	if b.ExchangeSats["strike"] == 0 {
+		t.Error("expected non-zero strike balance")
+	}
+	if b.ExchangeSats["river"] == 0 {
+		t.Error("expected non-zero river balance")
+	}
+	if b.TotalSats != b.OnChainSats+b.ChannelSats+b.ColdStorageSats+b.ExchangeSats["strike"]+b.ExchangeSats["river"] {
+		t.Errorf("total sats mismatch: got %d", b.TotalSats)
+	}
+}
+
+func TestPortfolioBreakdownQuery_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	b, err := d.PortfolioBreakdownQuery(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.TotalSats != 0 {
+		t.Errorf("expected 0 total, got %d", b.TotalSats)
+	}
+}
+
+func TestInsertPortfolioSnapshotWithDetails(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	details := map[string]int64{
+		"onchain":  1_000_000,
+		"channels": 500_000,
+		"strike":   200_000,
+	}
+
+	if err := d.InsertPortfolioSnapshotWithDetails(ctx, 1_700_000, 50000.0, details); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify snapshot was inserted
+	var totalSats int64
+	d.db.QueryRowContext(ctx, `SELECT total_sats FROM portfolio_snapshots ORDER BY id DESC LIMIT 1`).Scan(&totalSats)
+	if totalSats != 1_700_000 {
+		t.Errorf("expected 1700000, got %d", totalSats)
+	}
+
+	// Verify details were inserted
+	var detailCount int
+	d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM portfolio_snapshot_details`).Scan(&detailCount)
+	if detailCount != 3 {
+		t.Errorf("expected 3 detail rows, got %d", detailCount)
+	}
+
+	// Verify specific detail
+	var sats int64
+	d.db.QueryRowContext(ctx, `SELECT sats FROM portfolio_snapshot_details WHERE source = 'onchain'`).Scan(&sats)
+	if sats != 1_000_000 {
+		t.Errorf("expected onchain=1000000, got %d", sats)
+	}
+}
+
+func TestPortfolioSnapshotsWithDetails(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Insert two snapshots on different recent days
+	now := time.Now().UTC()
+	day1 := now.AddDate(0, 0, -2).Format("2006-01-02") + " 12:00:00"
+	day2 := now.AddDate(0, 0, -1).Format("2006-01-02") + " 12:00:00"
+
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshots (captured_at, total_sats, btc_price_usd) VALUES (?, 1000000, 50000)`, day1)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (1, 'onchain', 700000)`)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (1, 'strike', 300000)`)
+
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshots (captured_at, total_sats, btc_price_usd) VALUES (?, 1200000, 51000)`, day2)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (2, 'onchain', 800000)`)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (2, 'strike', 400000)`)
+
+	details, err := d.PortfolioSnapshotsWithDetails(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have 4 detail rows (2 per day x 2 sources)
+	if len(details) != 4 {
+		t.Fatalf("expected 4 details, got %d", len(details))
+	}
+
+	// First two should be from the same day (day1), last two from day2
+	if details[0].CapturedAt != details[1].CapturedAt {
+		t.Errorf("expected first two from same day, got %v and %v", details[0].CapturedAt, details[1].CapturedAt)
+	}
+	if details[2].CapturedAt != details[3].CapturedAt {
+		t.Errorf("expected last two from same day, got %v and %v", details[2].CapturedAt, details[3].CapturedAt)
+	}
+}
+
+func TestPortfolioSnapshotsWithDetails_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	details, err := d.PortfolioSnapshotsWithDetails(context.Background(), 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(details) != 0 {
+		t.Errorf("expected 0 details, got %d", len(details))
+	}
+}
+
+func TestNetFlowSummary(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed: Purchase (inflow), Sale (outflow)
+	seedExchangeImport(t, d, "strike", "nf1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+	seedExchangeImport(t, d, "strike", "nf2", "Sale", -0.005, -250.0, "2024-06-15T12:00:00Z")
+
+	since, _ := time.Parse(time.RFC3339, "2024-01-01T00:00:00Z")
+	nf, err := d.NetFlowSummary(ctx, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if nf.InflowSats == 0 {
+		t.Error("expected non-zero inflows")
+	}
+	if nf.InflowCount == 0 {
+		t.Error("expected non-zero inflow count")
+	}
+	// Sale has negative amount_sat, so outflows should be non-zero
+	if nf.OutflowSats == 0 {
+		t.Error("expected non-zero outflows")
+	}
+}
+
+func TestNetFlowSummary_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	nf, err := d.NetFlowSummary(context.Background(), time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nf.InflowSats != 0 || nf.OutflowSats != 0 {
+		t.Errorf("expected zeros, got inflow=%d outflow=%d", nf.InflowSats, nf.OutflowSats)
+	}
+}
+

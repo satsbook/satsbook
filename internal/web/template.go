@@ -44,6 +44,8 @@ func NewRenderer() *Renderer {
 		},
 		"add": func(a, b int) int { return a + b },
 		"add64":       func(a, b int64) int64 { return a + b },
+		"sub64":       func(a, b int64) int64 { return a - b },
+		"int64":       func(n int) int64 { return int64(n) },
 		"seq":         seq,
 		"netSats": func(s *db.ExchangeSummaryResult) int64 {
 			if s == nil {
@@ -57,7 +59,9 @@ func NewRenderer() *Renderer {
 			}
 			return costUSD / (float64(sats) / 1e8)
 		},
-		"portfolioChart": portfolioChart,
+		"portfolioChart":       portfolioChart,
+		"donutChart":           donutChart,
+		"portfolioSourceLabel": portfolioSourceLabel,
 		"tierAtLeast": func(current, required string) bool {
 			return license.TierAtLeast(license.Tier(current), license.Tier(required))
 		},
@@ -125,6 +129,8 @@ func NewRenderer() *Renderer {
 			"templates/wallet_detail.html",
 			"templates/tax_layout.html",
 			"templates/tax.html",
+			"templates/portfolio_layout.html",
+			"templates/portfolio.html",
 			"templates/settings_layout.html",
 			"templates/transactions_layout.html",
 			"templates/partials/transaction_note.html",
@@ -452,4 +458,74 @@ func feeChart(dailyFees []db.DailyFeeStat) template.HTML {
 
 	sb.WriteString(`</svg>`)
 	return template.HTML(sb.String())
+}
+
+// donutChartColors are distinct colors for portfolio source segments.
+var donutChartColors = []string{
+	"#f7931a", // orange (bitcoin)
+	"#4fc3f7", // light blue
+	"#66bb6a", // green
+	"#ab47bc", // purple
+	"#ef5350", // red
+	"#ffa726", // amber
+	"#26c6da", // cyan
+}
+
+// donutChart generates an inline SVG donut chart from breakdown items.
+func donutChart(items []BreakdownItem) template.HTML {
+	if len(items) == 0 {
+		return template.HTML(`<div class="chart-empty">No portfolio data</div>`)
+	}
+
+	const (
+		size    = 200
+		cx      = 100
+		cy      = 100
+		radius  = 80
+		strokeW = 30
+	)
+	circumf := 2 * 3.14159265 * float64(radius)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, `<svg viewBox="0 0 %d %d" xmlns="http://www.w3.org/2000/svg" style="max-width:200px">`, size, size)
+
+	// Background circle
+	fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="%d" fill="none" stroke="var(--border, #333)" stroke-width="%d"/>`,
+		cx, cy, radius, strokeW)
+
+	offset := 0.0
+	for i, item := range items {
+		if item.Pct <= 0 {
+			continue
+		}
+		dashLen := circumf * item.Pct / 100
+		dashGap := circumf - dashLen
+		color := donutChartColors[i%len(donutChartColors)]
+
+		fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="%d" fill="none" stroke="%s" stroke-width="%d" `+
+			`stroke-dasharray="%.1f %.1f" stroke-dashoffset="%.1f" transform="rotate(-90 %d %d)">`+
+			`<title>%s: %.1f%%</title></circle>`,
+			cx, cy, radius, color, strokeW,
+			dashLen, dashGap, -offset,
+			cx, cy,
+			item.Label, item.Pct)
+		offset += dashLen
+	}
+
+	sb.WriteString(`</svg>`)
+	return template.HTML(sb.String())
+}
+
+// portfolioSourceLabel returns a human-readable label for a portfolio snapshot source key.
+func portfolioSourceLabel(source string) string {
+	switch source {
+	case "onchain":
+		return "On-chain"
+	case "channels":
+		return "Channels"
+	case "cold_storage":
+		return "Cold Storage"
+	default:
+		return templateSourceLabel(source)
+	}
 }

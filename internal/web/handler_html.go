@@ -2080,6 +2080,261 @@ func (h *Handler) HandleTransactionNoteSave(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// BreakdownItem represents a single source in the portfolio donut chart / table.
+type BreakdownItem struct {
+	Label string
+	Sats  int64
+	USD   float64
+	Pct   float64
+}
+
+// PortfolioPageData holds data for the /portfolio page.
+type PortfolioPageData struct {
+	// Layout fields
+	Tier           string
+	NodeAlias      string
+	NodePubKey     string
+	NodeSynced     bool
+	BlockHeight    uint32
+	LNDVersion     string
+	BTCPriceUSD    float64
+	PriceFetchedAt time.Time
+	LastSyncedAt   time.Time
+
+	// Breakdown
+	Items       []BreakdownItem
+	DonutColors []string
+	TotalSats   int64
+	TotalUSD    float64
+
+	// Historical per-source data (for sparklines)
+	HistoryDays   int
+	HistorySources []string                        // distinct sources in history
+	HistoryBySource map[string][]db.PortfolioSnapshot // source -> daily snapshots
+
+	// Net flows
+	NetFlow *db.NetFlowResult
+
+	// Cost basis
+	TotalCostBasisUSD  float64
+	AvgCostPerBTC      float64
+	UnrealizedGainUSD  float64
+	CurrentValueUSD    float64
+
+	// Period selector
+	SelectedPeriod string
+	Periods        []PeriodOption
+}
+
+// HandlePortfolioPage serves GET /portfolio.
+func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	now := time.Now()
+
+	// Parse period
+	period := r.URL.Query().Get("period")
+	var since time.Time
+	var days int
+	switch period {
+	case "90d":
+		since = now.AddDate(0, 0, -90)
+		days = 90
+	case "ytd":
+		since = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		days = int(now.Sub(since).Hours() / 24)
+	case "all":
+		since = time.Time{}
+		days = 3650 // ~10 years
+	default:
+		period = "30d"
+		since = now.AddDate(0, 0, -30)
+		days = 30
+	}
+
+	data := PortfolioPageData{
+		Tier:           string(TierFromContext(ctx)),
+		SelectedPeriod: period,
+		HistoryDays:    days,
+		Periods: []PeriodOption{
+			{Value: "30d", Label: "30 days", Active: period == "30d"},
+			{Value: "90d", Label: "90 days", Active: period == "90d"},
+			{Value: "ytd", Label: "YTD", Active: period == "ytd"},
+			{Value: "all", Label: "All time", Active: period == "all"},
+		},
+	}
+
+	// Concurrent data fetch
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	fetch := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+
+	var breakdown *db.PortfolioBreakdown
+	fetch(func() {
+		b, err := h.store.PortfolioBreakdownQuery(ctx)
+		if err == nil {
+			mu.Lock()
+			breakdown = b
+			mu.Unlock()
+		}
+	})
+
+	var details []db.PortfolioSnapshotDetail
+	fetch(func() {
+		d, err := h.store.PortfolioSnapshotsWithDetails(ctx, days)
+		if err == nil {
+			mu.Lock()
+			details = d
+			mu.Unlock()
+		}
+	})
+
+	var netFlow *db.NetFlowResult
+	fetch(func() {
+		nf, err := h.store.NetFlowSummary(ctx, since)
+		if err == nil {
+			mu.Lock()
+			netFlow = nf
+			mu.Unlock()
+		}
+	})
+
+	var position *db.PortfolioPositionResult
+	fetch(func() {
+		pos, err := h.store.PortfolioPosition(ctx, time.Time{})
+		if err == nil {
+			mu.Lock()
+			position = pos
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		info := h.getNodeInfo(ctx)
+		if info != nil {
+			mu.Lock()
+			data.NodeAlias = info.Alias
+			data.NodePubKey = info.PubKey
+			data.NodeSynced = info.Synced
+			data.BlockHeight = info.BlockHeight
+			data.LNDVersion = info.Version
+			mu.Unlock()
+		}
+	})
+
+	fetch(func() {
+		t, _ := h.store.LastSyncedAt(ctx)
+		mu.Lock()
+		data.LastSyncedAt = t
+		mu.Unlock()
+	})
+
+	fetch(func() {
+		price, err := h.price.GetBTCPrice(ctx)
+		if err == nil {
+			mu.Lock()
+			data.BTCPriceUSD = price
+			data.PriceFetchedAt = h.price.FetchedAt()
+			mu.Unlock()
+		}
+	})
+
+	wg.Wait()
+
+	// Build breakdown items
+	if breakdown != nil {
+		satsToUSD := func(sats int64) float64 {
+			if data.BTCPriceUSD <= 0 {
+				return 0
+			}
+			return float64(sats) / 1e8 * data.BTCPriceUSD
+		}
+
+		data.TotalSats = breakdown.TotalSats
+		data.TotalUSD = satsToUSD(breakdown.TotalSats)
+
+		type srcEntry struct {
+			label string
+			sats  int64
+		}
+		var entries []srcEntry
+		if breakdown.OnChainSats != 0 {
+			entries = append(entries, srcEntry{"On-chain Wallet", breakdown.OnChainSats})
+		}
+		if breakdown.ChannelSats != 0 {
+			entries = append(entries, srcEntry{"Lightning Channels", breakdown.ChannelSats})
+		}
+		if breakdown.ColdStorageSats != 0 {
+			entries = append(entries, srcEntry{"Cold Storage", breakdown.ColdStorageSats})
+		}
+		for _, src := range []string{"strike", "river", "coinbase", "swan"} {
+			if sats, ok := breakdown.ExchangeSats[src]; ok && sats != 0 {
+				entries = append(entries, srcEntry{templateSourceLabel(src), sats})
+			}
+		}
+
+		for _, e := range entries {
+			pct := 0.0
+			if breakdown.TotalSats > 0 {
+				pct = float64(e.sats) / float64(breakdown.TotalSats) * 100
+			}
+			data.Items = append(data.Items, BreakdownItem{
+				Label: e.label,
+				Sats:  e.sats,
+				USD:   satsToUSD(e.sats),
+				Pct:   pct,
+			})
+		}
+		for i := range data.Items {
+			data.DonutColors = append(data.DonutColors, donutChartColors[i%len(donutChartColors)])
+		}
+	}
+
+	// Build historical per-source data for sparklines
+	if len(details) > 0 {
+		data.HistoryBySource = make(map[string][]db.PortfolioSnapshot)
+		seenSources := make(map[string]bool)
+		for _, d := range details {
+			if !seenSources[d.Source] {
+				seenSources[d.Source] = true
+				data.HistorySources = append(data.HistorySources, d.Source)
+			}
+			data.HistoryBySource[d.Source] = append(data.HistoryBySource[d.Source],
+				db.PortfolioSnapshot{
+					CapturedAt:  d.CapturedAt,
+					TotalSats:   d.Sats,
+					BTCPriceUSD: d.BTCPriceUSD,
+				})
+		}
+	}
+
+	// Net flows
+	data.NetFlow = netFlow
+
+	// Cost basis from portfolio position
+	if position != nil {
+		data.TotalCostBasisUSD = position.TotalCostBasisUSD
+		if position.PurchasedSats > 0 {
+			data.AvgCostPerBTC = position.TotalCostBasisUSD / (float64(position.PurchasedSats) / 1e8)
+		}
+		if data.BTCPriceUSD > 0 && data.TotalSats > 0 {
+			data.CurrentValueUSD = float64(data.TotalSats) / 1e8 * data.BTCPriceUSD
+			data.UnrealizedGainUSD = data.CurrentValueUSD - position.TotalCostBasisUSD
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "portfolio_layout", data); err != nil {
+		h.logger.Printf("failed to render portfolio page: %v", err)
+	}
+}
+
 // maskToken shows only the last 4 characters of a token.
 func maskToken(token string) string {
 	if len(token) <= 4 {

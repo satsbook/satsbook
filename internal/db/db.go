@@ -428,6 +428,18 @@ var migrations = []string{
 		synced_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	`,
+	// Migration 13: Per-source portfolio snapshot details for breakdown charts.
+	`
+	CREATE TABLE IF NOT EXISTS portfolio_snapshot_details (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		snapshot_id INTEGER NOT NULL REFERENCES portfolio_snapshots(id) ON DELETE CASCADE,
+		source      TEXT NOT NULL,
+		sats        INTEGER NOT NULL DEFAULT 0,
+		UNIQUE(snapshot_id, source)
+	);
+	CREATE INDEX IF NOT EXISTS idx_psd_snapshot ON portfolio_snapshot_details(snapshot_id);
+	CREATE INDEX IF NOT EXISTS idx_psd_source ON portfolio_snapshot_details(source);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

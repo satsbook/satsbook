@@ -31,6 +31,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/wallets/", handler.HandleWalletDetail)
 	mux.HandleFunc("/partials/forwarding", handler.HandleForwardingPartial)
 	mux.HandleFunc("/partials/portfolio-chart", handler.HandlePortfolioChartPartial)
+	mux.HandleFunc("/portfolio", handler.HandlePortfolioPage)
 	mux.HandleFunc("/settings", handler.HandleSettingsPage)
 	mux.HandleFunc("/tax", handler.HandleTaxPage)
 	mux.HandleFunc("/transactions", handler.HandleTransactionsPage)
