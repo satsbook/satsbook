@@ -1649,7 +1649,7 @@ func (d *DB) ListDisposals(ctx context.Context) ([]DisposalRow, error) {
 			source,
 			external_id
 		 FROM exchange_imports
-		 WHERE tx_type IN ('sale', 'sell')
+		 WHERE LOWER(tx_type) IN ('sale', 'sell')
 		   AND COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0
 		 ORDER BY tx_date ASC`)
 	if err != nil {
