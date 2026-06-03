@@ -294,7 +294,8 @@ func checkoutHandler(client *stripeutil.Client, sc *stripeConfig) http.HandlerFu
 		}
 
 		var req struct {
-			Tier string `json:"tier"`
+			Tier      string `json:"tier"`
+			ReturnURL string `json:"return_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
@@ -307,9 +308,14 @@ func checkoutHandler(client *stripeutil.Client, sc *stripeConfig) http.HandlerFu
 			return
 		}
 
+		successURL := sc.baseURL + "/v1/checkout/success?session_id={CHECKOUT_SESSION_ID}"
+		if req.ReturnURL != "" {
+			successURL += "&return_url=" + req.ReturnURL
+		}
+
 		session, err := client.CreateCheckoutSession(stripeutil.CheckoutParams{
 			PriceID:    priceID,
-			SuccessURL: sc.baseURL + "/v1/checkout/success?session_id={CHECKOUT_SESSION_ID}",
+			SuccessURL: successURL,
 			CancelURL:  sc.baseURL + "/v1/checkout/cancel",
 			Tier:       req.Tier,
 		})
@@ -496,9 +502,29 @@ func successHandler(store *licensedb.Store, client *stripeutil.Client) http.Hand
 			return
 		}
 
+		// If a return_url was provided, redirect back to the app with the key.
+		returnURL := r.URL.Query().Get("return_url")
+		if returnURL != "" && lic.LicenseKey != "" {
+			sep := "?"
+			if len(returnURL) > 0 && containsChar(returnURL, '?') {
+				sep = "&"
+			}
+			http.Redirect(w, r, returnURL+sep+"license_key="+lic.LicenseKey, http.StatusFound)
+			return
+		}
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(successPage(lic.LicenseKey, "")))
 	}
+}
+
+func containsChar(s string, c byte) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return true
+		}
+	}
+	return false
 }
 
 func successPage(licenseKey, message string) string {

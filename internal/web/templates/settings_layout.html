@@ -23,6 +23,57 @@
   <main class="container" style="padding: 24px 16px;">
     <h2>Settings</h2>
 
+    <!-- License Section -->
+    <section class="card" style="margin-top: 16px;">
+      <h3>License</h3>
+      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+        Unlock Pro and Power features like tax export, Monarch Money sync, and more.
+      </p>
+
+      {{if .AutoActivateKey}}
+      <div class="alert alert-success" style="margin-bottom: 12px;">
+        License activated! Your tier: <strong>{{.Tier}}</strong>
+      </div>
+      {{end}}
+
+      <div style="margin-bottom: 12px;">
+        <span style="font-size: 0.85rem; color: #aaa;">Current Tier:</span>
+        <span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>
+      </div>
+
+      {{if .LicenseKey}}
+      <div style="margin-bottom: 12px;">
+        <span style="font-size: 0.85rem; color: #aaa;">License Key:</span>
+        <code style="margin-left: 4px;">{{.LicenseKey}}</code>
+      </div>
+      <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+        <button hx-post="/api/settings/license/verify" hx-target="#license-result" class="btn btn-primary" style="font-size: 0.85rem;">
+          Verify License
+        </button>
+      </div>
+      {{end}}
+
+      {{if not (tierAtLeast .Tier "pro")}}
+      <div style="margin-bottom: 12px;">
+        <a href="https://satsbook.io" target="_blank"
+           style="display: inline-block; padding: 8px 20px; border-radius: var(--radius, 6px); background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+          Subscribe to Pro
+        </a>
+        <span style="color: #666; font-size: 0.8rem; margin-left: 8px;">$9/month — tax export, cost basis tracking</span>
+      </div>
+      {{end}}
+
+      <details style="margin-top: 8px;">
+        <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Enter license key manually</summary>
+        <form hx-post="/api/settings/license" hx-target="#license-result" style="display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; max-width: 500px;">
+          <input type="text" name="license_key" placeholder="sk_..." style="flex: 1; font-size: 0.85rem;" required>
+          <button type="submit" class="btn btn-primary" style="font-size: 0.85rem;">Activate</button>
+        </form>
+      </details>
+
+      <div id="license-result" style="margin-top: 12px;"></div>
+    </section>
+
     <section class="card" style="margin-top: 16px;">
       <h3>Monarch Money Integration <span class="tier-badge tier-power">power</span></h3>
       <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">

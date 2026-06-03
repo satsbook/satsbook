@@ -50,26 +50,33 @@ func main() {
 	defer database.Close()
 	log.Printf("database initialized at %s", cfg.DatabasePath)
 
-	// Initialize license checker
-	var licenseChecker license.Checker
-	if cfg.LicenseKey != "" {
-		licenseLogger := log.New(os.Stdout, "[license] ", log.LstdFlags)
-		lc := license.NewChecker(
-			&licenseStoreAdapter{db: database},
-			cfg.LicenseKey,
-			license.WithValidationURL(cfg.LicenseValidationURL),
-			license.WithLogger(licenseLogger),
-		)
+	// Initialize license checker — always use DefaultChecker so keys can be
+	// activated at runtime from the settings page without restarting.
+	licenseKey := cfg.LicenseKey
+	if licenseKey == "" {
+		// Fall back to license key stored in the settings DB.
+		if dbKey, _ := database.GetSetting(context.Background(), "license_key"); dbKey != "" {
+			licenseKey = dbKey
+			log.Printf("License key loaded from database settings")
+		}
+	}
+	licenseLogger := log.New(os.Stdout, "[license] ", log.LstdFlags)
+	lc := license.NewChecker(
+		&licenseStoreAdapter{db: database},
+		licenseKey,
+		license.WithValidationURL(cfg.LicenseValidationURL),
+		license.WithLogger(licenseLogger),
+	)
+	if licenseKey != "" {
 		if err := lc.Verify(context.Background()); err != nil {
 			log.Printf("WARNING: license verification failed: %v — defaulting to free tier", err)
 		} else {
 			log.Printf("License tier: %s", lc.CurrentTier())
 		}
-		licenseChecker = lc
 	} else {
-		licenseChecker = license.FreeChecker{}
 		log.Printf("No license key configured — running free tier")
 	}
+	var licenseChecker license.Checker = lc
 
 	// Initialize price cache
 	priceCache := price.NewCache(price.WithAPIURL(cfg.PriceAPIURL))
@@ -106,6 +113,7 @@ func main() {
 	handler.SetTransactionStore(database)
 	handler.SetMonarchTxStore(database)
 	handler.SetTaxStore(database)
+	handler.SetLicenseChecker(lc)
 	monarchToken, _ := database.GetSetting(context.Background(), "monarch_token")
 	if monarchToken == "" {
 		monarchToken = cfg.MonarchToken // fall back to env var

@@ -53,6 +53,8 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/wallets/refresh", handler.HandleRefreshWallet)
 	mux.HandleFunc("/api/wallets/refresh-all", handler.HandleRefreshAll)
 	mux.HandleFunc("/api/portfolio/backfill", handler.HandlePortfolioBackfill)
+	mux.HandleFunc("/api/settings/license", handler.HandleLicenseActivate)
+	mux.HandleFunc("/api/settings/license/verify", handler.HandleLicenseVerify)
 	mux.HandleFunc("/api/transactions/note", handler.HandleTransactionNoteSave)
 	mux.HandleFunc("/api/transactions/note/edit", handler.HandleTransactionNoteEdit)
 	mux.Handle("/api/import/strike/clear", handler.HandleClearImport("strike"))

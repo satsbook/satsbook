@@ -1502,11 +1502,15 @@ func parseDateParam(r *http.Request, key string, defaultVal time.Time) (time.Tim
 // SettingsPageData holds data for the settings page.
 type SettingsPageData struct {
 	Tier             string
+	LicenseKey       string // masked
+	CheckoutURL      string // Stripe checkout URL for subscribing
 	MonarchToken     string
 	MonarchConnected bool
 	MonarchUnlocked  bool
 	Message          string
 	Error            string
+	// Auto-activation from Stripe redirect
+	AutoActivateKey  string
 	// Monarch transaction sync
 	MonarchSyncTypes    []string // currently selected tx types
 	MonarchSyncSources  []string // currently selected sources
@@ -1517,11 +1521,31 @@ type SettingsPageData struct {
 
 // HandleSettingsPage serves GET /settings.
 func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
-	tier := TierFromContext(r.Context())
+	ctx := r.Context()
+	tier := TierFromContext(ctx)
+
+	// Handle auto-activation from Stripe redirect (?license_key=sk_xxx)
+	autoKey := r.URL.Query().Get("license_key")
+	if autoKey != "" && h.settingsStore != nil && h.licenseChecker != nil {
+		_ = h.settingsStore.SetSetting(ctx, "license_key", autoKey)
+		if err := h.licenseChecker.SetKeyAndVerify(ctx, autoKey); err != nil {
+			h.logger.Printf("auto-activate license: %v", err)
+		} else {
+			tier = h.licenseChecker.CurrentTier()
+		}
+	}
+
 	data := SettingsPageData{
 		Tier:            string(tier),
 		MonarchUnlocked: license.TierAtLeast(tier, license.TierPower),
+		AutoActivateKey: autoKey,
 	}
+
+	// Show masked license key
+	if h.licenseChecker != nil && h.licenseChecker.LicenseKey() != "" {
+		data.LicenseKey = maskToken(h.licenseChecker.LicenseKey())
+	}
+
 	if data.MonarchUnlocked && h.settingsStore != nil {
 		token, _ := h.settingsStore.GetSetting(r.Context(), "monarch_token")
 		if token != "" {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/exchange"
+	"github.com/satsbook/satsbook/internal/license"
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
 	"github.com/satsbook/satsbook/internal/tax"
@@ -116,6 +117,7 @@ type Handler struct {
 	monarchSyncer    MonarchSyncer
 	monarchTxStore   MonarchTxStore
 	taxStore         TaxStore
+	licenseChecker   *license.DefaultChecker
 	onMonarchChange  func(MonarchSyncer)
 	pendingMonarch   *monarch.PendingClient
 	logger           *log.Logger
@@ -182,6 +184,11 @@ func (h *Handler) SetMonarchSyncer(ms MonarchSyncer) {
 // SetTaxStore sets the tax store for cost basis calculations.
 func (h *Handler) SetTaxStore(ts TaxStore) {
 	h.taxStore = ts
+}
+
+// SetLicenseChecker sets the license checker for runtime activation.
+func (h *Handler) SetLicenseChecker(lc *license.DefaultChecker) {
+	h.licenseChecker = lc
 }
 
 // OnMonarchChange registers a callback invoked when the Monarch syncer changes.
@@ -1089,4 +1096,74 @@ func (h *Handler) HandleTaxSummary(w http.ResponseWriter, r *http.Request) {
 	summary := tax.Summarize(result)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(summary)
+}
+
+// HandleLicenseActivate handles POST /api/settings/license.
+// Accepts a license key, saves it to settings, and verifies it.
+func (h *Handler) HandleLicenseActivate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := r.FormValue("license_key")
+	if key == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="alert alert-error">License key is required.</div>`)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Save to settings DB
+	if h.settingsStore != nil {
+		if err := h.settingsStore.SetSetting(ctx, "license_key", key); err != nil {
+			h.logger.Printf("license: save setting: %v", err)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, `<div class="alert alert-error">Failed to save license key.</div>`)
+			return
+		}
+	}
+
+	// Verify with license server
+	if h.licenseChecker != nil {
+		if err := h.licenseChecker.SetKeyAndVerify(ctx, key); err != nil {
+			h.logger.Printf("license: verify: %v", err)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<div class="alert alert-warning">Key saved but verification failed: %s. It will be retried automatically.</div>`, err)
+			return
+		}
+		tier := h.licenseChecker.CurrentTier()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<div class="alert alert-success">License activated! Tier: <strong>%s</strong>. Refresh the page to see your new features.</div>`, tier)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<div class="alert alert-success">License key saved. Restart the app to activate.</div>`)
+}
+
+// HandleLicenseVerify handles POST /api/settings/license/verify.
+// Re-verifies the current license key with the license server.
+func (h *Handler) HandleLicenseVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.licenseChecker == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="alert alert-error">No license checker configured.</div>`)
+		return
+	}
+
+	if err := h.licenseChecker.Verify(r.Context()); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<div class="alert alert-error">Verification failed: %s</div>`, err)
+		return
+	}
+
+	tier := h.licenseChecker.CurrentTier()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div class="alert alert-success">License verified. Tier: <strong>%s</strong></div>`, tier)
 }
