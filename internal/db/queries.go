@@ -1636,18 +1636,20 @@ type DisposalRow struct {
 	ExternalID  string
 }
 
-// ListDisposals returns all disposal events (sales, sends) from exchange_imports.
+// ListDisposals returns disposal events (sales only) from exchange_imports.
+// Sends and withdrawals are excluded because they are typically self-transfers
+// (e.g. exchange → personal wallet) and not taxable events.
 func (d *DB) ListDisposals(ctx context.Context) ([]DisposalRow, error) {
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT
 			COALESCE(json_extract(raw_data, '$.Date'), imported_at) as tx_date,
 			ABS(COALESCE(json_extract(raw_data, '$.AmountBTC'), 0)) as abs_btc,
-			COALESCE(json_extract(raw_data, '$.AmountUSD'), 0) as amount_usd,
+			ABS(COALESCE(json_extract(raw_data, '$.AmountUSD'), 0)) as amount_usd,
 			tx_type,
 			source,
 			external_id
 		 FROM exchange_imports
-		 WHERE tx_type IN ('sale', 'sell', 'send', 'withdrawal')
+		 WHERE tx_type IN ('sale', 'sell')
 		   AND COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0
 		 ORDER BY tx_date ASC`)
 	if err != nil {
