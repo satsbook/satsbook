@@ -1,4 +1,7 @@
 {{define "tax_content"}}
+{{if not (tierAtLeast .Tier "pro")}}
+{{template "upgrade_required" dict "RequiredTier" "pro" "CurrentTier" .Tier}}
+{{else}}
 <!-- Disclaimer -->
 <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem; color: var(--text-muted);">
   This report is for informational purposes only and does not constitute tax, legal, or financial advice. Consult a qualified tax professional before filing.
@@ -79,6 +82,7 @@ function formatUSD(n) {
   return neg ? '-' + str : str;
 }
 </script>
+{{end}}
 {{end}}
 
 {{define "tax_summary_cards"}}
