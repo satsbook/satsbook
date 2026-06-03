@@ -32,6 +32,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/partials/forwarding", handler.HandleForwardingPartial)
 	mux.HandleFunc("/partials/portfolio-chart", handler.HandlePortfolioChartPartial)
 	mux.HandleFunc("/settings", handler.HandleSettingsPage)
+	mux.HandleFunc("/tax", handler.HandleTaxPage)
 	mux.HandleFunc("/transactions", handler.HandleTransactionsPage)
 
 	// Static assets (embedded)
