@@ -2734,3 +2734,385 @@ func TestUnifiedTransactionsWithNotes(t *testing.T) {
 		t.Errorf("expected note 'my routing note', got %q", page.Transactions[0].Note)
 	}
 }
+
+func TestListBTCLots(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Insert lots directly
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id) VALUES
+		 (?, 100000, 50.00, 'strike', 'tx1'),
+		 (?, 200000, 120.00, 'river', 'tx2')`,
+		time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lots, err := d.ListBTCLots(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lots) != 2 {
+		t.Fatalf("expected 2 lots, got %d", len(lots))
+	}
+	// Should be ordered by acquired_at ASC
+	if lots[0].Source != "strike" || lots[0].AmountSat != 100000 {
+		t.Errorf("lot 0: source=%s amount=%d", lots[0].Source, lots[0].AmountSat)
+	}
+	if lots[1].Source != "river" || lots[1].AmountSat != 200000 {
+		t.Errorf("lot 1: source=%s amount=%d", lots[1].Source, lots[1].AmountSat)
+	}
+	if lots[0].PriceUSD != 50.00 {
+		t.Errorf("lot 0 price: %f", lots[0].PriceUSD)
+	}
+}
+
+func TestListBTCLots_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	lots, err := d.ListBTCLots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lots) != 0 {
+		t.Errorf("expected 0 lots, got %d", len(lots))
+	}
+}
+
+func TestListDisposals(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Insert exchange_imports with sale and non-sale types
+	for _, tc := range []struct {
+		txType string
+		extID  string
+		raw    string
+	}{
+		{"Sale", "s1", `{"Date":"2024-06-01T10:00:00Z","AmountBTC":-0.01,"AmountUSD":500}`},
+		{"sell", "s2", `{"Date":"2024-07-01T10:00:00Z","AmountBTC":-0.02,"AmountUSD":1200}`},
+		{"send", "s3", `{"Date":"2024-08-01T10:00:00Z","AmountBTC":-0.005,"AmountUSD":0}`},
+		{"Purchase", "p1", `{"Date":"2024-01-01T10:00:00Z","AmountBTC":0.05,"AmountUSD":2000}`},
+	} {
+		_, err := d.db.ExecContext(ctx,
+			`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data) VALUES ('strike', ?, ?, ?)`,
+			tc.extID, tc.txType, tc.raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	disposals, err := d.ListDisposals(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only Sale and sell should be included (not send, not Purchase)
+	if len(disposals) != 2 {
+		t.Fatalf("expected 2 disposals, got %d", len(disposals))
+	}
+	// Ordered by date ASC
+	if disposals[0].AmountSat != 1_000_000 { // 0.01 BTC
+		t.Errorf("disposal 0 amount: %d", disposals[0].AmountSat)
+	}
+	if disposals[0].ProceedsUSD != 500 {
+		t.Errorf("disposal 0 proceeds: %f", disposals[0].ProceedsUSD)
+	}
+	if disposals[1].AmountSat != 2_000_000 { // 0.02 BTC
+		t.Errorf("disposal 1 amount: %d", disposals[1].AmountSat)
+	}
+}
+
+func TestListDisposals_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	disposals, err := d.ListDisposals(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disposals) != 0 {
+		t.Errorf("expected 0 disposals, got %d", len(disposals))
+	}
+}
+
+func TestSaveDisposals(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	events := []struct {
+		DisposedAt  time.Time
+		AmountSat   int64
+		ProceedsUSD float64
+		LotID       int64
+	}{
+		{time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC), 500_000, 300.00, 1},
+		{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC), 200_000, 150.00, 2},
+	}
+
+	if err := d.SaveDisposals(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify rows were inserted
+	var count int
+	d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM disposals`).Scan(&count)
+	if count != 2 {
+		t.Errorf("expected 2 disposals, got %d", count)
+	}
+
+	// Save again — should clear and rewrite
+	if err := d.SaveDisposals(ctx, events[:1]); err != nil {
+		t.Fatal(err)
+	}
+	d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM disposals`).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 disposal after re-save, got %d", count)
+	}
+}
+
+func TestSaveDisposals_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	if err := d.SaveDisposals(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	d.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM disposals`).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0, got %d", count)
+	}
+}
+
+// --- Settings tests ---
+
+func TestGetSetting_NotFound(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	val, err := d.GetSetting(context.Background(), "nonexistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "" {
+		t.Errorf("expected empty string, got %q", val)
+	}
+}
+
+func TestSetAndGetSetting(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	if err := d.SetSetting(ctx, "theme", "dark"); err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := d.GetSetting(ctx, "theme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "dark" {
+		t.Errorf("expected %q, got %q", "dark", val)
+	}
+
+	// Upsert: overwrite same key
+	if err := d.SetSetting(ctx, "theme", "light"); err != nil {
+		t.Fatal(err)
+	}
+	val, err = d.GetSetting(ctx, "theme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "light" {
+		t.Errorf("expected %q after upsert, got %q", "light", val)
+	}
+}
+
+// --- Monarch sync tests ---
+
+func seedExchangeImport(t *testing.T, d *DB, source, externalID, txType string, amountBTC, amountUSD float64, date string) {
+	t.Helper()
+	raw := fmt.Sprintf(`{"AmountBTC": %f, "AmountUSD": %f, "Date": %q}`, amountBTC, amountUSD, date)
+	_, err := d.db.ExecContext(context.Background(),
+		`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data) VALUES (?, ?, ?, ?)`,
+		source, externalID, txType, raw)
+	if err != nil {
+		t.Fatalf("seed exchange import: %v", err)
+	}
+}
+
+func TestMarkTransactionSynced(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	if err := d.MarkTransactionSynced(ctx, "strike:1:buy", "monarch_abc"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Duplicate insert should be ignored
+	if err := d.MarkTransactionSynced(ctx, "strike:1:buy", "monarch_abc"); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := d.MonarchSyncedCount(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1, got %d", count)
+	}
+}
+
+func TestMonarchSyncedCount_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	count, err := d.MonarchSyncedCount(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0, got %d", count)
+	}
+}
+
+func TestClearMonarchSyncState(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed some synced records
+	for i := range 3 {
+		if err := d.MarkTransactionSynced(ctx, fmt.Sprintf("src:%d:buy", i), fmt.Sprintf("m_%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, _ := d.MonarchSyncedCount(ctx)
+	if count != 3 {
+		t.Fatalf("expected 3 before clear, got %d", count)
+	}
+
+	if err := d.ClearMonarchSyncState(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	count, _ = d.MonarchSyncedCount(ctx)
+	if count != 0 {
+		t.Errorf("expected 0 after clear, got %d", count)
+	}
+}
+
+func TestListUnsyncedTransactions(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed exchange imports (these feed btc_transactions_v)
+	seedExchangeImport(t, d, "strike", "tx1", "Purchase", 0.001, 50.00, "2024-01-01T12:00:00Z")
+	seedExchangeImport(t, d, "strike", "tx2", "Sale", 0.002, 100.00, "2024-01-02T12:00:00Z")
+	seedExchangeImport(t, d, "strike", "tx3", "Purchase", 0.003, 150.00, "2024-01-03T12:00:00Z")
+
+	// All should be unsynced initially
+	txns, err := d.ListUnsyncedTransactions(ctx, []string{"buy", "sell"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txns) != 3 {
+		t.Fatalf("expected 3 unsynced, got %d", len(txns))
+	}
+
+	// Mark one as synced
+	if err := d.MarkTransactionSynced(ctx, txns[0].SourceID, "monarch_1"); err != nil {
+		t.Fatal(err)
+	}
+
+	txns, err = d.ListUnsyncedTransactions(ctx, []string{"buy", "sell"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(txns) != 2 {
+		t.Errorf("expected 2 unsynced after marking one, got %d", len(txns))
+	}
+
+	// Filter by source
+	txns, err = d.ListUnsyncedTransactions(ctx, []string{"buy"}, []string{"strike"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// tx1 was synced, tx3 is a buy from strike
+	if len(txns) != 1 {
+		t.Errorf("expected 1 unsynced buy from strike, got %d", len(txns))
+	}
+}
+
+func TestListUnsyncedTransactions_EmptyTypes(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	txns, err := d.ListUnsyncedTransactions(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if txns != nil {
+		t.Errorf("expected nil for empty txTypes, got %v", txns)
+	}
+}
+
+// --- DistinctTransactionValues tests ---
+
+func TestDistinctTransactionValues_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	sources, txTypes, err := d.DistinctTransactionValues(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 0 {
+		t.Errorf("expected no sources, got %v", sources)
+	}
+	if len(txTypes) != 0 {
+		t.Errorf("expected no txTypes, got %v", txTypes)
+	}
+}
+
+func TestDistinctTransactionValues(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	seedExchangeImport(t, d, "strike", "a1", "Purchase", 0.001, 50.0, "2024-01-01T12:00:00Z")
+	seedExchangeImport(t, d, "strike", "a2", "Sale", 0.002, 100.0, "2024-01-02T12:00:00Z")
+	seedExchangeImport(t, d, "river", "b1", "Purchase", 0.003, 150.0, "2024-01-03T12:00:00Z")
+
+	sources, txTypes, err := d.DistinctTransactionValues(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sources: river, strike (alphabetical)
+	if len(sources) != 2 {
+		t.Fatalf("expected 2 sources, got %d: %v", len(sources), sources)
+	}
+	if sources[0] != "river" || sources[1] != "strike" {
+		t.Errorf("unexpected sources: %v", sources)
+	}
+
+	// TxTypes: buy, sell (the view normalizes Purchase→buy, Sale→sell)
+	if len(txTypes) != 2 {
+		t.Fatalf("expected 2 txTypes, got %d: %v", len(txTypes), txTypes)
+	}
+	if txTypes[0] != "buy" || txTypes[1] != "sell" {
+		t.Errorf("unexpected txTypes: %v", txTypes)
+	}
+}
+

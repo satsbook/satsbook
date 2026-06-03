@@ -1591,3 +1591,123 @@ func (d *DB) ClearMonarchSyncState(ctx context.Context) error {
 	_, err := d.db.ExecContext(ctx, `DELETE FROM monarch_tx_sync`)
 	return err
 }
+
+// --- Tax / Cost Basis Queries ---
+
+// BTCLot represents a row from the btc_lots table.
+type BTCLot struct {
+	ID         int64
+	AcquiredAt time.Time
+	AmountSat  int64
+	PriceUSD   float64
+	Source     string
+	ExternalID string
+}
+
+// ListBTCLots returns all BTC acquisition lots, ordered by acquisition date.
+func (d *DB) ListBTCLots(ctx context.Context) ([]BTCLot, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, acquired_at, amount_sat, price_usd, source, COALESCE(external_id, '')
+		 FROM btc_lots
+		 ORDER BY acquired_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list btc lots: %w", err)
+	}
+	defer rows.Close()
+
+	var lots []BTCLot
+	for rows.Next() {
+		var l BTCLot
+		if err := rows.Scan(&l.ID, &l.AcquiredAt, &l.AmountSat, &l.PriceUSD, &l.Source, &l.ExternalID); err != nil {
+			return nil, fmt.Errorf("scan btc lot: %w", err)
+		}
+		lots = append(lots, l)
+	}
+	return lots, rows.Err()
+}
+
+// DisposalRow represents a sale or send from exchange_imports.
+type DisposalRow struct {
+	DisposedAt  time.Time
+	AmountSat   int64
+	ProceedsUSD float64
+	TxType      string
+	Source      string
+	ExternalID  string
+}
+
+// ListDisposals returns disposal events (sales only) from exchange_imports.
+// Sends and withdrawals are excluded because they are typically self-transfers
+// (e.g. exchange → personal wallet) and not taxable events.
+func (d *DB) ListDisposals(ctx context.Context) ([]DisposalRow, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT
+			COALESCE(json_extract(raw_data, '$.Date'), imported_at) as tx_date,
+			ABS(COALESCE(json_extract(raw_data, '$.AmountBTC'), 0)) as abs_btc,
+			ABS(COALESCE(json_extract(raw_data, '$.AmountUSD'), 0)) as amount_usd,
+			tx_type,
+			source,
+			external_id
+		 FROM exchange_imports
+		 WHERE LOWER(tx_type) IN ('sale', 'sell')
+		   AND COALESCE(json_extract(raw_data, '$.AmountBTC'), 0) != 0
+		 ORDER BY tx_date ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list disposals: %w", err)
+	}
+	defer rows.Close()
+
+	var disposals []DisposalRow
+	for rows.Next() {
+		var d DisposalRow
+		var dateStr string
+		var absBTC float64
+		if err := rows.Scan(&dateStr, &absBTC, &d.ProceedsUSD, &d.TxType, &d.Source, &d.ExternalID); err != nil {
+			return nil, fmt.Errorf("scan disposal: %w", err)
+		}
+		d.DisposedAt, _ = time.Parse(time.RFC3339, dateStr)
+		if d.DisposedAt.IsZero() {
+			d.DisposedAt, _ = time.Parse("2006-01-02T15:04:05Z", dateStr)
+		}
+		d.AmountSat = int64(math.Round(absBTC * 1e8))
+		if d.ProceedsUSD < 0 {
+			d.ProceedsUSD = -d.ProceedsUSD
+		}
+		disposals = append(disposals, d)
+	}
+	return disposals, rows.Err()
+}
+
+// SaveDisposals writes matched disposal events to the disposals table.
+// It clears existing disposals first (full recalculation).
+func (d *DB) SaveDisposals(ctx context.Context, events []struct {
+	DisposedAt  time.Time
+	AmountSat   int64
+	ProceedsUSD float64
+	LotID       int64
+}) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM disposals`); err != nil {
+		return fmt.Errorf("clear disposals: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO disposals (disposed_at, amount_sat, proceeds_usd, lot_id) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, e := range events {
+		if _, err := stmt.ExecContext(ctx, e.DisposedAt, e.AmountSat, e.ProceedsUSD, e.LotID); err != nil {
+			return fmt.Errorf("insert disposal: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}

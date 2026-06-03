@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,8 +12,10 @@ import (
 
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/exchange"
+	"github.com/satsbook/satsbook/internal/license"
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
+	"github.com/satsbook/satsbook/internal/tax"
 )
 
 // DashboardStore defines the read operations needed by dashboard handlers.
@@ -96,6 +99,12 @@ type MonarchTxStore interface {
 	DistinctTransactionValues(ctx context.Context) (sources []string, txTypes []string, err error)
 }
 
+// TaxStore defines DB operations for tax/cost basis calculations.
+type TaxStore interface {
+	ListBTCLots(ctx context.Context) ([]db.BTCLot, error)
+	ListDisposals(ctx context.Context) ([]db.DisposalRow, error)
+}
+
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
 	store            DashboardStore
@@ -108,6 +117,9 @@ type Handler struct {
 	txStore          TransactionStore
 	monarchSyncer    MonarchSyncer
 	monarchTxStore   MonarchTxStore
+	taxStore         TaxStore
+	licenseChecker   *license.DefaultChecker
+	checkoutBaseURL  string // e.g. "https://api.satsbook.io"
 	onMonarchChange  func(MonarchSyncer)
 	pendingMonarch   *monarch.PendingClient
 	logger           *log.Logger
@@ -169,6 +181,21 @@ func (h *Handler) SetMonarchSyncer(ms MonarchSyncer) {
 	if h.onMonarchChange != nil {
 		h.onMonarchChange(ms)
 	}
+}
+
+// SetTaxStore sets the tax store for cost basis calculations.
+func (h *Handler) SetTaxStore(ts TaxStore) {
+	h.taxStore = ts
+}
+
+// SetLicenseChecker sets the license checker for runtime activation.
+func (h *Handler) SetLicenseChecker(lc *license.DefaultChecker) {
+	h.licenseChecker = lc
+}
+
+// SetCheckoutBaseURL sets the base URL for the license server (e.g. "https://api.satsbook.io").
+func (h *Handler) SetCheckoutBaseURL(url string) {
+	h.checkoutBaseURL = url
 }
 
 // OnMonarchChange registers a callback invoked when the Monarch syncer changes.
@@ -914,4 +941,298 @@ func (h *Handler) HandleClearImport(source string) http.HandlerFunc {
 			h.logger.Printf("failed to render clear result: %v", err)
 		}
 	}
+}
+
+// HandleTaxExport generates and downloads a Form 8949 CSV file.
+func (h *Handler) HandleTaxExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.taxStore == nil {
+		http.Error(w, "tax export not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Load lots from DB.
+	dbLots, err := h.taxStore.ListBTCLots(ctx)
+	if err != nil {
+		h.logger.Printf("tax export: list lots: %v", err)
+		http.Error(w, "failed to load lots", http.StatusInternalServerError)
+		return
+	}
+
+	// Load disposals from DB.
+	dbDisposals, err := h.taxStore.ListDisposals(ctx)
+	if err != nil {
+		h.logger.Printf("tax export: list disposals: %v", err)
+		http.Error(w, "failed to load disposals", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to tax engine types.
+	lots := make([]tax.Lot, len(dbLots))
+	for i, l := range dbLots {
+		lots[i] = tax.Lot{
+			ID:         l.ID,
+			AcquiredAt: l.AcquiredAt,
+			AmountSat:  l.AmountSat,
+			PriceUSD:   l.PriceUSD,
+			Source:     l.Source,
+			ExternalID: l.ExternalID,
+		}
+	}
+
+	disposals := make([]tax.Disposal, len(dbDisposals))
+	for i, d := range dbDisposals {
+		disposals[i] = tax.Disposal{
+			DisposedAt:  d.DisposedAt,
+			AmountSat:   d.AmountSat,
+			ProceedsUSD: d.ProceedsUSD,
+			TxType:      d.TxType,
+			Source:      d.Source,
+			ExternalID:  d.ExternalID,
+		}
+	}
+
+	// Determine method (default FIFO).
+	method := tax.FIFO
+	if m := r.URL.Query().Get("method"); m == "lifo" {
+		method = tax.LIFO
+	}
+
+	// Run the cost basis engine.
+	result, err := tax.Match(lots, disposals, method)
+	if err != nil {
+		h.logger.Printf("tax export: match: %v", err)
+		http.Error(w, "failed to calculate cost basis", http.StatusInternalServerError)
+		return
+	}
+
+	// Filter by tax year if specified.
+	year := r.URL.Query().Get("year")
+	if year != "" {
+		yearInt, err := strconv.Atoi(year)
+		if err == nil {
+			var filtered []tax.TaxableEvent
+			for _, e := range result.Events {
+				if e.DisposedAt.Year() == yearInt {
+					filtered = append(filtered, e)
+				}
+			}
+			result.Events = filtered
+		}
+	}
+
+	// Return JSON summary or CSV download.
+	format := r.URL.Query().Get("format")
+	if format == "json" {
+		summary := tax.Summarize(result)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"summary":      summary,
+			"events_count": len(result.Events),
+			"method":       string(method),
+		})
+		return
+	}
+
+	// Default: CSV download.
+	filename := "form8949"
+	if year != "" {
+		filename += "_" + year
+	}
+	filename += "_" + string(method) + ".csv"
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	if err := tax.WriteForm8949CSV(w, result.Events); err != nil {
+		h.logger.Printf("tax export: write csv: %v", err)
+	}
+}
+
+// HandleTaxSummary returns a JSON summary of tax calculations.
+func (h *Handler) HandleTaxSummary(w http.ResponseWriter, r *http.Request) {
+	if h.taxStore == nil {
+		http.Error(w, "tax not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+	dbLots, err := h.taxStore.ListBTCLots(ctx)
+	if err != nil {
+		http.Error(w, "failed to load lots", http.StatusInternalServerError)
+		return
+	}
+
+	dbDisposals, err := h.taxStore.ListDisposals(ctx)
+	if err != nil {
+		http.Error(w, "failed to load disposals", http.StatusInternalServerError)
+		return
+	}
+
+	lots := make([]tax.Lot, len(dbLots))
+	for i, l := range dbLots {
+		lots[i] = tax.Lot{
+			ID: l.ID, AcquiredAt: l.AcquiredAt, AmountSat: l.AmountSat,
+			PriceUSD: l.PriceUSD, Source: l.Source, ExternalID: l.ExternalID,
+		}
+	}
+	disposals := make([]tax.Disposal, len(dbDisposals))
+	for i, d := range dbDisposals {
+		disposals[i] = tax.Disposal{
+			DisposedAt: d.DisposedAt, AmountSat: d.AmountSat, ProceedsUSD: d.ProceedsUSD,
+			TxType: d.TxType, Source: d.Source, ExternalID: d.ExternalID,
+		}
+	}
+
+	method := tax.FIFO
+	if m := r.URL.Query().Get("method"); m == "lifo" {
+		method = tax.LIFO
+	}
+
+	result, err := tax.Match(lots, disposals, method)
+	if err != nil {
+		http.Error(w, "failed to calculate", http.StatusInternalServerError)
+		return
+	}
+
+	summary := tax.Summarize(result)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
+}
+
+// HandleLicenseActivate handles POST /api/settings/license.
+// Accepts a license key, saves it to settings, and verifies it.
+func (h *Handler) HandleLicenseActivate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := r.FormValue("license_key")
+	if key == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="alert alert-error">License key is required.</div>`)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Save to settings DB
+	if h.settingsStore != nil {
+		if err := h.settingsStore.SetSetting(ctx, "license_key", key); err != nil {
+			h.logger.Printf("license: save setting: %v", err)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, `<div class="alert alert-error">Failed to save license key.</div>`)
+			return
+		}
+	}
+
+	// Verify with license server
+	if h.licenseChecker != nil {
+		if err := h.licenseChecker.SetKeyAndVerify(ctx, key); err != nil {
+			h.logger.Printf("license: verify: %v", err)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<div class="alert alert-warning">Key saved but verification failed: %s. It will be retried automatically.</div>`, err)
+			return
+		}
+		tier := h.licenseChecker.CurrentTier()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<div class="alert alert-success">License activated! Tier: <strong>%s</strong>. Refresh the page to see your new features.</div>`, tier)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<div class="alert alert-success">License key saved. Restart the app to activate.</div>`)
+}
+
+// HandleLicenseVerify handles POST /api/settings/license/verify.
+// Re-verifies the current license key with the license server.
+func (h *Handler) HandleLicenseVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.licenseChecker == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="alert alert-error">No license checker configured.</div>`)
+		return
+	}
+
+	if err := h.licenseChecker.Verify(r.Context()); err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<div class="alert alert-error">Verification failed: %s</div>`, err)
+		return
+	}
+
+	tier := h.licenseChecker.CurrentTier()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div class="alert alert-success">License verified. Tier: <strong>%s</strong></div>`, tier)
+}
+
+// HandleSubscribe handles GET /api/subscribe?tier=pro|power.
+// It calls the license server's checkout API and redirects to Stripe Checkout.
+func (h *Handler) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
+	tier := r.URL.Query().Get("tier")
+	if tier != "pro" && tier != "power" {
+		http.Error(w, "invalid tier — must be pro or power", http.StatusBadRequest)
+		return
+	}
+
+	if h.checkoutBaseURL == "" {
+		http.Error(w, "subscription not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Build the return URL — after Stripe payment, redirect back to our settings page
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	returnURL := fmt.Sprintf("%s://%s/settings", scheme, r.Host)
+
+	// Call the license server's checkout endpoint
+	reqBody, _ := json.Marshal(map[string]string{
+		"tier":       tier,
+		"return_url": returnURL,
+	})
+
+	ctx := r.Context()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.checkoutBaseURL+"/v1/checkout", bytes.NewReader(reqBody))
+	if err != nil {
+		h.logger.Printf("subscribe: create request: %v", err)
+		http.Error(w, "failed to create checkout", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.logger.Printf("subscribe: call checkout API: %v", err)
+		http.Error(w, "failed to reach subscription service", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		h.logger.Printf("subscribe: checkout API returned %d", resp.StatusCode)
+		http.Error(w, "subscription service error", http.StatusBadGateway)
+		return
+	}
+
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.URL == "" {
+		h.logger.Printf("subscribe: decode response: %v", err)
+		http.Error(w, "invalid response from subscription service", http.StatusBadGateway)
+		return
+	}
+
+	http.Redirect(w, r, result.URL, http.StatusFound)
 }

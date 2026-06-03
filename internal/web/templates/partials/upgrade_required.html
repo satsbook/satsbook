@@ -8,6 +8,14 @@
     {{else if eq .CurrentTier "pro"}}
     <p class="upgrade-hint">You are currently on the <strong>Pro</strong> tier. Upgrade to <strong>Power</strong> to unlock this feature.</p>
     {{end}}
-    <p class="upgrade-cta">Set <code>SATSBOOK_LICENSE_KEY</code> in your Umbrel environment to activate.</p>
+    <div style="margin-top: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+      <a href="/api/subscribe?tier={{.RequiredTier}}"
+         style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+        Subscribe to {{if eq .RequiredTier "power"}}Power{{else}}Pro{{end}}
+      </a>
+      <a href="/settings" style="color: #4fc3f7; font-size: 0.85rem;">
+        Already have a key? Go to Settings
+      </a>
+    </div>
 </div>
 {{end}}

@@ -105,6 +105,18 @@ func (c *DefaultChecker) CurrentTier() Tier {
 	return c.currentTier.Load().(Tier)
 }
 
+// SetKeyAndVerify updates the license key at runtime and re-verifies.
+// This allows activating a license without restarting the app.
+func (c *DefaultChecker) SetKeyAndVerify(ctx context.Context, key string) error {
+	c.licenseKey = key
+	return c.Verify(ctx)
+}
+
+// LicenseKey returns the currently configured license key.
+func (c *DefaultChecker) LicenseKey() string {
+	return c.licenseKey
+}
+
 func (c *DefaultChecker) setTier(t Tier) {
 	c.currentTier.Store(t)
 }

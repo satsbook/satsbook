@@ -123,6 +123,8 @@ func NewRenderer() *Renderer {
 			"templates/wallets_layout.html",
 			"templates/exchange_detail.html",
 			"templates/wallet_detail.html",
+			"templates/tax_layout.html",
+			"templates/tax.html",
 			"templates/settings_layout.html",
 			"templates/transactions_layout.html",
 			"templates/partials/transaction_note.html",

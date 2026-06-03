@@ -1,0 +1,163 @@
+{{define "tax_content"}}
+{{if not (tierAtLeast .Tier "pro")}}
+<div class="upgrade-required">
+    <div class="upgrade-icon">&#x1f512;</div>
+    <h3>Pro Feature</h3>
+    <p>Tax export requires a paid subscription.</p>
+    <p class="upgrade-hint" style="margin-bottom: 16px;">You are currently on the <strong>Free</strong> tier.</p>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+      <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
+        <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Pro</h4>
+        <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+          <li>FIFO / LIFO cost basis engine</li>
+          <li>Form 8949 CSV export</li>
+          <li>Tax summary dashboard</li>
+        </ul>
+        <a href="/api/subscribe?tier=pro"
+           style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+          Subscribe to Pro
+        </a>
+      </div>
+      <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
+        <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Power</h4>
+        <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+          <li>Everything in Pro</li>
+          <li>Monarch Money net worth sync</li>
+          <li>Transaction export to Monarch</li>
+        </ul>
+        <a href="/api/subscribe?tier=power"
+           style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+          Subscribe to Power
+        </a>
+      </div>
+    </div>
+
+    <a href="/settings" style="color: #4fc3f7; font-size: 0.85rem;">
+      Already have a key? Go to Settings
+    </a>
+</div>
+{{else}}
+<!-- Disclaimer -->
+<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem; color: var(--text-muted);">
+  This report is for informational purposes only and does not constitute tax, legal, or financial advice. Consult a qualified tax professional before filing.
+</div>
+
+<!-- Method Explainer -->
+<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem; line-height: 1.5;">
+  <strong style="color: var(--text);">FIFO vs LIFO</strong>
+  <p style="color: var(--text-muted); margin: 6px 0 0;">
+    <strong>FIFO</strong> (First In, First Out) sells your oldest Bitcoin first. If BTC has gone up over time, FIFO typically results in <em>higher gains</em> because your earliest, cheapest lots are matched first.
+    <strong>LIFO</strong> (Last In, First Out) sells your newest Bitcoin first. This often results in <em>lower gains</em> (or losses) because recent lots were likely purchased at higher prices.
+    Most tax software and CPAs default to FIFO. Once you choose a method for a tax year, the IRS expects you to use it consistently. When in doubt, ask your tax advisor.
+  </p>
+</div>
+
+<!-- Controls -->
+<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 24px;">
+  <div>
+    <label style="font-size: 0.85rem; color: var(--text-muted); margin-right: 4px;">Method:</label>
+    <select id="tax-method" onchange="updateTaxSummary()" style="padding: 6px 12px; border-radius: var(--radius); background: var(--bg-card); color: var(--text); border: 1px solid var(--border);">
+      <option value="fifo" {{if eq .Method "fifo"}}selected{{end}}>FIFO (First In, First Out)</option>
+      <option value="lifo" {{if eq .Method "lifo"}}selected{{end}}>LIFO (Last In, First Out)</option>
+    </select>
+  </div>
+  <div>
+    <label style="font-size: 0.85rem; color: var(--text-muted); margin-right: 4px;">Tax Year:</label>
+    <select id="tax-year" onchange="updateTaxSummary()" style="padding: 6px 12px; border-radius: var(--radius); background: var(--bg-card); color: var(--text); border: 1px solid var(--border);">
+      <option value="">All Years</option>
+      {{range .Years}}
+      <option value="{{.}}" {{if eq . $.SelectedYear}}selected{{end}}>{{.}}</option>
+      {{end}}
+    </select>
+  </div>
+  <a id="download-btn" href="/api/tax/export?method={{.Method}}{{if .SelectedYear}}&year={{.SelectedYear}}{{end}}"
+     style="padding: 6px 16px; border-radius: var(--radius); background: var(--accent); color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+    Download CSV
+  </a>
+</div>
+
+<!-- Summary Cards -->
+<div id="tax-summary">
+  {{template "tax_summary_cards" .}}
+</div>
+
+<script>
+function updateTaxSummary() {
+  var method = document.getElementById('tax-method').value;
+  var year = document.getElementById('tax-year').value;
+  var yearParam = year ? '&year=' + year : '';
+
+  // Update download link
+  document.getElementById('download-btn').href = '/api/tax/export?method=' + method + yearParam;
+
+  // Fetch and update summary
+  fetch('/api/tax/export?method=' + method + yearParam + '&format=json')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var s = data.summary;
+      document.getElementById('total-proceeds').textContent = formatUSD(s.TotalProceeds);
+      document.getElementById('total-cost-basis').textContent = formatUSD(s.TotalCostBasis);
+      document.getElementById('total-gain-loss').textContent = formatUSD(s.TotalGainLoss);
+      document.getElementById('total-gain-loss').className = s.TotalGainLoss >= 0 ? 'card-value gain' : 'card-value loss';
+      document.getElementById('short-term-gain').textContent = formatUSD(s.ShortTermGainLoss);
+      document.getElementById('short-term-gain').className = s.ShortTermGainLoss >= 0 ? 'card-value gain' : 'card-value loss';
+      document.getElementById('long-term-gain').textContent = formatUSD(s.LongTermGainLoss);
+      document.getElementById('long-term-gain').className = s.LongTermGainLoss >= 0 ? 'card-value gain' : 'card-value loss';
+      document.getElementById('total-disposals').textContent = data.events_count;
+      document.getElementById('short-term-count').textContent = s.ShortTermCount;
+      document.getElementById('long-term-count').textContent = s.LongTermCount;
+      document.getElementById('unmatched-sat').textContent = s.UnmatchedSat > 0 ? s.UnmatchedSat.toLocaleString() + ' sats' : 'None';
+    });
+}
+
+function formatUSD(n) {
+  var neg = n < 0;
+  var abs = Math.abs(n);
+  var str = '$' + abs.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return neg ? '-' + str : str;
+}
+</script>
+{{end}}
+{{end}}
+
+{{define "tax_summary_cards"}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin-bottom: 12px;">Summary</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Total Proceeds</div>
+    <div class="card-value" id="total-proceeds">{{formatUSD .TotalProceeds}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Cost Basis</div>
+    <div class="card-value" id="total-cost-basis">{{formatUSD .TotalCostBasis}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Gain / Loss</div>
+    <div class="card-value {{if ge .TotalGainLoss 0.0}}gain{{else}}loss{{end}}" id="total-gain-loss">{{formatUSD .TotalGainLoss}}</div>
+  </div>
+</div>
+
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Breakdown</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Short-Term Gain / Loss</div>
+    <div class="card-value {{if ge .ShortTermGainLoss 0.0}}gain{{else}}loss{{end}}" id="short-term-gain">{{formatUSD .ShortTermGainLoss}}</div>
+    <div class="card-sub" id="short-term-count">{{.ShortTermCount}} disposals</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Long-Term Gain / Loss</div>
+    <div class="card-value {{if ge .LongTermGainLoss 0.0}}gain{{else}}loss{{end}}" id="long-term-gain">{{formatUSD .LongTermGainLoss}}</div>
+    <div class="card-sub" id="long-term-count">{{.LongTermCount}} disposals</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total Disposals</div>
+    <div class="card-value" id="total-disposals">{{.TotalDisposals}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Unmatched Sats</div>
+    <div class="card-value" id="unmatched-sat">{{if .UnmatchedSat}}{{formatSats .UnmatchedSat}} sats{{else}}None{{end}}</div>
+    <div class="card-sub" style="font-size: 0.75rem;">Sats sold without matching acquisition lot</div>
+  </div>
+</div>
+{{end}}
