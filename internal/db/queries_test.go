@@ -2734,3 +2734,159 @@ func TestUnifiedTransactionsWithNotes(t *testing.T) {
 		t.Errorf("expected note 'my routing note', got %q", page.Transactions[0].Note)
 	}
 }
+
+func TestListBTCLots(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Insert lots directly
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO btc_lots (acquired_at, amount_sat, price_usd, source, external_id) VALUES
+		 (?, 100000, 50.00, 'strike', 'tx1'),
+		 (?, 200000, 120.00, 'river', 'tx2')`,
+		time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lots, err := d.ListBTCLots(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lots) != 2 {
+		t.Fatalf("expected 2 lots, got %d", len(lots))
+	}
+	// Should be ordered by acquired_at ASC
+	if lots[0].Source != "strike" || lots[0].AmountSat != 100000 {
+		t.Errorf("lot 0: source=%s amount=%d", lots[0].Source, lots[0].AmountSat)
+	}
+	if lots[1].Source != "river" || lots[1].AmountSat != 200000 {
+		t.Errorf("lot 1: source=%s amount=%d", lots[1].Source, lots[1].AmountSat)
+	}
+	if lots[0].PriceUSD != 50.00 {
+		t.Errorf("lot 0 price: %f", lots[0].PriceUSD)
+	}
+}
+
+func TestListBTCLots_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	lots, err := d.ListBTCLots(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lots) != 0 {
+		t.Errorf("expected 0 lots, got %d", len(lots))
+	}
+}
+
+func TestListDisposals(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Insert exchange_imports with sale and non-sale types
+	for _, tc := range []struct {
+		txType string
+		extID  string
+		raw    string
+	}{
+		{"Sale", "s1", `{"Date":"2024-06-01T10:00:00Z","AmountBTC":-0.01,"AmountUSD":500}`},
+		{"sell", "s2", `{"Date":"2024-07-01T10:00:00Z","AmountBTC":-0.02,"AmountUSD":1200}`},
+		{"send", "s3", `{"Date":"2024-08-01T10:00:00Z","AmountBTC":-0.005,"AmountUSD":0}`},
+		{"Purchase", "p1", `{"Date":"2024-01-01T10:00:00Z","AmountBTC":0.05,"AmountUSD":2000}`},
+	} {
+		_, err := d.db.ExecContext(ctx,
+			`INSERT INTO exchange_imports (source, external_id, tx_type, raw_data) VALUES ('strike', ?, ?, ?)`,
+			tc.extID, tc.txType, tc.raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	disposals, err := d.ListDisposals(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only Sale and sell should be included (not send, not Purchase)
+	if len(disposals) != 2 {
+		t.Fatalf("expected 2 disposals, got %d", len(disposals))
+	}
+	// Ordered by date ASC
+	if disposals[0].AmountSat != 1_000_000 { // 0.01 BTC
+		t.Errorf("disposal 0 amount: %d", disposals[0].AmountSat)
+	}
+	if disposals[0].ProceedsUSD != 500 {
+		t.Errorf("disposal 0 proceeds: %f", disposals[0].ProceedsUSD)
+	}
+	if disposals[1].AmountSat != 2_000_000 { // 0.02 BTC
+		t.Errorf("disposal 1 amount: %d", disposals[1].AmountSat)
+	}
+}
+
+func TestListDisposals_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	disposals, err := d.ListDisposals(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disposals) != 0 {
+		t.Errorf("expected 0 disposals, got %d", len(disposals))
+	}
+}
+
+func TestSaveDisposals(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	events := []struct {
+		DisposedAt  time.Time
+		AmountSat   int64
+		ProceedsUSD float64
+		LotID       int64
+	}{
+		{time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC), 500_000, 300.00, 1},
+		{time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC), 200_000, 150.00, 2},
+	}
+
+	if err := d.SaveDisposals(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify rows were inserted
+	var count int
+	d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM disposals`).Scan(&count)
+	if count != 2 {
+		t.Errorf("expected 2 disposals, got %d", count)
+	}
+
+	// Save again — should clear and rewrite
+	if err := d.SaveDisposals(ctx, events[:1]); err != nil {
+		t.Fatal(err)
+	}
+	d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM disposals`).Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 disposal after re-save, got %d", count)
+	}
+}
+
+func TestSaveDisposals_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	if err := d.SaveDisposals(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	d.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM disposals`).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0, got %d", count)
+	}
+}
