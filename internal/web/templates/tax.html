@@ -1,6 +1,7 @@
 {{define "tax_content"}}
 {{if not (tierAtLeast .Tier "pro")}}
-{{template "upgrade_required" dict "RequiredTier" "pro" "CurrentTier" .Tier}}
+{{$upgrade := dict "RequiredTier" "pro" "CurrentTier" .Tier}}
+{{template "upgrade_required" $upgrade}}
 {{else}}
 <!-- Disclaimer -->
 <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem; color: var(--text-muted);">
