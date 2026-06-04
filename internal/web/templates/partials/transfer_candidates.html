@@ -1,17 +1,33 @@
 {{define "transfer_candidates"}}
-{{if .Candidates}}
-<div style="margin-top: 4px; font-size: 0.75rem; color: var(--text-muted);">
-  <div style="margin-bottom: 4px;">Possible matches:</div>
+<div class="transfer-popover" style="position: absolute; z-index: 50; top: 100%; right: 0; min-width: 240px; margin-top: 4px;
+  background: var(--bg-card, #1a1a2e); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4); padding: 10px; font-size: 0.8rem;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <strong style="color: var(--text);">{{if .Candidates}}Match found{{else}}No matches{{end}}</strong>
+    <span onclick="this.closest('.transfer-popover').remove()" style="cursor: pointer; color: var(--text-muted); font-size: 1rem; line-height: 1;" title="Close">&times;</span>
+  </div>
+  {{if .Candidates}}
+  <div style="color: var(--text-muted); margin-bottom: 6px; font-size: 0.75rem;">Select the matching transaction:</div>
   {{range .Candidates}}
-  <form style="display: inline;" hx-post="/api/transactions/transfer/bulk" hx-target="closest .transfer-cell" hx-swap="outerHTML">
+  <form hx-post="/api/transactions/transfer/bulk" hx-target="#transfer-{{$.SourceID}}" hx-swap="outerHTML" style="margin-bottom: 4px;">
     <input type="hidden" name="source_id" value="{{$.SourceID}}">
     <input type="hidden" name="candidate_id" value="{{.SourceID}}">
-    <button type="submit" style="font-size: 0.7rem; padding: 2px 6px; background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;"
-      title="Mark both as transfer: {{.Source}} {{formatSats .AmountSat}} sats on {{formatDate .Time}}">
-      {{.Source}} {{formatSats .AmountSat}} sats
+    <button type="submit" style="width: 100%; text-align: left; font-size: 0.78rem; padding: 6px 8px;
+      background: var(--bg, #0f0f1a); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+      cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 8px;"
+      onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span>
+        <span style="background: var(--border); border-radius: 3px; padding: 1px 4px; font-size: 0.7rem;">{{.Source}}</span>
+        <span style="margin-left: 4px;">{{formatDate .Time}}</span>
+      </span>
+      <span style="font-family: monospace; {{if gt .AmountSat 0}}color: var(--success, #4ade80);{{else}}color: var(--danger, #ef4444);{{end}}">{{formatSats .AmountSat}}</span>
     </button>
   </form>
   {{end}}
+  {{else}}
+  <div style="color: var(--text-muted); font-size: 0.78rem; padding: 4px 0;">
+    No opposite-direction transactions found within 24 hours and similar amount. You can still mark this manually.
+  </div>
+  {{end}}
 </div>
-{{end}}
 {{end}}

@@ -2143,6 +2143,12 @@ func (h *Handler) HandleTransferBulk(w http.ResponseWriter, r *http.Request) {
 	if err := h.renderer.Render(w, "transfer_badge", transferBadgeData{SourceID: sourceID, IsTransfer: true}); err != nil {
 		h.logger.Printf("render transfer badge: %v", err)
 	}
+	// OOB swap: also update the candidate's badge in-place (no refresh needed)
+	if candidateID != "" {
+		if err := h.renderer.Render(w, "transfer_badge_oob", transferBadgeData{SourceID: candidateID, IsTransfer: true}); err != nil {
+			h.logger.Printf("render transfer badge oob: %v", err)
+		}
+	}
 }
 
 // HandleTransferCandidates serves GET /api/transactions/transfer/candidates — auto-suggest.
@@ -2154,14 +2160,14 @@ func (h *Handler) HandleTransferCandidates(w http.ResponseWriter, r *http.Reques
 
 	if sourceID == "" || amountSat == 0 || ts.IsZero() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		return // empty response
+		// Still render the popover so user sees "no matches" feedback
+		_ = h.renderer.Render(w, "transfer_candidates", transferCandidatesData{SourceID: sourceID})
+		return
 	}
 
 	candidates, err := h.store.ListTransferCandidates(r.Context(), sourceID, amountSat, ts)
 	if err != nil {
 		h.logger.Printf("transfer candidates: %v", err)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
