@@ -89,12 +89,14 @@ test:
 	go test -v ./...
 
 # Build Docker image (local platform)
+VERSION ?= 2.0.0
 docker:
-	docker build -t satsbook:latest .
+	docker build --build-arg VERSION=$(VERSION) -t satsbook:$(VERSION) -t satsbook:latest .
 
 # Build multi-arch Docker image (amd64 + arm64 for Umbrel/Raspberry Pi)
 docker-multiarch:
-	docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/satsbook/satsbook:latest .
+	docker buildx build --platform linux/amd64,linux/arm64 --build-arg VERSION=$(VERSION) \
+		-t ghcr.io/satsbook/satsbook:$(VERSION) -t ghcr.io/satsbook/satsbook:latest --push .
 
 # Clean build artifacts
 clean:
