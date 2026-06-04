@@ -496,7 +496,7 @@ func donutChart(items []BreakdownItem, period string) template.HTML {
 	circumf := 2 * 3.14159265 * float64(radius)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, `<svg viewBox="0 0 %d %d" xmlns="http://www.w3.org/2000/svg" style="max-width:200px" id="donut-svg">`, size, size)
+	fmt.Fprintf(&sb, `<svg viewBox="0 0 %d %d" width="%d" height="%d" xmlns="http://www.w3.org/2000/svg" id="donut-svg">`, size, size, size, size)
 
 	// Background circle
 	fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="%d" fill="none" stroke="var(--border, #333)" stroke-width="%d"/>`,
