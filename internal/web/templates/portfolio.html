@@ -31,7 +31,16 @@
     <div id="donut-tooltip" style="display:none; position:absolute; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:8px 12px; font-size:0.8rem; pointer-events:none; white-space:nowrap; z-index:10; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
     </div>
   </div>
-  <!-- Source flows detail (appears on click, pushing donut left) -->
+  <!-- Legend (visible in large mode, hidden when detail shown) -->
+  <div id="donut-legend" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;">
+    {{range $i, $item := .Items}}
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:{{index $.DonutColors $i}}; flex-shrink:0;"></span>
+      <span style="color: var(--text-muted);">{{$item.Label}}</span>
+    </div>
+    {{end}}
+  </div>
+  <!-- Source flows detail (appears on click, replacing legend) -->
   <div id="source-flows-detail" style="flex: 1; min-width: 280px; display: none;"></div>
 </div>
 {{else}}
@@ -94,7 +103,24 @@
   var tip = document.getElementById('donut-tooltip');
   var wrap = document.getElementById('donut-wrap');
   var detail = document.getElementById('source-flows-detail');
+  var legend = document.getElementById('donut-legend');
   var segments = svg.querySelectorAll('.donut-segment');
+
+  function showDetail(source, period) {
+    wrap.style.width = '180px';
+    wrap.style.height = '180px';
+    legend.style.display = 'none';
+    detail.style.display = 'block';
+    htmx.ajax('GET', '/portfolio/source-flows?source=' + source + '&period=' + period, '#source-flows-detail');
+  }
+
+  function resetDonut() {
+    wrap.style.width = '300px';
+    wrap.style.height = '300px';
+    detail.style.display = 'none';
+    detail.innerHTML = '';
+    legend.style.display = 'flex';
+  }
 
   segments.forEach(function(seg) {
     seg.addEventListener('mouseenter', function() {
@@ -120,23 +146,14 @@
     });
     seg.addEventListener('click', function() {
       if (seg.getAttribute('data-clickable') !== 'true') return;
-      var source = seg.getAttribute('data-source');
-      var period = seg.getAttribute('data-period');
-      // Shrink donut and show detail
-      wrap.style.width = '180px';
-      wrap.style.height = '180px';
-      detail.style.display = 'block';
-      htmx.ajax('GET', '/portfolio/source-flows?source=' + source + '&period=' + period, '#source-flows-detail');
+      showDetail(seg.getAttribute('data-source'), seg.getAttribute('data-period'));
     });
   });
 
-  // Clicking outside donut resets to full size
+  // Clicking outside resets to full size
   document.addEventListener('click', function(e) {
     if (!wrap.contains(e.target) && !detail.contains(e.target)) {
-      wrap.style.width = '300px';
-      wrap.style.height = '300px';
-      detail.style.display = 'none';
-      detail.innerHTML = '';
+      resetDonut();
     }
   });
 })();

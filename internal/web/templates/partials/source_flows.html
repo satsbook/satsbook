@@ -2,7 +2,7 @@
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
     <div class="card-label" style="margin: 0;">{{.Label}} — Net Flows</div>
-    <button onclick="var w=document.getElementById('donut-wrap');var d=document.getElementById('source-flows-detail');if(w){w.style.width='300px';w.style.height='300px';}if(d){d.style.display='none';d.innerHTML='';}" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:1.1rem;">&times;</button>
+    <button onclick="var w=document.getElementById('donut-wrap'),d=document.getElementById('source-flows-detail'),l=document.getElementById('donut-legend');if(w){w.style.width='300px';w.style.height='300px';}if(d){d.style.display='none';d.innerHTML='';}if(l){l.style.display='flex';}" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:1.1rem;">&times;</button>
   </div>
   {{if .NetFlow}}
   <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; font-size: 0.85rem;">
