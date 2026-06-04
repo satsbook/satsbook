@@ -2193,10 +2193,12 @@ type transferCandidatesData struct {
 
 // BreakdownItem represents a single source in the portfolio donut chart / table.
 type BreakdownItem struct {
-	Label string
-	Sats  int64
-	USD   float64
-	Pct   float64
+	Label     string
+	SourceKey string // machine key for API calls (e.g. "strike", "onchain")
+	Clickable bool   // false for channels/cold_storage (no transaction flows)
+	Sats      int64
+	USD       float64
+	Pct       float64
 }
 
 // PortfolioPageData holds data for the /portfolio page.
@@ -2221,11 +2223,6 @@ type PortfolioPageData struct {
 	// Date filter for linking to transactions
 	DateFrom string
 
-	// Historical per-source data (for sparklines)
-	HistoryDays   int
-	HistorySources []string                        // distinct sources in history
-	HistoryBySource map[string][]db.PortfolioSnapshot // source -> daily snapshots
-
 	// Net flows
 	NetFlow *db.NetFlowResult
 
@@ -2248,21 +2245,16 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 	// Parse period
 	period := r.URL.Query().Get("period")
 	var since time.Time
-	var days int
 	switch period {
 	case "90d":
 		since = now.AddDate(0, 0, -90)
-		days = 90
 	case "ytd":
 		since = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
-		days = int(now.Sub(since).Hours() / 24)
 	case "all":
 		since = time.Time{}
-		days = 3650 // ~10 years
 	default:
 		period = "30d"
 		since = now.AddDate(0, 0, -30)
-		days = 30
 	}
 
 	dateFrom := ""
@@ -2274,7 +2266,6 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 		Tier:           string(TierFromContext(ctx)),
 		SelectedPeriod: period,
 		DateFrom:       dateFrom,
-		HistoryDays:    days,
 		Periods: []PeriodOption{
 			{Value: "30d", Label: "30 days", Active: period == "30d"},
 			{Value: "90d", Label: "90 days", Active: period == "90d"},
@@ -2301,16 +2292,6 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			mu.Lock()
 			breakdown = b
-			mu.Unlock()
-		}
-	})
-
-	var details []db.PortfolioSnapshotDetail
-	fetch(func() {
-		d, err := h.store.PortfolioSnapshotsWithDetails(ctx, days)
-		if err == nil {
-			mu.Lock()
-			details = d
 			mu.Unlock()
 		}
 	})
@@ -2380,22 +2361,24 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 		data.TotalUSD = satsToUSD(breakdown.TotalSats)
 
 		type srcEntry struct {
-			label string
-			sats  int64
+			label     string
+			sourceKey string
+			clickable bool
+			sats      int64
 		}
 		var entries []srcEntry
 		if breakdown.OnChainSats != 0 {
-			entries = append(entries, srcEntry{"On-chain Wallet", breakdown.OnChainSats})
+			entries = append(entries, srcEntry{"On-chain Wallet", "onchain", true, breakdown.OnChainSats})
 		}
 		if breakdown.ChannelSats != 0 {
-			entries = append(entries, srcEntry{"Lightning Channels", breakdown.ChannelSats})
+			entries = append(entries, srcEntry{"Lightning Channels", "channels", false, breakdown.ChannelSats})
 		}
 		if breakdown.ColdStorageSats != 0 {
-			entries = append(entries, srcEntry{"Cold Storage", breakdown.ColdStorageSats})
+			entries = append(entries, srcEntry{"Cold Storage", "cold_storage", false, breakdown.ColdStorageSats})
 		}
 		for _, src := range []string{"strike", "river", "coinbase", "swan"} {
 			if sats, ok := breakdown.ExchangeSats[src]; ok && sats != 0 {
-				entries = append(entries, srcEntry{templateSourceLabel(src), sats})
+				entries = append(entries, srcEntry{templateSourceLabel(src), src, true, sats})
 			}
 		}
 
@@ -2405,32 +2388,16 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 				pct = float64(e.sats) / float64(breakdown.TotalSats) * 100
 			}
 			data.Items = append(data.Items, BreakdownItem{
-				Label: e.label,
-				Sats:  e.sats,
-				USD:   satsToUSD(e.sats),
-				Pct:   pct,
+				Label:     e.label,
+				SourceKey: e.sourceKey,
+				Clickable: e.clickable,
+				Sats:      e.sats,
+				USD:       satsToUSD(e.sats),
+				Pct:       pct,
 			})
 		}
 		for i := range data.Items {
 			data.DonutColors = append(data.DonutColors, donutChartColors[i%len(donutChartColors)])
-		}
-	}
-
-	// Build historical per-source data for sparklines
-	if len(details) > 0 {
-		data.HistoryBySource = make(map[string][]db.PortfolioSnapshot)
-		seenSources := make(map[string]bool)
-		for _, d := range details {
-			if !seenSources[d.Source] {
-				seenSources[d.Source] = true
-				data.HistorySources = append(data.HistorySources, d.Source)
-			}
-			data.HistoryBySource[d.Source] = append(data.HistoryBySource[d.Source],
-				db.PortfolioSnapshot{
-					CapturedAt:  d.CapturedAt,
-					TotalSats:   d.Sats,
-					BTCPriceUSD: d.BTCPriceUSD,
-				})
 		}
 	}
 
@@ -2452,6 +2419,55 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.renderer.Render(w, "portfolio_layout", data); err != nil {
 		h.logger.Printf("failed to render portfolio page: %v", err)
+	}
+}
+
+// portfolioSourceToTxSources maps a donut segment source key to transaction view source values.
+var portfolioSourceToTxSources = map[string][]string{
+	"onchain":  {"lnd_onchain"},
+	"strike":   {"strike"},
+	"river":    {"river"},
+	"coinbase": {"coinbase"},
+	"swan":     {"swan"},
+}
+
+// HandlePortfolioSourceFlows serves GET /portfolio/source-flows — per-source net flows partial.
+func (h *Handler) HandlePortfolioSourceFlows(w http.ResponseWriter, r *http.Request) {
+	sourceKey := r.URL.Query().Get("source")
+	txSources, ok := portfolioSourceToTxSources[sourceKey]
+	if !ok {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		return
+	}
+
+	now := time.Now()
+	period := r.URL.Query().Get("period")
+	var since time.Time
+	switch period {
+	case "90d":
+		since = now.AddDate(0, 0, -90)
+	case "ytd":
+		since = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	case "all":
+		since = time.Time{}
+	default:
+		since = now.AddDate(0, 0, -30)
+	}
+
+	nf, err := h.store.NetFlowSummaryBySource(r.Context(), since, txSources, true)
+	if err != nil {
+		h.logger.Printf("source flows: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "source_flows", map[string]interface{}{
+		"SourceKey": sourceKey,
+		"Label":     portfolioSourceLabel(sourceKey),
+		"NetFlow":   nf,
+	}); err != nil {
+		h.logger.Printf("render source flows: %v", err)
 	}
 }
 

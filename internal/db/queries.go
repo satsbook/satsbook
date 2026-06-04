@@ -1899,6 +1899,49 @@ func (d *DB) NetFlowSummary(ctx context.Context, since time.Time, excludeTransfe
 	return &result, nil
 }
 
+// NetFlowSummaryBySource returns inflow/outflow totals filtered to specific transaction sources.
+func (d *DB) NetFlowSummaryBySource(ctx context.Context, since time.Time, sources []string, excludeTransfers bool) (*NetFlowResult, error) {
+	if len(sources) == 0 {
+		return &NetFlowResult{}, nil
+	}
+
+	var result NetFlowResult
+
+	transferJoin := ""
+	transferWhere := ""
+	if excludeTransfers {
+		transferJoin = " LEFT JOIN transaction_notes tn ON tn.source_id = v.source_id"
+		transferWhere = " AND COALESCE(tn.is_transfer, 0) = 0"
+	}
+
+	placeholders := make([]string, len(sources))
+	args := make([]interface{}, 0, len(sources)+1)
+	args = append(args, since.UTC().Format("2006-01-02 15:04:05"))
+	for i, s := range sources {
+		placeholders[i] = "?"
+		args = append(args, s)
+	}
+
+	query := fmt.Sprintf(`SELECT
+			COALESCE(SUM(CASE WHEN v.amount_sat > 0 THEN v.amount_sat ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_sat < 0 THEN ABS(v.amount_sat) ELSE 0 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat > 0 THEN 1 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat < 0 THEN 1 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd > 0 THEN v.amount_usd ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd < 0 THEN ABS(v.amount_usd) ELSE 0 END), 0)
+		 FROM btc_transactions_v v%s
+		 WHERE v.ts >= ? AND v.source IN (%s)%s`,
+		transferJoin, strings.Join(placeholders, ","), transferWhere)
+
+	err := d.db.QueryRowContext(ctx, query, args...).
+		Scan(&result.InflowSats, &result.OutflowSats, &result.InflowCount, &result.OutflowCount,
+			&result.InflowUSD, &result.OutflowUSD)
+	if err != nil {
+		return nil, fmt.Errorf("net flow summary by source: %w", err)
+	}
+	return &result, nil
+}
+
 // AutoTagChannelTransfers finds on-chain transactions that match channel open/close
 // tx hashes and automatically marks them as transfers. Returns the number of newly tagged transactions.
 func (d *DB) AutoTagChannelTransfers(ctx context.Context) (int, error) {

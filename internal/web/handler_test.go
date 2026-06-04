@@ -99,10 +99,10 @@ func (m *mockStore) BackfillPortfolioSnapshots(ctx context.Context) (int, error)
 func (m *mockStore) PortfolioBreakdownQuery(ctx context.Context) (*db.PortfolioBreakdown, error) {
 	return &db.PortfolioBreakdown{ExchangeSats: map[string]int64{}}, nil
 }
-func (m *mockStore) PortfolioSnapshotsWithDetails(ctx context.Context, days int) ([]db.PortfolioSnapshotDetail, error) {
-	return nil, nil
-}
 func (m *mockStore) NetFlowSummary(ctx context.Context, since time.Time, excludeTransfers bool) (*db.NetFlowResult, error) {
+	return &db.NetFlowResult{}, nil
+}
+func (m *mockStore) NetFlowSummaryBySource(ctx context.Context, since time.Time, sources []string, excludeTransfers bool) (*db.NetFlowResult, error) {
 	return &db.NetFlowResult{}, nil
 }
 func (m *mockStore) SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error {

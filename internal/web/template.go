@@ -143,6 +143,7 @@ func NewRenderer() *Renderer {
 			"templates/partials/upgrade_required.html",
 			"templates/partials/transfer_badge.html",
 			"templates/partials/transfer_candidates.html",
+			"templates/partials/source_flows.html",
 		),
 	)
 
@@ -479,8 +480,8 @@ var donutChartColors = []string{
 	"#26c6da", // cyan
 }
 
-// donutChart generates an inline SVG donut chart from breakdown items.
-func donutChart(items []BreakdownItem) template.HTML {
+// donutChart generates an inline SVG donut chart from breakdown items with data attributes for interactivity.
+func donutChart(items []BreakdownItem, period string) template.HTML {
 	if len(items) == 0 {
 		return template.HTML(`<div class="chart-empty">No portfolio data</div>`)
 	}
@@ -495,7 +496,7 @@ func donutChart(items []BreakdownItem) template.HTML {
 	circumf := 2 * 3.14159265 * float64(radius)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, `<svg viewBox="0 0 %d %d" xmlns="http://www.w3.org/2000/svg" style="max-width:200px">`, size, size)
+	fmt.Fprintf(&sb, `<svg viewBox="0 0 %d %d" xmlns="http://www.w3.org/2000/svg" style="max-width:200px" id="donut-svg">`, size, size)
 
 	// Background circle
 	fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="%d" fill="none" stroke="var(--border, #333)" stroke-width="%d"/>`,
@@ -510,13 +511,24 @@ func donutChart(items []BreakdownItem) template.HTML {
 		dashGap := circumf - dashLen
 		color := donutChartColors[i%len(donutChartColors)]
 
-		fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="%d" fill="none" stroke="%s" stroke-width="%d" `+
-			`stroke-dasharray="%.1f %.1f" stroke-dashoffset="%.1f" transform="rotate(-90 %d %d)">`+
-			`<title>%s: %.1f%%</title></circle>`,
+		clickable := ""
+		cursor := ""
+		if item.Clickable {
+			clickable = fmt.Sprintf(` data-clickable="true" data-period="%s"`, period)
+			cursor = " cursor: pointer;"
+		}
+
+		fmt.Fprintf(&sb, `<circle class="donut-segment" cx="%d" cy="%d" r="%d" fill="none" stroke="%s" stroke-width="%d" `+
+			`stroke-dasharray="%.1f %.1f" stroke-dashoffset="%.1f" transform="rotate(-90 %d %d)" `+
+			`pointer-events="visibleStroke" style="transition: opacity 0.15s;%s" `+
+			`data-source="%s" data-label="%s" data-sats="%s" data-usd="%s" data-pct="%.1f" data-color="%s"%s>`+
+			`<title>%s: %s sats (%.1f%%)</title></circle>`,
 			cx, cy, radius, color, strokeW,
 			dashLen, dashGap, -offset,
 			cx, cy,
-			item.Label, item.Pct)
+			cursor,
+			item.SourceKey, item.Label, formatSats(item.Sats), formatUSD(item.USD), item.Pct, color, clickable,
+			item.Label, formatSats(item.Sats), item.Pct)
 		offset += dashLen
 	}
 
