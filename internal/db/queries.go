@@ -1899,6 +1899,43 @@ func (d *DB) NetFlowSummary(ctx context.Context, since time.Time, excludeTransfe
 	return &result, nil
 }
 
+// AutoTagChannelTransfers finds on-chain transactions that match channel open/close
+// tx hashes and automatically marks them as transfers. Returns the number of newly tagged transactions.
+func (d *DB) AutoTagChannelTransfers(ctx context.Context) (int, error) {
+	// Channel opens: channel_point is "txid:output_index" — extract txid portion.
+	// The on-chain source_id in the view is just the tx_hash.
+	// Channel closes: closing_tx_hash is the tx_hash directly.
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO transaction_notes (source_id, note, is_transfer, updated_at)
+		SELECT v.source_id, '', 1, CURRENT_TIMESTAMP
+		FROM btc_transactions_v v
+		WHERE v.source = 'lnd_onchain'
+		  AND (
+		    -- Match channel opens (tx_hash is the txid part of channel_point)
+		    EXISTS (
+		      SELECT 1 FROM channels c
+		      WHERE c.channel_point != ''
+		        AND SUBSTR(c.channel_point, 1, INSTR(c.channel_point, ':') - 1) = v.source_id
+		    )
+		    OR
+		    -- Match channel closes
+		    EXISTS (
+		      SELECT 1 FROM channels c
+		      WHERE c.closing_tx_hash != ''
+		        AND c.closing_tx_hash = v.source_id
+		    )
+		  )
+		ON CONFLICT(source_id) DO UPDATE SET
+		  is_transfer = 1,
+		  updated_at = CURRENT_TIMESTAMP
+		WHERE is_transfer = 0`)
+	if err != nil {
+		return 0, fmt.Errorf("auto-tag channel transfers: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // SetTransferFlag marks or unmarks a transaction as an internal transfer.
 func (d *DB) SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error {
 	val := 0

@@ -3414,3 +3414,88 @@ func TestListTransferCandidates_NoMatch(t *testing.T) {
 	}
 }
 
+func TestAutoTagChannelTransfers(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed a channel with a known channel_point (txid:output_index)
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		if err := tx.UpsertChannels([]Channel{{
+			ChanID:       12345,
+			RemotePubKey: "pubkey1",
+			ChannelPoint: "abc123def456:0",
+			LocalBalance: 500000,
+			Active:       true,
+		}}); err != nil {
+			return err
+		}
+		// Seed a closed channel with closing_tx_hash
+		if err := tx.UpsertChannels([]Channel{{
+			ChanID:        67890,
+			RemotePubKey:  "pubkey2",
+			ChannelPoint:  "open789:1",
+			ClosingTxHash: "close456def",
+			Active:        false,
+		}}); err != nil {
+			return err
+		}
+		// Seed on-chain txns matching both
+		if err := tx.UpsertOnchainTxns([]OnchainTx{
+			{TxHash: "abc123def456", AmountSat: -500000, NumConfirmations: 6, Timestamp: time.Now()},   // channel open
+			{TxHash: "close456def", AmountSat: 490000, NumConfirmations: 6, Timestamp: time.Now()},     // channel close
+			{TxHash: "unrelated999", AmountSat: -100000, NumConfirmations: 6, Timestamp: time.Now()},   // not a channel tx
+		}); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := d.AutoTagChannelTransfers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 auto-tagged, got %d", n)
+	}
+
+	// Verify the channel open tx is tagged
+	flagOpen, err := d.GetTransferFlag(ctx, "abc123def456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flagOpen {
+		t.Error("expected channel open tx to be tagged as transfer")
+	}
+
+	// Verify the channel close tx is tagged
+	flagClose, err := d.GetTransferFlag(ctx, "close456def")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flagClose {
+		t.Error("expected channel close tx to be tagged as transfer")
+	}
+
+	// Verify unrelated tx is NOT tagged
+	flagUnrelated, err := d.GetTransferFlag(ctx, "unrelated999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flagUnrelated {
+		t.Error("expected unrelated tx to NOT be tagged as transfer")
+	}
+
+	// Running again should return 0 (idempotent)
+	n2, err := d.AutoTagChannelTransfers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 0 {
+		t.Errorf("expected 0 on re-run (idempotent), got %d", n2)
+	}
+}
+

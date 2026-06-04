@@ -73,6 +73,10 @@ func (m *mockLNDClient) WalletBalance(ctx context.Context) (*lnd.WalletBalance, 
 	return m.walletBalance, nil
 }
 
+func (m *mockLNDClient) ClosedChannels(ctx context.Context) ([]lnd.ClosedChannel, error) {
+	return nil, nil
+}
+
 // mockStore mocks the Store interface.
 type mockStore struct {
 	syncState map[string]syncStateEntry
@@ -547,6 +551,10 @@ func (m *mockSnapshotStore) InsertPortfolioSnapshotWithDetails(ctx context.Conte
 		btcPriceUSD float64
 	}{totalSats, btcPriceUSD})
 	return m.insertErr
+}
+
+func (m *mockSnapshotStore) AutoTagChannelTransfers(ctx context.Context) (int, error) {
+	return 0, nil
 }
 
 // mockPriceProvider mocks the PriceProvider interface.

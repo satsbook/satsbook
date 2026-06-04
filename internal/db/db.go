@@ -444,6 +444,11 @@ var migrations = []string{
 	`
 	ALTER TABLE transaction_notes ADD COLUMN is_transfer INTEGER NOT NULL DEFAULT 0;
 	`,
+	// Migration 15: Add channel_point and closing_tx_hash to channels for auto-tagging transfers.
+	`
+	ALTER TABLE channels ADD COLUMN channel_point TEXT NOT NULL DEFAULT '';
+	ALTER TABLE channels ADD COLUMN closing_tx_hash TEXT NOT NULL DEFAULT '';
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.
