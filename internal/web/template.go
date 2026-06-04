@@ -91,6 +91,7 @@ func NewRenderer() *Renderer {
 			}
 			return false
 		},
+		"formatRFC3339": func(t time.Time) string { return t.Format(time.RFC3339) },
 		"sourceLabel": templateSourceLabel,
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {

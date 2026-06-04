@@ -155,7 +155,7 @@
               {{template "transaction_note_display" (dict "SourceID" .SourceID "Note" .Note)}}
             </td>
             <td style="padding: 8px 12px; text-align: center;">
-              {{template "transfer_badge" (dict "SourceID" .SourceID "IsTransfer" .IsTransfer)}}
+              {{template "transfer_badge" (dict "SourceID" .SourceID "IsTransfer" .IsTransfer "AmountSat" .AmountSat "Time" .Time)}}
             </td>
           </tr>
           {{end}}

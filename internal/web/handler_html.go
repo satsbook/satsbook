@@ -2176,6 +2176,8 @@ func (h *Handler) HandleTransferCandidates(w http.ResponseWriter, r *http.Reques
 type transferBadgeData struct {
 	SourceID   string
 	IsTransfer bool
+	AmountSat  int64
+	Time       time.Time
 }
 
 type transferCandidatesData struct {
@@ -2209,6 +2211,9 @@ type PortfolioPageData struct {
 	DonutColors []string
 	TotalSats   int64
 	TotalUSD    float64
+
+	// Date filter for linking to transactions
+	DateFrom string
 
 	// Historical per-source data (for sparklines)
 	HistoryDays   int
@@ -2254,9 +2259,15 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 		days = 30
 	}
 
+	dateFrom := ""
+	if !since.IsZero() {
+		dateFrom = since.Format("2006-01-02")
+	}
+
 	data := PortfolioPageData{
 		Tier:           string(TierFromContext(ctx)),
 		SelectedPeriod: period,
+		DateFrom:       dateFrom,
 		HistoryDays:    days,
 		Periods: []PeriodOption{
 			{Value: "30d", Label: "30 days", Active: period == "30d"},
