@@ -34,6 +34,12 @@ type mockStore struct {
 	listExchangeTransactionsFn func(ctx context.Context, source string, limit, offset int) (*db.ExchangeTransactionPage, error)
 	portfolioPositionFn        func(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
 	portfolioSnapshotsFn       func(ctx context.Context, days int) ([]db.PortfolioSnapshot, error)
+	portfolioBreakdownFn       func(ctx context.Context) (*db.PortfolioBreakdown, error)
+	netFlowSummaryFn           func(ctx context.Context, since time.Time, excludeTransfers bool) (*db.NetFlowResult, error)
+	netFlowSummaryBySourceFn   func(ctx context.Context, since time.Time, sources []string, excludeTransfers bool) (*db.NetFlowResult, error)
+	setTransferFlagFn          func(ctx context.Context, sourceID string, isTransfer bool) error
+	getTransferFlagFn          func(ctx context.Context, sourceID string) (bool, error)
+	listTransferCandidatesFn   func(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error)
 }
 
 func (m *mockStore) FeeSummary(ctx context.Context, since time.Time) (int64, int64, error) {
@@ -97,21 +103,39 @@ func (m *mockStore) BackfillPortfolioSnapshots(ctx context.Context) (int, error)
 	return 0, nil
 }
 func (m *mockStore) PortfolioBreakdownQuery(ctx context.Context) (*db.PortfolioBreakdown, error) {
+	if m.portfolioBreakdownFn != nil {
+		return m.portfolioBreakdownFn(ctx)
+	}
 	return &db.PortfolioBreakdown{ExchangeSats: map[string]int64{}}, nil
 }
 func (m *mockStore) NetFlowSummary(ctx context.Context, since time.Time, excludeTransfers bool) (*db.NetFlowResult, error) {
+	if m.netFlowSummaryFn != nil {
+		return m.netFlowSummaryFn(ctx, since, excludeTransfers)
+	}
 	return &db.NetFlowResult{}, nil
 }
 func (m *mockStore) NetFlowSummaryBySource(ctx context.Context, since time.Time, sources []string, excludeTransfers bool) (*db.NetFlowResult, error) {
+	if m.netFlowSummaryBySourceFn != nil {
+		return m.netFlowSummaryBySourceFn(ctx, since, sources, excludeTransfers)
+	}
 	return &db.NetFlowResult{}, nil
 }
 func (m *mockStore) SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error {
+	if m.setTransferFlagFn != nil {
+		return m.setTransferFlagFn(ctx, sourceID, isTransfer)
+	}
 	return nil
 }
 func (m *mockStore) GetTransferFlag(ctx context.Context, sourceID string) (bool, error) {
+	if m.getTransferFlagFn != nil {
+		return m.getTransferFlagFn(ctx, sourceID)
+	}
 	return false, nil
 }
 func (m *mockStore) ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error) {
+	if m.listTransferCandidatesFn != nil {
+		return m.listTransferCandidatesFn(ctx, sourceID, amountSat, ts)
+	}
 	return nil, nil
 }
 
@@ -780,5 +804,395 @@ func TestHandleClearImport_GETRejected(t *testing.T) {
 	h.HandleClearImport("strike")(w, req)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// --- Portfolio page tests ---
+
+func TestHandlePortfolioPage_Success(t *testing.T) {
+	store := &mockStore{
+		portfolioBreakdownFn: func(_ context.Context) (*db.PortfolioBreakdown, error) {
+			return &db.PortfolioBreakdown{
+				TotalSats:       1_000_000,
+				OnChainSats:     500_000,
+				ChannelSats:     300_000,
+				ColdStorageSats: 200_000,
+				ExchangeSats:    map[string]int64{},
+			}, nil
+		},
+		netFlowSummaryFn: func(_ context.Context, _ time.Time, _ bool) (*db.NetFlowResult, error) {
+			return &db.NetFlowResult{InflowSats: 100_000, InflowCount: 5, OutflowSats: 50_000, OutflowCount: 3}, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{price: 60000})
+	req := httptest.NewRequest(http.MethodGet, "/portfolio?period=30d", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioPage(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "1,000,000") {
+		t.Error("expected total sats in response")
+	}
+	if !strings.Contains(body, "donut-svg") {
+		t.Error("expected donut chart SVG in response")
+	}
+	if !strings.Contains(body, "Net Flows") {
+		t.Error("expected net flows section")
+	}
+}
+
+func TestHandlePortfolioPage_AllPeriods(t *testing.T) {
+	store := &mockStore{}
+	h := newTestHandler(store, nil, &mockPrice{})
+	for _, period := range []string{"30d", "90d", "ytd", "all"} {
+		req := httptest.NewRequest(http.MethodGet, "/portfolio?period="+period, nil)
+		w := httptest.NewRecorder()
+		h.HandlePortfolioPage(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("period %s: expected 200, got %d", period, w.Code)
+		}
+	}
+}
+
+func TestHandlePortfolioPage_WithCostBasis(t *testing.T) {
+	store := &mockStore{
+		portfolioBreakdownFn: func(_ context.Context) (*db.PortfolioBreakdown, error) {
+			return &db.PortfolioBreakdown{TotalSats: 500_000, ExchangeSats: map[string]int64{}}, nil
+		},
+		portfolioPositionFn: func(_ context.Context, _ time.Time) (*db.PortfolioPositionResult, error) {
+			return &db.PortfolioPositionResult{
+				TotalCostBasisUSD: 200.00,
+				PurchasedSats:     500_000,
+				BySource:          map[string]db.SourceBalance{},
+			}, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{price: 60000})
+	req := httptest.NewRequest(http.MethodGet, "/portfolio", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioPage(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Cost Basis") {
+		t.Error("expected cost basis section")
+	}
+	if !strings.Contains(body, "$200.00") {
+		t.Error("expected total cost basis USD")
+	}
+}
+
+// --- Portfolio source flows tests ---
+
+func TestHandlePortfolioSourceFlows_Success(t *testing.T) {
+	store := &mockStore{
+		netFlowSummaryBySourceFn: func(_ context.Context, _ time.Time, sources []string, _ bool) (*db.NetFlowResult, error) {
+			if len(sources) != 1 || sources[0] != "strike" {
+				t.Errorf("expected sources [strike], got %v", sources)
+			}
+			return &db.NetFlowResult{InflowSats: 50_000, InflowCount: 2, OutflowSats: 10_000, OutflowCount: 1}, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/portfolio/source-flows?source=strike&period=30d", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioSourceFlows(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Strike") {
+		t.Error("expected source label in response")
+	}
+	if !strings.Contains(body, "50,000") {
+		t.Error("expected inflow sats in response")
+	}
+}
+
+func TestHandlePortfolioSourceFlows_InvalidSource(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/portfolio/source-flows?source=unknown&period=30d", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioSourceFlows(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (empty), got %d", w.Code)
+	}
+	if w.Body.Len() != 0 {
+		t.Error("expected empty body for unknown source")
+	}
+}
+
+func TestHandlePortfolioSourceFlows_AllPeriods(t *testing.T) {
+	store := &mockStore{
+		netFlowSummaryBySourceFn: func(_ context.Context, _ time.Time, _ []string, _ bool) (*db.NetFlowResult, error) {
+			return &db.NetFlowResult{}, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	for _, period := range []string{"30d", "90d", "ytd", "all"} {
+		req := httptest.NewRequest(http.MethodGet, "/portfolio/source-flows?source=onchain&period="+period, nil)
+		w := httptest.NewRecorder()
+		h.HandlePortfolioSourceFlows(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("period %s: expected 200, got %d", period, w.Code)
+		}
+	}
+}
+
+// --- Transfer toggle tests ---
+
+func TestHandleTransferToggle_Success(t *testing.T) {
+	flagState := false
+	store := &mockStore{
+		getTransferFlagFn: func(_ context.Context, _ string) (bool, error) {
+			return flagState, nil
+		},
+		setTransferFlagFn: func(_ context.Context, sourceID string, isTransfer bool) error {
+			if sourceID != "strike:abc:Buy" {
+				t.Errorf("unexpected sourceID: %s", sourceID)
+			}
+			flagState = isTransfer
+			return nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/transfer", strings.NewReader("source_id=strike:abc:Buy"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransferToggle(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !flagState {
+		t.Error("expected flag to be toggled to true")
+	}
+}
+
+func TestHandleTransferToggle_MethodNotAllowed(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/transfer", nil)
+	w := httptest.NewRecorder()
+	h.HandleTransferToggle(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleTransferToggle_MissingSourceID(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/transfer", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransferToggle(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleTransferToggle_StoreError(t *testing.T) {
+	store := &mockStore{
+		setTransferFlagFn: func(_ context.Context, _ string, _ bool) error {
+			return errors.New("db error")
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/transfer", strings.NewReader("source_id=test:1:Buy"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransferToggle(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+// --- Transfer bulk tests ---
+
+func TestHandleTransferBulk_Success(t *testing.T) {
+	var flaggedIDs []string
+	store := &mockStore{
+		setTransferFlagFn: func(_ context.Context, sourceID string, _ bool) error {
+			flaggedIDs = append(flaggedIDs, sourceID)
+			return nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/transfer/bulk",
+		strings.NewReader("source_id=strike:abc:Buy&candidate_id=lnd_onchain:def:Send"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransferBulk(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if len(flaggedIDs) != 2 {
+		t.Fatalf("expected 2 flags set, got %d", len(flaggedIDs))
+	}
+	if flaggedIDs[0] != "strike:abc:Buy" || flaggedIDs[1] != "lnd_onchain:def:Send" {
+		t.Errorf("unexpected flagged IDs: %v", flaggedIDs)
+	}
+}
+
+func TestHandleTransferBulk_MethodNotAllowed(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/transfer/bulk", nil)
+	w := httptest.NewRecorder()
+	h.HandleTransferBulk(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleTransferBulk_MissingSourceID(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/transfer/bulk", strings.NewReader("candidate_id=x"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransferBulk(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleTransferBulk_NoCandidateID(t *testing.T) {
+	var flaggedIDs []string
+	store := &mockStore{
+		setTransferFlagFn: func(_ context.Context, sourceID string, _ bool) error {
+			flaggedIDs = append(flaggedIDs, sourceID)
+			return nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/transfer/bulk",
+		strings.NewReader("source_id=strike:abc:Buy"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransferBulk(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if len(flaggedIDs) != 1 {
+		t.Errorf("expected 1 flag set, got %d", len(flaggedIDs))
+	}
+}
+
+// --- Transfer candidates tests ---
+
+func TestHandleTransferCandidates_Success(t *testing.T) {
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	store := &mockStore{
+		listTransferCandidatesFn: func(_ context.Context, sourceID string, amountSat int64, at time.Time) ([]db.TransferCandidate, error) {
+			return []db.TransferCandidate{
+				{SourceID: "lnd_onchain:abc:Send", Source: "lnd_onchain", AmountSat: 50000, Time: ts},
+			}, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/transfer/candidates?source_id=strike:xyz:Buy&amount_sat=50000&ts="+ts.Format(time.RFC3339), nil)
+	w := httptest.NewRecorder()
+	h.HandleTransferCandidates(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "lnd_onchain:abc:Send") {
+		t.Error("expected candidate source_id in response")
+	}
+}
+
+func TestHandleTransferCandidates_MissingParams(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/transfer/candidates?source_id=x", nil)
+	w := httptest.NewRecorder()
+	h.HandleTransferCandidates(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (renders empty popover), got %d", w.Code)
+	}
+}
+
+func TestHandleTransferCandidates_NoMatches(t *testing.T) {
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	store := &mockStore{
+		listTransferCandidatesFn: func(_ context.Context, _ string, _ int64, _ time.Time) ([]db.TransferCandidate, error) {
+			return nil, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/transfer/candidates?source_id=strike:xyz:Buy&amount_sat=50000&ts="+ts.Format(time.RFC3339), nil)
+	w := httptest.NewRecorder()
+	h.HandleTransferCandidates(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "No matches") {
+		t.Error("expected no-match message in response")
+	}
+}
+
+// --- donutChart template function tests ---
+
+func TestDonutChart_Empty(t *testing.T) {
+	result := donutChart(nil, "30d")
+	if !strings.Contains(string(result), "chart-empty") {
+		t.Error("expected chart-empty for nil items")
+	}
+}
+
+func TestDonutChart_SingleItem(t *testing.T) {
+	items := []BreakdownItem{
+		{Label: "On-chain", SourceKey: "onchain", Clickable: true, Sats: 100_000, USD: 60.0, Pct: 100.0},
+	}
+	result := string(donutChart(items, "30d"))
+	if !strings.Contains(result, "donut-svg") {
+		t.Error("expected SVG with id donut-svg")
+	}
+	if !strings.Contains(result, `data-source="onchain"`) {
+		t.Error("expected data-source attribute")
+	}
+	if !strings.Contains(result, `data-clickable="true"`) {
+		t.Error("expected data-clickable attribute for clickable item")
+	}
+	if !strings.Contains(result, `data-period="30d"`) {
+		t.Error("expected data-period attribute")
+	}
+}
+
+func TestDonutChart_MultipleItems(t *testing.T) {
+	items := []BreakdownItem{
+		{Label: "On-chain", SourceKey: "onchain", Clickable: true, Sats: 60_000, USD: 36.0, Pct: 60.0},
+		{Label: "Channels", SourceKey: "channels", Clickable: false, Sats: 40_000, USD: 24.0, Pct: 40.0},
+	}
+	result := string(donutChart(items, "90d"))
+	if !strings.Contains(result, `data-source="onchain"`) {
+		t.Error("expected onchain segment")
+	}
+	if !strings.Contains(result, `data-source="channels"`) {
+		t.Error("expected channels segment")
+	}
+	// Channels should NOT have data-clickable
+	if strings.Contains(result, `data-source="channels"`) {
+		// Find the channels segment and verify no clickable
+		idx := strings.Index(result, `data-source="channels"`)
+		// Look backwards to find this circle's start
+		segStart := strings.LastIndex(result[:idx], "<circle")
+		segEnd := strings.Index(result[idx:], "</circle>") + idx
+		seg := result[segStart:segEnd]
+		if strings.Contains(seg, `data-clickable`) {
+			t.Error("channels segment should not be clickable")
+		}
+	}
+}
+
+func TestDonutChart_ZeroPctSkipped(t *testing.T) {
+	items := []BreakdownItem{
+		{Label: "On-chain", SourceKey: "onchain", Sats: 100_000, Pct: 100.0},
+		{Label: "Empty", SourceKey: "empty", Sats: 0, Pct: 0.0},
+	}
+	result := string(donutChart(items, "30d"))
+	if strings.Contains(result, `data-source="empty"`) {
+		t.Error("zero-pct item should be skipped")
 	}
 }
