@@ -428,6 +428,27 @@ var migrations = []string{
 		synced_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	`,
+	// Migration 13: Per-source portfolio snapshot details for breakdown charts.
+	`
+	CREATE TABLE IF NOT EXISTS portfolio_snapshot_details (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		snapshot_id INTEGER NOT NULL REFERENCES portfolio_snapshots(id) ON DELETE CASCADE,
+		source      TEXT NOT NULL,
+		sats        INTEGER NOT NULL DEFAULT 0,
+		UNIQUE(snapshot_id, source)
+	);
+	CREATE INDEX IF NOT EXISTS idx_psd_snapshot ON portfolio_snapshot_details(snapshot_id);
+	CREATE INDEX IF NOT EXISTS idx_psd_source ON portfolio_snapshot_details(source);
+	`,
+	// Migration 14: Add is_transfer flag to transaction_notes for marking internal transfers.
+	`
+	ALTER TABLE transaction_notes ADD COLUMN is_transfer INTEGER NOT NULL DEFAULT 0;
+	`,
+	// Migration 15: Add channel_point and closing_tx_hash to channels for auto-tagging transfers.
+	`
+	ALTER TABLE channels ADD COLUMN channel_point TEXT NOT NULL DEFAULT '';
+	ALTER TABLE channels ADD COLUMN closing_tx_hash TEXT NOT NULL DEFAULT '';
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

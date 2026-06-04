@@ -174,6 +174,36 @@ func (c *Client) ListChannels(ctx context.Context) ([]Channel, error) {
 	return channels, nil
 }
 
+// ClosedChannel represents a channel that has been closed.
+type ClosedChannel struct {
+	ChannelID    uint64
+	ChannelPoint string
+	ClosingTxHash string
+	Capacity     int64
+	RemotePubKey string
+}
+
+// ClosedChannels returns all closed channels from the LND node.
+func (c *Client) ClosedChannels(ctx context.Context) ([]ClosedChannel, error) {
+	resp, err := c.client.ClosedChannels(ctx, &lnrpc.ClosedChannelsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list closed channels: %w", err)
+	}
+
+	channels := make([]ClosedChannel, len(resp.Channels))
+	for i, ch := range resp.Channels {
+		channels[i] = ClosedChannel{
+			ChannelID:     ch.ChanId,
+			ChannelPoint:  ch.ChannelPoint,
+			ClosingTxHash: ch.ClosingTxHash,
+			Capacity:      ch.Capacity,
+			RemotePubKey:  ch.RemotePubkey,
+		}
+	}
+
+	return channels, nil
+}
+
 // ForwardingEvent represents a routing event with fee information.
 type ForwardingEvent struct {
 	Timestamp time.Time

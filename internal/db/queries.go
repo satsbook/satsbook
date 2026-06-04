@@ -1299,17 +1299,18 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 
 // UnifiedTransaction represents a single BTC transaction from any source.
 type UnifiedTransaction struct {
-	Source    string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
-	SourceID  string   // unique ID within the source
-	Time      time.Time
-	TxType    string   // buy, sell, send, receive, fee_income
-	AmountSat int64    // positive = inflow, negative = outflow
-	AmountUSD float64
-	FeeSat    int64
-	FeeUSD    float64
-	PriceUSD  float64
-	Memo      string
-	Note      string   // user-editable annotation
+	Source     string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
+	SourceID   string   // unique ID within the source
+	Time       time.Time
+	TxType     string   // buy, sell, send, receive, fee_income
+	AmountSat  int64    // positive = inflow, negative = outflow
+	AmountUSD  float64
+	FeeSat     int64
+	FeeUSD     float64
+	PriceUSD   float64
+	Memo       string
+	Note       string   // user-editable annotation
+	IsTransfer bool     // true if marked as internal transfer
 }
 
 // parseFlexibleTime tries multiple time formats to parse a timestamp string from SQLite.
@@ -1370,6 +1371,7 @@ type TransactionFilter struct {
 	TxType   string // e.g. "buy", "send", or empty for all
 	Source   string // e.g. "strike", "lnd_forward", or empty for all
 	Search   string // free-text search across memo and notes
+	Flow     string // "inflow" (amount_sat > 0), "outflow" (amount_sat < 0), or empty for all
 	SortCol  string // "ts", "amount_sat", "source", "tx_type", "amount_usd"
 	SortDir  string // "asc" or "desc"
 	Limit    int
@@ -1414,6 +1416,11 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (
 		like := "%" + f.Search + "%"
 		args = append(args, like, like, like)
 	}
+	if f.Flow == "inflow" {
+		where = append(where, "v.amount_sat > 0")
+	} else if f.Flow == "outflow" {
+		where = append(where, "v.amount_sat < 0")
+	}
 
 	whereClause := ""
 	if len(where) > 0 {
@@ -1441,7 +1448,8 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (
 
 	dataQuery := fmt.Sprintf(`SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
 		v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo,
-		COALESCE(n.note, '')
+		COALESCE(n.note, ''),
+		COALESCE(n.is_transfer, 0)
 		FROM btc_transactions_v v
 		LEFT JOIN transaction_notes n ON n.source_id = v.source_id
 		%s ORDER BY %s %s LIMIT ? OFFSET ?`, whereClause, orderCol, orderDir)
@@ -1457,10 +1465,12 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (
 	for rows.Next() {
 		var tx UnifiedTransaction
 		var ts string
-		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo, &tx.Note); err != nil {
+		var isTransfer int
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo, &tx.Note, &isTransfer); err != nil {
 			return nil, fmt.Errorf("scan unified transaction: %w", err)
 		}
 		tx.Time = parseFlexibleTime(ts)
+		tx.IsTransfer = isTransfer == 1
 		txns = append(txns, tx)
 	}
 
@@ -1710,4 +1720,345 @@ func (d *DB) SaveDisposals(ctx context.Context, events []struct {
 	}
 
 	return tx.Commit()
+}
+
+// --- Portfolio Breakdown Queries ---
+
+// PortfolioBreakdown holds the current BTC holdings broken down by source category.
+type PortfolioBreakdown struct {
+	OnChainSats     int64
+	ChannelSats     int64
+	ColdStorageSats int64
+	ExchangeSats    map[string]int64 // per-exchange (strike, river, coinbase, swan)
+	TotalSats       int64
+}
+
+// PortfolioBreakdownQuery computes the current point-in-time breakdown of BTC across all sources.
+func (d *DB) PortfolioBreakdownQuery(ctx context.Context) (*PortfolioBreakdown, error) {
+	b := &PortfolioBreakdown{
+		ExchangeSats: make(map[string]int64),
+	}
+
+	// On-chain wallet balance (latest snapshot)
+	var walletSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT total_sat FROM wallet_balance_snapshots ORDER BY captured_at DESC LIMIT 1`,
+	).Scan(&walletSats)
+	if walletSats.Valid {
+		b.OnChainSats = walletSats.Int64
+	}
+
+	// Channel local balances
+	var channelSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT SUM(local_balance) FROM channels WHERE active = 1`,
+	).Scan(&channelSats)
+	if channelSats.Valid {
+		b.ChannelSats = channelSats.Int64
+	}
+
+	// Cold storage wallets
+	var coldSats sql.NullInt64
+	_ = d.db.QueryRowContext(ctx,
+		`SELECT SUM(balance_sats) FROM watched_wallets`,
+	).Scan(&coldSats)
+	if coldSats.Valid {
+		b.ColdStorageSats = coldSats.Int64
+	}
+
+	// Exchange balances (per source)
+	for _, source := range []string{"strike", "river", "coinbase", "swan"} {
+		bal, err := d.ExchangeBalance(ctx, source)
+		if err == nil && bal != 0 {
+			b.ExchangeSats[source] = bal
+		}
+	}
+
+	b.TotalSats = b.OnChainSats + b.ChannelSats + b.ColdStorageSats
+	for _, v := range b.ExchangeSats {
+		b.TotalSats += v
+	}
+
+	return b, nil
+}
+
+// InsertPortfolioSnapshotWithDetails records a portfolio snapshot with per-source breakdown.
+func (d *DB) InsertPortfolioSnapshotWithDetails(ctx context.Context, totalSats int64, btcPriceUSD float64, details map[string]int64) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("snapshot details: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshots (total_sats, btc_price_usd) VALUES (?, ?)`,
+		totalSats, btcPriceUSD)
+	if err != nil {
+		return fmt.Errorf("snapshot details: insert snapshot: %w", err)
+	}
+
+	snapshotID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("snapshot details: last insert id: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("snapshot details: prepare: %w", err)
+	}
+	defer stmt.Close()
+
+	for source, sats := range details {
+		if _, err := stmt.ExecContext(ctx, snapshotID, source, sats); err != nil {
+			return fmt.Errorf("snapshot details: insert %s: %w", source, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// PortfolioSnapshotDetail represents a single source's value at a point in time.
+type PortfolioSnapshotDetail struct {
+	CapturedAt  time.Time
+	Source      string
+	Sats        int64
+	BTCPriceUSD float64
+}
+
+// PortfolioSnapshotsWithDetails returns per-source snapshot data for the given number of days.
+func (d *DB) PortfolioSnapshotsWithDetails(ctx context.Context, days int) ([]PortfolioSnapshotDetail, error) {
+	since := time.Now().AddDate(0, 0, -days).UTC().Format(time.RFC3339)
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT DATE(p.captured_at) as day, d.source, d.sats, MAX(p.btc_price_usd, 0)
+		 FROM portfolio_snapshots p
+		 INNER JOIN portfolio_snapshot_details d ON d.snapshot_id = p.id
+		 INNER JOIN (
+			SELECT MAX(id) as max_id
+			FROM portfolio_snapshots
+			WHERE captured_at >= ?
+			GROUP BY DATE(captured_at)
+		 ) g ON p.id = g.max_id
+		 ORDER BY day ASC, d.source ASC`, since)
+	if err != nil {
+		return nil, fmt.Errorf("portfolio snapshot details: %w", err)
+	}
+	defer rows.Close()
+
+	var details []PortfolioSnapshotDetail
+	for rows.Next() {
+		var d PortfolioSnapshotDetail
+		var day string
+		if err := rows.Scan(&day, &d.Source, &d.Sats, &d.BTCPriceUSD); err != nil {
+			return nil, fmt.Errorf("scan portfolio snapshot detail: %w", err)
+		}
+		d.CapturedAt, _ = time.Parse("2006-01-02", day)
+		details = append(details, d)
+	}
+	return details, rows.Err()
+}
+
+// NetFlowResult holds inflow/outflow totals for a period.
+type NetFlowResult struct {
+	InflowSats   int64
+	OutflowSats  int64
+	InflowCount  int
+	OutflowCount int
+	InflowUSD    float64
+	OutflowUSD   float64
+}
+
+// NetFlowSummary computes inflows and outflows over a period from the unified transaction view.
+// When excludeTransfers is true, transactions marked as internal transfers are excluded.
+func (d *DB) NetFlowSummary(ctx context.Context, since time.Time, excludeTransfers bool) (*NetFlowResult, error) {
+	var result NetFlowResult
+
+	transferJoin := ""
+	transferWhere := ""
+	if excludeTransfers {
+		transferJoin = " LEFT JOIN transaction_notes tn ON tn.source_id = v.source_id"
+		transferWhere = " AND COALESCE(tn.is_transfer, 0) = 0"
+	}
+
+	query := fmt.Sprintf(`SELECT
+			COALESCE(SUM(CASE WHEN v.amount_sat > 0 THEN v.amount_sat ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_sat < 0 THEN ABS(v.amount_sat) ELSE 0 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat > 0 THEN 1 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat < 0 THEN 1 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd > 0 THEN v.amount_usd ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd < 0 THEN ABS(v.amount_usd) ELSE 0 END), 0)
+		 FROM btc_transactions_v v%s
+		 WHERE v.ts >= ?%s`, transferJoin, transferWhere)
+
+	err := d.db.QueryRowContext(ctx, query, since.UTC().Format("2006-01-02 15:04:05")).
+		Scan(&result.InflowSats, &result.OutflowSats, &result.InflowCount, &result.OutflowCount,
+			&result.InflowUSD, &result.OutflowUSD)
+	if err != nil {
+		return nil, fmt.Errorf("net flow summary: %w", err)
+	}
+	return &result, nil
+}
+
+// NetFlowSummaryBySource returns inflow/outflow totals filtered to specific transaction sources.
+func (d *DB) NetFlowSummaryBySource(ctx context.Context, since time.Time, sources []string, excludeTransfers bool) (*NetFlowResult, error) {
+	if len(sources) == 0 {
+		return &NetFlowResult{}, nil
+	}
+
+	var result NetFlowResult
+
+	transferJoin := ""
+	transferWhere := ""
+	if excludeTransfers {
+		transferJoin = " LEFT JOIN transaction_notes tn ON tn.source_id = v.source_id"
+		transferWhere = " AND COALESCE(tn.is_transfer, 0) = 0"
+	}
+
+	placeholders := make([]string, len(sources))
+	args := make([]interface{}, 0, len(sources)+1)
+	args = append(args, since.UTC().Format("2006-01-02 15:04:05"))
+	for i, s := range sources {
+		placeholders[i] = "?"
+		args = append(args, s)
+	}
+
+	query := fmt.Sprintf(`SELECT
+			COALESCE(SUM(CASE WHEN v.amount_sat > 0 THEN v.amount_sat ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_sat < 0 THEN ABS(v.amount_sat) ELSE 0 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat > 0 THEN 1 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat < 0 THEN 1 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd > 0 THEN v.amount_usd ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd < 0 THEN ABS(v.amount_usd) ELSE 0 END), 0)
+		 FROM btc_transactions_v v%s
+		 WHERE v.ts >= ? AND v.source IN (%s)%s`,
+		transferJoin, strings.Join(placeholders, ","), transferWhere)
+
+	err := d.db.QueryRowContext(ctx, query, args...).
+		Scan(&result.InflowSats, &result.OutflowSats, &result.InflowCount, &result.OutflowCount,
+			&result.InflowUSD, &result.OutflowUSD)
+	if err != nil {
+		return nil, fmt.Errorf("net flow summary by source: %w", err)
+	}
+	return &result, nil
+}
+
+// AutoTagChannelTransfers finds on-chain transactions that match channel open/close
+// tx hashes and automatically marks them as transfers. Returns the number of newly tagged transactions.
+func (d *DB) AutoTagChannelTransfers(ctx context.Context) (int, error) {
+	// Channel opens: channel_point is "txid:output_index" — extract txid portion.
+	// The on-chain source_id in the view is just the tx_hash.
+	// Channel closes: closing_tx_hash is the tx_hash directly.
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO transaction_notes (source_id, note, is_transfer, updated_at)
+		SELECT v.source_id, '', 1, CURRENT_TIMESTAMP
+		FROM btc_transactions_v v
+		WHERE v.source = 'lnd_onchain'
+		  AND (
+		    -- Match channel opens (tx_hash is the txid part of channel_point)
+		    EXISTS (
+		      SELECT 1 FROM channels c
+		      WHERE c.channel_point != ''
+		        AND SUBSTR(c.channel_point, 1, INSTR(c.channel_point, ':') - 1) = v.source_id
+		    )
+		    OR
+		    -- Match channel closes
+		    EXISTS (
+		      SELECT 1 FROM channels c
+		      WHERE c.closing_tx_hash != ''
+		        AND c.closing_tx_hash = v.source_id
+		    )
+		  )
+		ON CONFLICT(source_id) DO UPDATE SET
+		  is_transfer = 1,
+		  updated_at = CURRENT_TIMESTAMP
+		WHERE is_transfer = 0`)
+	if err != nil {
+		return 0, fmt.Errorf("auto-tag channel transfers: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// SetTransferFlag marks or unmarks a transaction as an internal transfer.
+func (d *DB) SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error {
+	val := 0
+	if isTransfer {
+		val = 1
+	}
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO transaction_notes (source_id, note, is_transfer, updated_at)
+		 VALUES (?, '', ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(source_id) DO UPDATE SET is_transfer = excluded.is_transfer, updated_at = excluded.updated_at`,
+		sourceID, val)
+	return err
+}
+
+// GetTransferFlag returns true if the transaction is marked as an internal transfer.
+func (d *DB) GetTransferFlag(ctx context.Context, sourceID string) (bool, error) {
+	var val int
+	err := d.db.QueryRowContext(ctx,
+		`SELECT COALESCE(is_transfer, 0) FROM transaction_notes WHERE source_id = ?`, sourceID).Scan(&val)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return val == 1, err
+}
+
+// TransferCandidate is a potential matching transaction for auto-suggest.
+type TransferCandidate struct {
+	SourceID  string
+	Source    string
+	TxType    string
+	AmountSat int64
+	Time      time.Time
+}
+
+// ListTransferCandidates finds transactions that might be the other side of a transfer.
+// It looks for opposite-direction transactions within ±24 hours with amount within ±1%.
+func (d *DB) ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]TransferCandidate, error) {
+	absAmount := amountSat
+	if absAmount < 0 {
+		absAmount = -absAmount
+	}
+	// ±1% tolerance for fees
+	minAmt := float64(absAmount) * 0.99
+	maxAmt := float64(absAmount) * 1.01
+
+	// If the original is positive (inflow), look for negative (outflow) and vice versa
+	var amountSign string
+	if amountSat > 0 {
+		amountSign = "v.amount_sat < 0"
+	} else {
+		amountSign = "v.amount_sat > 0"
+	}
+
+	tsStr := ts.UTC().Format("2006-01-02 15:04:05")
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT v.source_id, v.source, v.tx_type, v.amount_sat, v.ts
+		 FROM btc_transactions_v v
+		 LEFT JOIN transaction_notes tn ON tn.source_id = v.source_id
+		 WHERE %s
+		   AND ABS(v.amount_sat) BETWEEN ? AND ?
+		   AND v.ts BETWEEN datetime(?, '-1 day') AND datetime(?, '+1 day')
+		   AND v.source_id != ?
+		   AND COALESCE(tn.is_transfer, 0) = 0
+		 ORDER BY ABS(julianday(v.ts) - julianday(?))
+		 LIMIT 5`, amountSign),
+		minAmt, maxAmt, tsStr, tsStr, sourceID, tsStr)
+	if err != nil {
+		return nil, fmt.Errorf("list transfer candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []TransferCandidate
+	for rows.Next() {
+		var c TransferCandidate
+		var tsVal string
+		if err := rows.Scan(&c.SourceID, &c.Source, &c.TxType, &c.AmountSat, &tsVal); err != nil {
+			return nil, fmt.Errorf("scan transfer candidate: %w", err)
+		}
+		c.Time = parseFlexibleTime(tsVal)
+		candidates = append(candidates, c)
+	}
+	return candidates, rows.Err()
 }

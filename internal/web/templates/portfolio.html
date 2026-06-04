@@ -1,0 +1,162 @@
+{{define "portfolio_content"}}
+
+<!-- Period selector -->
+<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; align-items: center;">
+  <span style="font-size: 0.85rem; color: var(--text-muted);">Period:</span>
+  {{range .Periods}}
+  <a href="/portfolio?period={{.Value}}"
+     style="padding: 4px 12px; border-radius: var(--radius); font-size: 0.85rem; text-decoration: none;
+            {{if .Active}}background: var(--accent); color: #000; font-weight: 600;{{else}}background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border);{{end}}">
+    {{.Label}}
+  </a>
+  {{end}}
+</div>
+
+<!-- Total Holdings -->
+<div class="cards">
+  <div class="card" style="flex: 2; min-width: 280px;">
+    <div class="card-label">Total Holdings</div>
+    <div class="card-value" style="font-size: 1.6rem;">{{formatSats .TotalSats}} sats</div>
+    {{if .BTCPriceUSD}}<div class="card-sub">{{formatUSD .TotalUSD}}</div>{{end}}
+  </div>
+</div>
+
+<!-- Allocation: Interactive Donut -->
+{{if .Items}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Allocation</h2>
+<div id="donut-section" style="display: flex; flex-wrap: wrap; gap: 24px; align-items: center; justify-content: center; margin-bottom: 24px; position: relative;">
+  <div id="donut-wrap" style="width: 300px; height: 300px; transition: width 0.3s, height 0.3s; flex-shrink: 0; position: relative;">
+    {{donutChart .Items .SelectedPeriod}}
+    <!-- Tooltip -->
+    <div id="donut-tooltip" style="display:none; position:absolute; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:8px 12px; font-size:0.8rem; pointer-events:none; white-space:nowrap; z-index:10; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+    </div>
+  </div>
+  <!-- Legend (visible in large mode, hidden when detail shown) -->
+  <div id="donut-legend" style="display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;">
+    {{range $i, $item := .Items}}
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:{{index $.DonutColors $i}}; flex-shrink:0;"></span>
+      <span style="color: var(--text-muted);">{{$item.Label}}</span>
+    </div>
+    {{end}}
+  </div>
+  <!-- Source flows detail (appears on click, replacing legend) -->
+  <div id="source-flows-detail" style="flex: 1; min-width: 280px; display: none;"></div>
+</div>
+{{else}}
+<div class="chart-empty" style="margin: 24px 0;">No portfolio data yet. Import exchange data or connect your LND node to see your allocation breakdown.</div>
+{{end}}
+
+<!-- Net Flows -->
+{{if .NetFlow}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Net Flows</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Inflows</div>
+    <div class="card-value gain">+{{formatSats .NetFlow.InflowSats}} sats</div>
+    <div class="card-sub"><a href="/transactions?flow=inflow{{if .DateFrom}}&from={{.DateFrom}}{{end}}" style="color: var(--text-muted);">{{.NetFlow.InflowCount}} transactions</a>{{if .NetFlow.InflowUSD}} &middot; {{formatUSD .NetFlow.InflowUSD}}{{end}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Outflows</div>
+    <div class="card-value loss">-{{formatSats .NetFlow.OutflowSats}} sats</div>
+    <div class="card-sub"><a href="/transactions?flow=outflow{{if .DateFrom}}&from={{.DateFrom}}{{end}}" style="color: var(--text-muted);">{{.NetFlow.OutflowCount}} transactions</a>{{if .NetFlow.OutflowUSD}} &middot; {{formatUSD .NetFlow.OutflowUSD}}{{end}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Net Change</div>
+    {{$net := sub64 .NetFlow.InflowSats .NetFlow.OutflowSats}}
+    <div class="card-value {{if ge $net (int64 0)}}gain{{else}}loss{{end}}">{{formatSats $net}} sats</div>
+    {{if or .NetFlow.InflowUSD .NetFlow.OutflowUSD}}<div class="card-sub">{{formatUSD (subf .NetFlow.InflowUSD .NetFlow.OutflowUSD)}}</div>{{end}}
+  </div>
+</div>
+{{end}}
+
+<!-- Cost Basis Summary -->
+{{if .TotalCostBasisUSD}}
+<h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Cost Basis</h2>
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Total Cost Basis</div>
+    <div class="card-value">{{formatUSD .TotalCostBasisUSD}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Avg Cost per BTC</div>
+    <div class="card-value">{{formatUSD .AvgCostPerBTC}}</div>
+  </div>
+  {{if .CurrentValueUSD}}
+  <div class="card">
+    <div class="card-label">Current Value</div>
+    <div class="card-value">{{formatUSD .CurrentValueUSD}}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Unrealized Gain / Loss</div>
+    <div class="card-value {{if ge .UnrealizedGainUSD 0.0}}gain{{else}}loss{{end}}">{{formatUSD .UnrealizedGainUSD}}</div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+<!-- Donut interactivity -->
+<script>
+(function() {
+  var svg = document.getElementById('donut-svg');
+  if (!svg) return;
+  var tip = document.getElementById('donut-tooltip');
+  var wrap = document.getElementById('donut-wrap');
+  var detail = document.getElementById('source-flows-detail');
+  var legend = document.getElementById('donut-legend');
+  var segments = svg.querySelectorAll('.donut-segment');
+
+  function showDetail(source, period) {
+    wrap.style.width = '180px';
+    wrap.style.height = '180px';
+    legend.style.display = 'none';
+    detail.style.display = 'block';
+    htmx.ajax('GET', '/portfolio/source-flows?source=' + source + '&period=' + period, '#source-flows-detail');
+  }
+
+  function resetDonut() {
+    wrap.style.width = '300px';
+    wrap.style.height = '300px';
+    detail.style.display = 'none';
+    detail.innerHTML = '';
+    legend.style.display = 'flex';
+  }
+
+  segments.forEach(function(seg) {
+    seg.addEventListener('mouseenter', function() {
+      var label = seg.getAttribute('data-label');
+      var sats = seg.getAttribute('data-sats');
+      var usd = seg.getAttribute('data-usd');
+      var pct = seg.getAttribute('data-pct');
+      var color = seg.getAttribute('data-color');
+      tip.innerHTML = '<div style="font-weight:600; color:' + color + ';">' + label + '</div>' +
+        '<div>' + sats + ' sats (' + pct + '%)</div>' +
+        '<div style="color:var(--text-muted);">' + usd + '</div>';
+      tip.style.display = 'block';
+      seg.style.opacity = '0.8';
+    });
+    seg.addEventListener('mousemove', function(e) {
+      var rect = wrap.getBoundingClientRect();
+      tip.style.left = (e.clientX - rect.left + 12) + 'px';
+      tip.style.top = (e.clientY - rect.top - 10) + 'px';
+    });
+    seg.addEventListener('mouseleave', function() {
+      tip.style.display = 'none';
+      seg.style.opacity = '1';
+    });
+    seg.addEventListener('click', function() {
+      if (seg.getAttribute('data-clickable') !== 'true') return;
+      showDetail(seg.getAttribute('data-source'), seg.getAttribute('data-period'));
+    });
+  });
+
+  // Clicking outside resets to full size
+  document.addEventListener('click', function(e) {
+    if (!wrap.contains(e.target) && !detail.contains(e.target)) {
+      resetDonut();
+    }
+  });
+})();
+</script>
+
+{{end}}

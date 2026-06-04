@@ -1,0 +1,46 @@
+{{define "portfolio_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Portfolio</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <div class="header-top">
+        <a class="logo" href="/">Satsbook</a>
+        <button class="hamburger" id="hamburger" aria-label="Toggle menu" onclick="document.getElementById('main-nav').classList.toggle('nav-open'); this.classList.toggle('hamburger-open');">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+      {{template "nav" "portfolio"}}
+      <div class="node-info-bar">
+        {{if .NodeAlias}}
+          <strong>{{.NodeAlias}}</strong> &middot;
+          <span class="truncate" title="{{.NodePubKey}}">{{.NodePubKey}}</span> &middot;
+          {{if .NodeSynced}}<span class="synced">synced</span>{{else}}<span class="not-synced">not synced</span>{{end}}
+          &middot; block {{.BlockHeight}} &middot; LND {{.LNDVersion}}
+        {{else}}
+          <span class="not-synced">node unreachable</span>
+        {{end}}
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    {{template "portfolio_content" .}}
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Last synced: {{timeAgo .LastSyncedAt}}</span>
+      <span>
+        {{if .BTCPriceUSD}}BTC {{formatUSD .BTCPriceUSD}} (mempool.space, {{timeAgo .PriceFetchedAt}}){{else}}BTC price unavailable{{end}}
+      </span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}

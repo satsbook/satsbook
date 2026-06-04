@@ -3116,3 +3116,386 @@ func TestDistinctTransactionValues(t *testing.T) {
 	}
 }
 
+// --- Portfolio Breakdown tests ---
+
+func TestPortfolioBreakdownQuery(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed exchange imports
+	seedExchangeImport(t, d, "strike", "pb1", "Purchase", 0.01, 500.0, "2024-01-01T12:00:00Z")
+	seedExchangeImport(t, d, "river", "pb2", "Purchase", 0.02, 1000.0, "2024-01-02T12:00:00Z")
+
+	b, err := d.PortfolioBreakdownQuery(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have exchange balances for strike and river
+	if b.ExchangeSats["strike"] == 0 {
+		t.Error("expected non-zero strike balance")
+	}
+	if b.ExchangeSats["river"] == 0 {
+		t.Error("expected non-zero river balance")
+	}
+	if b.TotalSats != b.OnChainSats+b.ChannelSats+b.ColdStorageSats+b.ExchangeSats["strike"]+b.ExchangeSats["river"] {
+		t.Errorf("total sats mismatch: got %d", b.TotalSats)
+	}
+}
+
+func TestPortfolioBreakdownQuery_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	b, err := d.PortfolioBreakdownQuery(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.TotalSats != 0 {
+		t.Errorf("expected 0 total, got %d", b.TotalSats)
+	}
+}
+
+func TestInsertPortfolioSnapshotWithDetails(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	details := map[string]int64{
+		"onchain":  1_000_000,
+		"channels": 500_000,
+		"strike":   200_000,
+	}
+
+	if err := d.InsertPortfolioSnapshotWithDetails(ctx, 1_700_000, 50000.0, details); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify snapshot was inserted
+	var totalSats int64
+	d.db.QueryRowContext(ctx, `SELECT total_sats FROM portfolio_snapshots ORDER BY id DESC LIMIT 1`).Scan(&totalSats)
+	if totalSats != 1_700_000 {
+		t.Errorf("expected 1700000, got %d", totalSats)
+	}
+
+	// Verify details were inserted
+	var detailCount int
+	d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM portfolio_snapshot_details`).Scan(&detailCount)
+	if detailCount != 3 {
+		t.Errorf("expected 3 detail rows, got %d", detailCount)
+	}
+
+	// Verify specific detail
+	var sats int64
+	d.db.QueryRowContext(ctx, `SELECT sats FROM portfolio_snapshot_details WHERE source = 'onchain'`).Scan(&sats)
+	if sats != 1_000_000 {
+		t.Errorf("expected onchain=1000000, got %d", sats)
+	}
+}
+
+func TestPortfolioSnapshotsWithDetails(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Insert two snapshots on different recent days
+	now := time.Now().UTC()
+	day1 := now.AddDate(0, 0, -2).Format("2006-01-02") + " 12:00:00"
+	day2 := now.AddDate(0, 0, -1).Format("2006-01-02") + " 12:00:00"
+
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshots (captured_at, total_sats, btc_price_usd) VALUES (?, 1000000, 50000)`, day1)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (1, 'onchain', 700000)`)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (1, 'strike', 300000)`)
+
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshots (captured_at, total_sats, btc_price_usd) VALUES (?, 1200000, 51000)`, day2)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (2, 'onchain', 800000)`)
+	d.db.ExecContext(ctx,
+		`INSERT INTO portfolio_snapshot_details (snapshot_id, source, sats) VALUES (2, 'strike', 400000)`)
+
+	details, err := d.PortfolioSnapshotsWithDetails(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have 4 detail rows (2 per day x 2 sources)
+	if len(details) != 4 {
+		t.Fatalf("expected 4 details, got %d", len(details))
+	}
+
+	// First two should be from the same day (day1), last two from day2
+	if details[0].CapturedAt != details[1].CapturedAt {
+		t.Errorf("expected first two from same day, got %v and %v", details[0].CapturedAt, details[1].CapturedAt)
+	}
+	if details[2].CapturedAt != details[3].CapturedAt {
+		t.Errorf("expected last two from same day, got %v and %v", details[2].CapturedAt, details[3].CapturedAt)
+	}
+}
+
+func TestPortfolioSnapshotsWithDetails_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	details, err := d.PortfolioSnapshotsWithDetails(context.Background(), 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(details) != 0 {
+		t.Errorf("expected 0 details, got %d", len(details))
+	}
+}
+
+func TestNetFlowSummary(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed: Purchase (inflow), Sale (outflow)
+	seedExchangeImport(t, d, "strike", "nf1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+	seedExchangeImport(t, d, "strike", "nf2", "Sale", -0.005, -250.0, "2024-06-15T12:00:00Z")
+
+	since, _ := time.Parse(time.RFC3339, "2024-01-01T00:00:00Z")
+	nf, err := d.NetFlowSummary(ctx, since, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if nf.InflowSats == 0 {
+		t.Error("expected non-zero inflows")
+	}
+	if nf.InflowCount == 0 {
+		t.Error("expected non-zero inflow count")
+	}
+	// Sale has negative amount_sat, so outflows should be non-zero
+	if nf.OutflowSats == 0 {
+		t.Error("expected non-zero outflows")
+	}
+}
+
+func TestNetFlowSummary_Empty(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	nf, err := d.NetFlowSummary(context.Background(), time.Time{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nf.InflowSats != 0 || nf.OutflowSats != 0 {
+		t.Errorf("expected zeros, got inflow=%d outflow=%d", nf.InflowSats, nf.OutflowSats)
+	}
+}
+
+func TestNetFlowSummary_ExcludeTransfers(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed: two purchases, one of which we'll mark as transfer
+	seedExchangeImport(t, d, "strike", "xfer1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+	seedExchangeImport(t, d, "strike", "xfer2", "Purchase", 0.02, 1000.0, "2024-06-02T12:00:00Z")
+
+	since, _ := time.Parse(time.RFC3339, "2024-01-01T00:00:00Z")
+
+	// Without excluding transfers: both should count
+	nfAll, err := d.NetFlowSummary(ctx, since, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nfAll.InflowCount != 2 {
+		t.Errorf("expected 2 inflows, got %d", nfAll.InflowCount)
+	}
+
+	// Mark one as transfer (source_id format: source:external_id:tx_type from raw column)
+	if err := d.SetTransferFlag(ctx, "strike:xfer1:Purchase", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Excluding transfers: only one should count
+	nfFiltered, err := d.NetFlowSummary(ctx, since, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nfFiltered.InflowCount != 1 {
+		t.Errorf("expected 1 inflow after excluding transfers, got %d", nfFiltered.InflowCount)
+	}
+	if nfFiltered.InflowSats >= nfAll.InflowSats {
+		t.Errorf("expected fewer inflow sats after excluding, got filtered=%d all=%d", nfFiltered.InflowSats, nfAll.InflowSats)
+	}
+}
+
+func TestSetTransferFlag(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Get flag for non-existent note — should be false
+	val, err := d.GetTransferFlag(ctx, "test:abc:buy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val {
+		t.Error("expected false for non-existent note")
+	}
+
+	// Set to true
+	if err := d.SetTransferFlag(ctx, "test:abc:buy", true); err != nil {
+		t.Fatal(err)
+	}
+	val, err = d.GetTransferFlag(ctx, "test:abc:buy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !val {
+		t.Error("expected true after setting")
+	}
+
+	// Toggle back to false
+	if err := d.SetTransferFlag(ctx, "test:abc:buy", false); err != nil {
+		t.Fatal(err)
+	}
+	val, err = d.GetTransferFlag(ctx, "test:abc:buy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val {
+		t.Error("expected false after unsetting")
+	}
+}
+
+func TestListTransferCandidates(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed: one inflow and one outflow of ~same amount within 24h
+	seedExchangeImport(t, d, "strike", "tc1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+	seedExchangeImport(t, d, "river", "tc2", "Withdrawal", -0.01, -500.0, "2024-06-01T18:00:00Z")
+	// Seed: another that's too far in time
+	seedExchangeImport(t, d, "swan", "tc3", "Withdrawal", -0.01, -500.0, "2024-07-01T12:00:00Z")
+
+	ts, _ := time.Parse(time.RFC3339, "2024-06-01T12:00:00Z")
+	candidates, err := d.ListTransferCandidates(ctx, "strike:tc1:buy", 1_000_000, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should find river:tc2 (opposite direction, within 24h, similar amount)
+	// Should NOT find swan:tc3 (too far in time)
+	if len(candidates) == 0 {
+		t.Error("expected at least one candidate")
+	}
+	for _, c := range candidates {
+		if c.SourceID == "strike:tc1:buy" {
+			t.Error("should not include the source transaction itself")
+		}
+	}
+}
+
+func TestListTransferCandidates_NoMatch(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Only one transaction — no possible matches
+	seedExchangeImport(t, d, "strike", "solo1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+
+	ts, _ := time.Parse(time.RFC3339, "2024-06-01T12:00:00Z")
+	candidates, err := d.ListTransferCandidates(ctx, "strike:solo1:buy", 1_000_000, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Errorf("expected no candidates, got %d", len(candidates))
+	}
+}
+
+func TestAutoTagChannelTransfers(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed a channel with a known channel_point (txid:output_index)
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		if err := tx.UpsertChannels([]Channel{{
+			ChanID:       12345,
+			RemotePubKey: "pubkey1",
+			ChannelPoint: "abc123def456:0",
+			LocalBalance: 500000,
+			Active:       true,
+		}}); err != nil {
+			return err
+		}
+		// Seed a closed channel with closing_tx_hash
+		if err := tx.UpsertChannels([]Channel{{
+			ChanID:        67890,
+			RemotePubKey:  "pubkey2",
+			ChannelPoint:  "open789:1",
+			ClosingTxHash: "close456def",
+			Active:        false,
+		}}); err != nil {
+			return err
+		}
+		// Seed on-chain txns matching both
+		if err := tx.UpsertOnchainTxns([]OnchainTx{
+			{TxHash: "abc123def456", AmountSat: -500000, NumConfirmations: 6, Timestamp: time.Now()},   // channel open
+			{TxHash: "close456def", AmountSat: 490000, NumConfirmations: 6, Timestamp: time.Now()},     // channel close
+			{TxHash: "unrelated999", AmountSat: -100000, NumConfirmations: 6, Timestamp: time.Now()},   // not a channel tx
+		}); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := d.AutoTagChannelTransfers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 auto-tagged, got %d", n)
+	}
+
+	// Verify the channel open tx is tagged
+	flagOpen, err := d.GetTransferFlag(ctx, "abc123def456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flagOpen {
+		t.Error("expected channel open tx to be tagged as transfer")
+	}
+
+	// Verify the channel close tx is tagged
+	flagClose, err := d.GetTransferFlag(ctx, "close456def")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flagClose {
+		t.Error("expected channel close tx to be tagged as transfer")
+	}
+
+	// Verify unrelated tx is NOT tagged
+	flagUnrelated, err := d.GetTransferFlag(ctx, "unrelated999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flagUnrelated {
+		t.Error("expected unrelated tx to NOT be tagged as transfer")
+	}
+
+	// Running again should return 0 (idempotent)
+	n2, err := d.AutoTagChannelTransfers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 0 {
+		t.Errorf("expected 0 on re-run (idempotent), got %d", n2)
+	}
+}
+

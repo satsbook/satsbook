@@ -33,6 +33,12 @@ type DashboardStore interface {
 	PortfolioPosition(ctx context.Context, since time.Time) (*db.PortfolioPositionResult, error)
 	PortfolioSnapshots(ctx context.Context, days int) ([]db.PortfolioSnapshot, error)
 	BackfillPortfolioSnapshots(ctx context.Context) (int, error)
+	PortfolioBreakdownQuery(ctx context.Context) (*db.PortfolioBreakdown, error)
+	NetFlowSummary(ctx context.Context, since time.Time, excludeTransfers bool) (*db.NetFlowResult, error)
+	NetFlowSummaryBySource(ctx context.Context, since time.Time, sources []string, excludeTransfers bool) (*db.NetFlowResult, error)
+	SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error
+	GetTransferFlag(ctx context.Context, sourceID string) (bool, error)
+	ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error)
 }
 
 // NodeInfoProvider fetches node info from LND.

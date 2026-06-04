@@ -20,11 +20,13 @@ type ForwardingEvent struct {
 
 // Channel represents a Lightning Network channel stored in the database.
 type Channel struct {
-	ChanID         uint64
-	RemotePubKey   string
-	LocalBalance   int64
-	RemoteBalance  int64
-	Active         bool
+	ChanID        uint64
+	RemotePubKey  string
+	ChannelPoint  string
+	ClosingTxHash string
+	LocalBalance  int64
+	RemoteBalance int64
+	Active        bool
 }
 
 // Invoice represents a received payment stored in the database.
@@ -145,9 +147,16 @@ func (t *dbSyncTx) UpsertChannels(channels []Channel) error {
 
 	for _, ch := range channels {
 		_, err := t.tx.Exec(
-			`INSERT OR REPLACE INTO channels (chan_id, remote_pubkey, local_balance, remote_balance, active)
-			 VALUES (?, ?, ?, ?, ?)`,
-			ch.ChanID, ch.RemotePubKey, ch.LocalBalance, ch.RemoteBalance, boolToInt(ch.Active),
+			`INSERT INTO channels (chan_id, remote_pubkey, channel_point, closing_tx_hash, local_balance, remote_balance, active)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(chan_id) DO UPDATE SET
+			   remote_pubkey = excluded.remote_pubkey,
+			   channel_point = CASE WHEN excluded.channel_point != '' THEN excluded.channel_point ELSE channels.channel_point END,
+			   closing_tx_hash = CASE WHEN excluded.closing_tx_hash != '' THEN excluded.closing_tx_hash ELSE channels.closing_tx_hash END,
+			   local_balance = excluded.local_balance,
+			   remote_balance = excluded.remote_balance,
+			   active = excluded.active`,
+			ch.ChanID, ch.RemotePubKey, ch.ChannelPoint, ch.ClosingTxHash, ch.LocalBalance, ch.RemoteBalance, boolToInt(ch.Active),
 		)
 		if err != nil {
 			return fmt.Errorf("upsert channel %d: %w", ch.ChanID, err)
