@@ -92,6 +92,10 @@ func NewRenderer() *Renderer {
 			return false
 		},
 		"formatRFC3339": func(t time.Time) string { return t.Format(time.RFC3339) },
+		"domID": func(s string) string {
+			r := strings.NewReplacer(":", "_", " ", "_", "/", "_", ".", "_")
+			return r.Replace(s)
+		},
 		"sourceLabel": templateSourceLabel,
 		"dict": func(kv ...interface{}) (map[string]interface{}, error) {
 			if len(kv)%2 != 0 {

@@ -9,7 +9,7 @@
   {{if .Candidates}}
   <div style="color: var(--text-muted); margin-bottom: 6px; font-size: 0.75rem;">Select the matching transaction:</div>
   {{range .Candidates}}
-  <form hx-post="/api/transactions/transfer/bulk" hx-target="#transfer-{{$.SourceID}}" hx-swap="outerHTML" style="margin-bottom: 4px;">
+  <form hx-post="/api/transactions/transfer/bulk" hx-target="#transfer-{{domID $.SourceID}}" hx-swap="outerHTML" style="margin-bottom: 4px;">
     <input type="hidden" name="source_id" value="{{$.SourceID}}">
     <input type="hidden" name="candidate_id" value="{{.SourceID}}">
     <button type="submit" style="width: 100%; text-align: left; font-size: 0.78rem; padding: 6px 8px;
