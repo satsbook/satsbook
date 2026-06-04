@@ -3260,7 +3260,7 @@ func TestNetFlowSummary(t *testing.T) {
 	seedExchangeImport(t, d, "strike", "nf2", "Sale", -0.005, -250.0, "2024-06-15T12:00:00Z")
 
 	since, _ := time.Parse(time.RFC3339, "2024-01-01T00:00:00Z")
-	nf, err := d.NetFlowSummary(ctx, since)
+	nf, err := d.NetFlowSummary(ctx, since, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3281,12 +3281,136 @@ func TestNetFlowSummary_Empty(t *testing.T) {
 	d := newTestDB(t)
 	defer d.Close()
 
-	nf, err := d.NetFlowSummary(context.Background(), time.Time{})
+	nf, err := d.NetFlowSummary(context.Background(), time.Time{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if nf.InflowSats != 0 || nf.OutflowSats != 0 {
 		t.Errorf("expected zeros, got inflow=%d outflow=%d", nf.InflowSats, nf.OutflowSats)
+	}
+}
+
+func TestNetFlowSummary_ExcludeTransfers(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed: two purchases, one of which we'll mark as transfer
+	seedExchangeImport(t, d, "strike", "xfer1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+	seedExchangeImport(t, d, "strike", "xfer2", "Purchase", 0.02, 1000.0, "2024-06-02T12:00:00Z")
+
+	since, _ := time.Parse(time.RFC3339, "2024-01-01T00:00:00Z")
+
+	// Without excluding transfers: both should count
+	nfAll, err := d.NetFlowSummary(ctx, since, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nfAll.InflowCount != 2 {
+		t.Errorf("expected 2 inflows, got %d", nfAll.InflowCount)
+	}
+
+	// Mark one as transfer (source_id format: source:external_id:tx_type from raw column)
+	if err := d.SetTransferFlag(ctx, "strike:xfer1:Purchase", true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Excluding transfers: only one should count
+	nfFiltered, err := d.NetFlowSummary(ctx, since, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nfFiltered.InflowCount != 1 {
+		t.Errorf("expected 1 inflow after excluding transfers, got %d", nfFiltered.InflowCount)
+	}
+	if nfFiltered.InflowSats >= nfAll.InflowSats {
+		t.Errorf("expected fewer inflow sats after excluding, got filtered=%d all=%d", nfFiltered.InflowSats, nfAll.InflowSats)
+	}
+}
+
+func TestSetTransferFlag(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Get flag for non-existent note — should be false
+	val, err := d.GetTransferFlag(ctx, "test:abc:buy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val {
+		t.Error("expected false for non-existent note")
+	}
+
+	// Set to true
+	if err := d.SetTransferFlag(ctx, "test:abc:buy", true); err != nil {
+		t.Fatal(err)
+	}
+	val, err = d.GetTransferFlag(ctx, "test:abc:buy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !val {
+		t.Error("expected true after setting")
+	}
+
+	// Toggle back to false
+	if err := d.SetTransferFlag(ctx, "test:abc:buy", false); err != nil {
+		t.Fatal(err)
+	}
+	val, err = d.GetTransferFlag(ctx, "test:abc:buy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val {
+		t.Error("expected false after unsetting")
+	}
+}
+
+func TestListTransferCandidates(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed: one inflow and one outflow of ~same amount within 24h
+	seedExchangeImport(t, d, "strike", "tc1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+	seedExchangeImport(t, d, "river", "tc2", "Withdrawal", -0.01, -500.0, "2024-06-01T18:00:00Z")
+	// Seed: another that's too far in time
+	seedExchangeImport(t, d, "swan", "tc3", "Withdrawal", -0.01, -500.0, "2024-07-01T12:00:00Z")
+
+	ts, _ := time.Parse(time.RFC3339, "2024-06-01T12:00:00Z")
+	candidates, err := d.ListTransferCandidates(ctx, "strike:tc1:buy", 1_000_000, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should find river:tc2 (opposite direction, within 24h, similar amount)
+	// Should NOT find swan:tc3 (too far in time)
+	if len(candidates) == 0 {
+		t.Error("expected at least one candidate")
+	}
+	for _, c := range candidates {
+		if c.SourceID == "strike:tc1:buy" {
+			t.Error("should not include the source transaction itself")
+		}
+	}
+}
+
+func TestListTransferCandidates_NoMatch(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Only one transaction — no possible matches
+	seedExchangeImport(t, d, "strike", "solo1", "Purchase", 0.01, 500.0, "2024-06-01T12:00:00Z")
+
+	ts, _ := time.Parse(time.RFC3339, "2024-06-01T12:00:00Z")
+	candidates, err := d.ListTransferCandidates(ctx, "strike:solo1:buy", 1_000_000, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Errorf("expected no candidates, got %d", len(candidates))
 	}
 }
 

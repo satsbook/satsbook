@@ -82,12 +82,12 @@
   <div class="card">
     <div class="card-label">Inflows</div>
     <div class="card-value gain">+{{formatSats .NetFlow.InflowSats}} sats</div>
-    <div class="card-sub">{{.NetFlow.InflowCount}} transactions{{if .NetFlow.InflowUSD}} &middot; {{formatUSD .NetFlow.InflowUSD}}{{end}}</div>
+    <div class="card-sub"><a href="/transactions?flow=inflow" style="color: var(--text-muted);">{{.NetFlow.InflowCount}} transactions</a>{{if .NetFlow.InflowUSD}} &middot; {{formatUSD .NetFlow.InflowUSD}}{{end}}</div>
   </div>
   <div class="card">
     <div class="card-label">Outflows</div>
     <div class="card-value loss">-{{formatSats .NetFlow.OutflowSats}} sats</div>
-    <div class="card-sub">{{.NetFlow.OutflowCount}} transactions{{if .NetFlow.OutflowUSD}} &middot; {{formatUSD .NetFlow.OutflowUSD}}{{end}}</div>
+    <div class="card-sub"><a href="/transactions?flow=outflow" style="color: var(--text-muted);">{{.NetFlow.OutflowCount}} transactions</a>{{if .NetFlow.OutflowUSD}} &middot; {{formatUSD .NetFlow.OutflowUSD}}{{end}}</div>
   </div>
   <div class="card">
     <div class="card-label">Net Change</div>

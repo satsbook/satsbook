@@ -102,8 +102,17 @@ func (m *mockStore) PortfolioBreakdownQuery(ctx context.Context) (*db.PortfolioB
 func (m *mockStore) PortfolioSnapshotsWithDetails(ctx context.Context, days int) ([]db.PortfolioSnapshotDetail, error) {
 	return nil, nil
 }
-func (m *mockStore) NetFlowSummary(ctx context.Context, since time.Time) (*db.NetFlowResult, error) {
+func (m *mockStore) NetFlowSummary(ctx context.Context, since time.Time, excludeTransfers bool) (*db.NetFlowResult, error) {
 	return &db.NetFlowResult{}, nil
+}
+func (m *mockStore) SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error {
+	return nil
+}
+func (m *mockStore) GetTransferFlag(ctx context.Context, sourceID string) (bool, error) {
+	return false, nil
+}
+func (m *mockStore) ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error) {
+	return nil, nil
 }
 
 type mockNodeInfo struct {

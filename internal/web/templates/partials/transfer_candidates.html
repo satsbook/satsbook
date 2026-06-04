@@ -1,0 +1,17 @@
+{{define "transfer_candidates"}}
+{{if .Candidates}}
+<div style="margin-top: 4px; font-size: 0.75rem; color: var(--text-muted);">
+  <div style="margin-bottom: 4px;">Possible matches:</div>
+  {{range .Candidates}}
+  <form style="display: inline;" hx-post="/api/transactions/transfer/bulk" hx-target="closest .transfer-cell" hx-swap="outerHTML">
+    <input type="hidden" name="source_id" value="{{$.SourceID}}">
+    <input type="hidden" name="candidate_id" value="{{.SourceID}}">
+    <button type="submit" style="font-size: 0.7rem; padding: 2px 6px; background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;"
+      title="Mark both as transfer: {{.Source}} {{formatSats .AmountSat}} sats on {{formatDate .Time}}">
+      {{.Source}} {{formatSats .AmountSat}} sats
+    </button>
+  </form>
+  {{end}}
+</div>
+{{end}}
+{{end}}

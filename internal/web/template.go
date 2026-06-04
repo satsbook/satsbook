@@ -135,6 +135,8 @@ func NewRenderer() *Renderer {
 			"templates/transactions_layout.html",
 			"templates/partials/transaction_note.html",
 			"templates/partials/upgrade_required.html",
+			"templates/partials/transfer_badge.html",
+			"templates/partials/transfer_candidates.html",
 		),
 	)
 

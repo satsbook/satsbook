@@ -440,6 +440,10 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_psd_snapshot ON portfolio_snapshot_details(snapshot_id);
 	CREATE INDEX IF NOT EXISTS idx_psd_source ON portfolio_snapshot_details(source);
 	`,
+	// Migration 14: Add is_transfer flag to transaction_notes for marking internal transfers.
+	`
+	ALTER TABLE transaction_notes ADD COLUMN is_transfer INTEGER NOT NULL DEFAULT 0;
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

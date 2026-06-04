@@ -1948,6 +1948,7 @@ type TransactionsPageData struct {
 	TxType   string
 	Source   string
 	Search   string
+	Flow     string // "inflow", "outflow", or ""
 	SortCol  string
 	SortDir  string
 
@@ -1978,12 +1979,14 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 		sortDir = "desc"
 	}
 
+	flow := q.Get("flow")
 	f := db.TransactionFilter{
 		DateFrom: q.Get("from"),
 		DateTo:   q.Get("to"),
 		TxType:   q.Get("type"),
 		Source:   q.Get("source"),
 		Search:   q.Get("q"),
+		Flow:     flow,
 		SortCol:  sortCol,
 		SortDir:  sortDir,
 		Limit:    limit,
@@ -2010,6 +2013,7 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 		TxType:       f.TxType,
 		Source:       f.Source,
 		Search:       f.Search,
+		Flow:         flow,
 		SortCol:      sortCol,
 		SortDir:      sortDir,
 		Sources:      sources,
@@ -2078,6 +2082,105 @@ func (h *Handler) HandleTransactionNoteSave(w http.ResponseWriter, r *http.Reque
 	if err := h.renderer.Render(w, "transaction_note_display", txNoteData{SourceID: sourceID, Note: strings.TrimSpace(note)}); err != nil {
 		h.logger.Printf("render note display: %v", err)
 	}
+}
+
+// HandleTransferToggle serves POST /api/transactions/transfer — toggles is_transfer flag.
+func (h *Handler) HandleTransferToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sourceID := r.FormValue("source_id")
+	if sourceID == "" {
+		http.Error(w, "source_id required", http.StatusBadRequest)
+		return
+	}
+
+	// Toggle: read current, flip it
+	current, _ := h.store.GetTransferFlag(r.Context(), sourceID)
+	newVal := !current
+	if err := h.store.SetTransferFlag(r.Context(), sourceID, newVal); err != nil {
+		h.logger.Printf("set transfer flag: %v", err)
+		http.Error(w, "failed to update", http.StatusInternalServerError)
+		return
+	}
+
+	// Return updated transfer badge partial
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transfer_badge", transferBadgeData{SourceID: sourceID, IsTransfer: newVal}); err != nil {
+		h.logger.Printf("render transfer badge: %v", err)
+	}
+}
+
+// HandleTransferBulk serves POST /api/transactions/transfer/bulk — marks multiple transactions.
+func (h *Handler) HandleTransferBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := r.Context()
+	sourceID := r.FormValue("source_id")
+	candidateID := r.FormValue("candidate_id")
+	if sourceID == "" {
+		http.Error(w, "source_id required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.store.SetTransferFlag(ctx, sourceID, true); err != nil {
+		h.logger.Printf("bulk transfer: %v", err)
+		http.Error(w, "failed to update", http.StatusInternalServerError)
+		return
+	}
+	if candidateID != "" {
+		if err := h.store.SetTransferFlag(ctx, candidateID, true); err != nil {
+			h.logger.Printf("bulk transfer candidate: %v", err)
+		}
+	}
+
+	// Return updated badge for the primary transaction
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transfer_badge", transferBadgeData{SourceID: sourceID, IsTransfer: true}); err != nil {
+		h.logger.Printf("render transfer badge: %v", err)
+	}
+}
+
+// HandleTransferCandidates serves GET /api/transactions/transfer/candidates — auto-suggest.
+func (h *Handler) HandleTransferCandidates(w http.ResponseWriter, r *http.Request) {
+	sourceID := r.URL.Query().Get("source_id")
+	amountSat, _ := strconv.ParseInt(r.URL.Query().Get("amount_sat"), 10, 64)
+	tsStr := r.URL.Query().Get("ts")
+	ts, _ := time.Parse(time.RFC3339, tsStr)
+
+	if sourceID == "" || amountSat == 0 || ts.IsZero() {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		return // empty response
+	}
+
+	candidates, err := h.store.ListTransferCandidates(r.Context(), sourceID, amountSat, ts)
+	if err != nil {
+		h.logger.Printf("transfer candidates: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "transfer_candidates", transferCandidatesData{
+		SourceID:   sourceID,
+		Candidates: candidates,
+	}); err != nil {
+		h.logger.Printf("render transfer candidates: %v", err)
+	}
+}
+
+type transferBadgeData struct {
+	SourceID   string
+	IsTransfer bool
+}
+
+type transferCandidatesData struct {
+	SourceID   string
+	Candidates []db.TransferCandidate
 }
 
 // BreakdownItem represents a single source in the portfolio donut chart / table.
@@ -2197,7 +2300,7 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 
 	var netFlow *db.NetFlowResult
 	fetch(func() {
-		nf, err := h.store.NetFlowSummary(ctx, since)
+		nf, err := h.store.NetFlowSummary(ctx, since, true)
 		if err == nil {
 			mu.Lock()
 			netFlow = nf

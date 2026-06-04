@@ -1299,17 +1299,18 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 
 // UnifiedTransaction represents a single BTC transaction from any source.
 type UnifiedTransaction struct {
-	Source    string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
-	SourceID  string   // unique ID within the source
-	Time      time.Time
-	TxType    string   // buy, sell, send, receive, fee_income
-	AmountSat int64    // positive = inflow, negative = outflow
-	AmountUSD float64
-	FeeSat    int64
-	FeeUSD    float64
-	PriceUSD  float64
-	Memo      string
-	Note      string   // user-editable annotation
+	Source     string    // lnd_forward, lnd_invoice, lnd_payment, lnd_onchain, strike, river, etc.
+	SourceID   string   // unique ID within the source
+	Time       time.Time
+	TxType     string   // buy, sell, send, receive, fee_income
+	AmountSat  int64    // positive = inflow, negative = outflow
+	AmountUSD  float64
+	FeeSat     int64
+	FeeUSD     float64
+	PriceUSD   float64
+	Memo       string
+	Note       string   // user-editable annotation
+	IsTransfer bool     // true if marked as internal transfer
 }
 
 // parseFlexibleTime tries multiple time formats to parse a timestamp string from SQLite.
@@ -1370,6 +1371,7 @@ type TransactionFilter struct {
 	TxType   string // e.g. "buy", "send", or empty for all
 	Source   string // e.g. "strike", "lnd_forward", or empty for all
 	Search   string // free-text search across memo and notes
+	Flow     string // "inflow" (amount_sat > 0), "outflow" (amount_sat < 0), or empty for all
 	SortCol  string // "ts", "amount_sat", "source", "tx_type", "amount_usd"
 	SortDir  string // "asc" or "desc"
 	Limit    int
@@ -1414,6 +1416,11 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (
 		like := "%" + f.Search + "%"
 		args = append(args, like, like, like)
 	}
+	if f.Flow == "inflow" {
+		where = append(where, "v.amount_sat > 0")
+	} else if f.Flow == "outflow" {
+		where = append(where, "v.amount_sat < 0")
+	}
 
 	whereClause := ""
 	if len(where) > 0 {
@@ -1441,7 +1448,8 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (
 
 	dataQuery := fmt.Sprintf(`SELECT v.source, v.source_id, v.ts, v.tx_type, v.amount_sat, v.amount_usd,
 		v.fee_sat, v.fee_usd, COALESCE(v.price_usd, 0), v.memo,
-		COALESCE(n.note, '')
+		COALESCE(n.note, ''),
+		COALESCE(n.is_transfer, 0)
 		FROM btc_transactions_v v
 		LEFT JOIN transaction_notes n ON n.source_id = v.source_id
 		%s ORDER BY %s %s LIMIT ? OFFSET ?`, whereClause, orderCol, orderDir)
@@ -1457,10 +1465,12 @@ func (d *DB) ListUnifiedTransactions(ctx context.Context, f TransactionFilter) (
 	for rows.Next() {
 		var tx UnifiedTransaction
 		var ts string
-		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo, &tx.Note); err != nil {
+		var isTransfer int
+		if err := rows.Scan(&tx.Source, &tx.SourceID, &ts, &tx.TxType, &tx.AmountSat, &tx.AmountUSD, &tx.FeeSat, &tx.FeeUSD, &tx.PriceUSD, &tx.Memo, &tx.Note, &isTransfer); err != nil {
 			return nil, fmt.Errorf("scan unified transaction: %w", err)
 		}
 		tx.Time = parseFlexibleTime(ts)
+		tx.IsTransfer = isTransfer == 1
 		txns = append(txns, tx)
 	}
 
@@ -1859,22 +1869,116 @@ type NetFlowResult struct {
 }
 
 // NetFlowSummary computes inflows and outflows over a period from the unified transaction view.
-func (d *DB) NetFlowSummary(ctx context.Context, since time.Time) (*NetFlowResult, error) {
+// When excludeTransfers is true, transactions marked as internal transfers are excluded.
+func (d *DB) NetFlowSummary(ctx context.Context, since time.Time, excludeTransfers bool) (*NetFlowResult, error) {
 	var result NetFlowResult
-	err := d.db.QueryRowContext(ctx,
-		`SELECT
-			COALESCE(SUM(CASE WHEN amount_sat > 0 THEN amount_sat ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN amount_sat < 0 THEN ABS(amount_sat) ELSE 0 END), 0),
-			COALESCE(COUNT(CASE WHEN amount_sat > 0 THEN 1 END), 0),
-			COALESCE(COUNT(CASE WHEN amount_sat < 0 THEN 1 END), 0),
-			COALESCE(SUM(CASE WHEN amount_usd > 0 THEN amount_usd ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN amount_usd < 0 THEN ABS(amount_usd) ELSE 0 END), 0)
-		 FROM btc_transactions_v
-		 WHERE ts >= ?`, since.UTC().Format("2006-01-02 15:04:05"),
-	).Scan(&result.InflowSats, &result.OutflowSats, &result.InflowCount, &result.OutflowCount,
-		&result.InflowUSD, &result.OutflowUSD)
+
+	transferJoin := ""
+	transferWhere := ""
+	if excludeTransfers {
+		transferJoin = " LEFT JOIN transaction_notes tn ON tn.source_id = v.source_id"
+		transferWhere = " AND COALESCE(tn.is_transfer, 0) = 0"
+	}
+
+	query := fmt.Sprintf(`SELECT
+			COALESCE(SUM(CASE WHEN v.amount_sat > 0 THEN v.amount_sat ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_sat < 0 THEN ABS(v.amount_sat) ELSE 0 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat > 0 THEN 1 END), 0),
+			COALESCE(COUNT(CASE WHEN v.amount_sat < 0 THEN 1 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd > 0 THEN v.amount_usd ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN v.amount_usd < 0 THEN ABS(v.amount_usd) ELSE 0 END), 0)
+		 FROM btc_transactions_v v%s
+		 WHERE v.ts >= ?%s`, transferJoin, transferWhere)
+
+	err := d.db.QueryRowContext(ctx, query, since.UTC().Format("2006-01-02 15:04:05")).
+		Scan(&result.InflowSats, &result.OutflowSats, &result.InflowCount, &result.OutflowCount,
+			&result.InflowUSD, &result.OutflowUSD)
 	if err != nil {
 		return nil, fmt.Errorf("net flow summary: %w", err)
 	}
 	return &result, nil
+}
+
+// SetTransferFlag marks or unmarks a transaction as an internal transfer.
+func (d *DB) SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error {
+	val := 0
+	if isTransfer {
+		val = 1
+	}
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO transaction_notes (source_id, note, is_transfer, updated_at)
+		 VALUES (?, '', ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(source_id) DO UPDATE SET is_transfer = excluded.is_transfer, updated_at = excluded.updated_at`,
+		sourceID, val)
+	return err
+}
+
+// GetTransferFlag returns true if the transaction is marked as an internal transfer.
+func (d *DB) GetTransferFlag(ctx context.Context, sourceID string) (bool, error) {
+	var val int
+	err := d.db.QueryRowContext(ctx,
+		`SELECT COALESCE(is_transfer, 0) FROM transaction_notes WHERE source_id = ?`, sourceID).Scan(&val)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return val == 1, err
+}
+
+// TransferCandidate is a potential matching transaction for auto-suggest.
+type TransferCandidate struct {
+	SourceID  string
+	Source    string
+	TxType    string
+	AmountSat int64
+	Time      time.Time
+}
+
+// ListTransferCandidates finds transactions that might be the other side of a transfer.
+// It looks for opposite-direction transactions within ±24 hours with amount within ±1%.
+func (d *DB) ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]TransferCandidate, error) {
+	absAmount := amountSat
+	if absAmount < 0 {
+		absAmount = -absAmount
+	}
+	// ±1% tolerance for fees
+	minAmt := float64(absAmount) * 0.99
+	maxAmt := float64(absAmount) * 1.01
+
+	// If the original is positive (inflow), look for negative (outflow) and vice versa
+	var amountSign string
+	if amountSat > 0 {
+		amountSign = "v.amount_sat < 0"
+	} else {
+		amountSign = "v.amount_sat > 0"
+	}
+
+	tsStr := ts.UTC().Format("2006-01-02 15:04:05")
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT v.source_id, v.source, v.tx_type, v.amount_sat, v.ts
+		 FROM btc_transactions_v v
+		 LEFT JOIN transaction_notes tn ON tn.source_id = v.source_id
+		 WHERE %s
+		   AND ABS(v.amount_sat) BETWEEN ? AND ?
+		   AND v.ts BETWEEN datetime(?, '-1 day') AND datetime(?, '+1 day')
+		   AND v.source_id != ?
+		   AND COALESCE(tn.is_transfer, 0) = 0
+		 ORDER BY ABS(julianday(v.ts) - julianday(?))
+		 LIMIT 5`, amountSign),
+		minAmt, maxAmt, tsStr, tsStr, sourceID, tsStr)
+	if err != nil {
+		return nil, fmt.Errorf("list transfer candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []TransferCandidate
+	for rows.Next() {
+		var c TransferCandidate
+		var tsVal string
+		if err := rows.Scan(&c.SourceID, &c.Source, &c.TxType, &c.AmountSat, &tsVal); err != nil {
+			return nil, fmt.Errorf("scan transfer candidate: %w", err)
+		}
+		c.Time = parseFlexibleTime(tsVal)
+		candidates = append(candidates, c)
+	}
+	return candidates, rows.Err()
 }

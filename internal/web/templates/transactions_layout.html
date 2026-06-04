@@ -65,6 +65,14 @@
         </select>
       </div>
       <div>
+        <label>Flow</label>
+        <select name="flow">
+          <option value="">All flows</option>
+          <option value="inflow"{{if eq .Flow "inflow"}} selected{{end}}>Inflows</option>
+          <option value="outflow"{{if eq .Flow "outflow"}} selected{{end}}>Outflows</option>
+        </select>
+      </div>
+      <div>
         <label>Search</label>
         <input type="search" name="q" value="{{.Search}}" placeholder="memo, note, ID...">
       </div>
@@ -114,6 +122,7 @@
             </th>
             <th style="padding: 8px 12px;">Memo</th>
             <th style="padding: 8px 12px;">Note</th>
+            <th style="padding: 8px 12px; text-align: center;">Transfer</th>
           </tr>
         </thead>
         <tbody>
@@ -144,6 +153,9 @@
             <td style="padding: 8px 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.Memo}}">{{if .Memo}}{{truncate .Memo 30}}{{else}}-{{end}}</td>
             <td class="note-cell" style="padding: 8px 12px; min-width: 120px;">
               {{template "transaction_note_display" (dict "SourceID" .SourceID "Note" .Note)}}
+            </td>
+            <td style="padding: 8px 12px; text-align: center;">
+              {{template "transfer_badge" (dict "SourceID" .SourceID "IsTransfer" .IsTransfer)}}
             </td>
           </tr>
           {{end}}
@@ -183,4 +195,4 @@
 </body>
 </html>{{end}}
 
-{{define "filter_params"}}from={{.DateFrom}}&to={{.DateTo}}&type={{.TxType}}&source={{.Source}}&q={{.Search}}{{end}}
+{{define "filter_params"}}from={{.DateFrom}}&to={{.DateTo}}&type={{.TxType}}&source={{.Source}}&q={{.Search}}&flow={{.Flow}}{{end}}
