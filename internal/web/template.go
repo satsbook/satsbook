@@ -45,6 +45,7 @@ func NewRenderer() *Renderer {
 		"add": func(a, b int) int { return a + b },
 		"add64":       func(a, b int64) int64 { return a + b },
 		"sub64":       func(a, b int64) int64 { return a - b },
+		"subf":        func(a, b float64) float64 { return a - b },
 		"int64":       func(n int) int64 { return int64(n) },
 		"seq":         seq,
 		"netSats": func(s *db.ExchangeSummaryResult) int64 {

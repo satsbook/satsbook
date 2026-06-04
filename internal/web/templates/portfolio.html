@@ -93,6 +93,7 @@
     <div class="card-label">Net Change</div>
     {{$net := sub64 .NetFlow.InflowSats .NetFlow.OutflowSats}}
     <div class="card-value {{if ge $net (int64 0)}}gain{{else}}loss{{end}}">{{formatSats $net}} sats</div>
+    {{if or .NetFlow.InflowUSD .NetFlow.OutflowUSD}}<div class="card-sub">{{formatUSD (subf .NetFlow.InflowUSD .NetFlow.OutflowUSD)}}</div>{{end}}
   </div>
 </div>
 {{end}}
