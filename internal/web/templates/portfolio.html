@@ -24,26 +24,16 @@
 <!-- Allocation: Interactive Donut -->
 {{if .Items}}
 <h2 style="font-size: 1rem; color: var(--text-muted); margin: 24px 0 12px;">Allocation</h2>
-<div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; margin-bottom: 24px;">
-  <div style="flex-shrink: 0; position: relative;">
+<div id="donut-section" style="display: flex; flex-wrap: wrap; gap: 24px; align-items: center; justify-content: center; margin-bottom: 24px; position: relative;">
+  <div id="donut-wrap" style="width: 300px; height: 300px; transition: width 0.3s, height 0.3s; flex-shrink: 0; position: relative;">
     {{donutChart .Items .SelectedPeriod}}
     <!-- Tooltip -->
     <div id="donut-tooltip" style="display:none; position:absolute; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:8px 12px; font-size:0.8rem; pointer-events:none; white-space:nowrap; z-index:10; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
     </div>
   </div>
-  <!-- Legend -->
-  <div style="flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem;">
-    {{range $i, $item := .Items}}
-    <div style="display: flex; align-items: center; gap: 8px;">
-      <span style="display:inline-block; width:12px; height:12px; border-radius:2px; background:{{index $.DonutColors $i}}; flex-shrink:0;"></span>
-      <span>{{$item.Label}}</span>
-      <span style="margin-left: auto; color: var(--text-muted);">{{printf "%.1f" $item.Pct}}%</span>
-    </div>
-    {{end}}
-  </div>
+  <!-- Source flows detail (appears on click, pushing donut left) -->
+  <div id="source-flows-detail" style="flex: 1; min-width: 280px; display: none;"></div>
 </div>
-<!-- Source flows detail (loaded via HTMX on donut click) -->
-<div id="source-flows-detail"></div>
 {{else}}
 <div class="chart-empty" style="margin: 24px 0;">No portfolio data yet. Import exchange data or connect your LND node to see your allocation breakdown.</div>
 {{end}}
@@ -102,7 +92,10 @@
   var svg = document.getElementById('donut-svg');
   if (!svg) return;
   var tip = document.getElementById('donut-tooltip');
+  var wrap = document.getElementById('donut-wrap');
+  var detail = document.getElementById('source-flows-detail');
   var segments = svg.querySelectorAll('.donut-segment');
+
   segments.forEach(function(seg) {
     seg.addEventListener('mouseenter', function() {
       var label = seg.getAttribute('data-label');
@@ -114,21 +107,37 @@
         '<div>' + sats + ' sats (' + pct + '%)</div>' +
         '<div style="color:var(--text-muted);">' + usd + '</div>';
       tip.style.display = 'block';
+      seg.style.opacity = '0.8';
     });
     seg.addEventListener('mousemove', function(e) {
-      var rect = svg.parentElement.getBoundingClientRect();
+      var rect = wrap.getBoundingClientRect();
       tip.style.left = (e.clientX - rect.left + 12) + 'px';
       tip.style.top = (e.clientY - rect.top - 10) + 'px';
     });
     seg.addEventListener('mouseleave', function() {
       tip.style.display = 'none';
+      seg.style.opacity = '1';
     });
     seg.addEventListener('click', function() {
       if (seg.getAttribute('data-clickable') !== 'true') return;
       var source = seg.getAttribute('data-source');
       var period = seg.getAttribute('data-period');
+      // Shrink donut and show detail
+      wrap.style.width = '180px';
+      wrap.style.height = '180px';
+      detail.style.display = 'block';
       htmx.ajax('GET', '/portfolio/source-flows?source=' + source + '&period=' + period, '#source-flows-detail');
     });
+  });
+
+  // Clicking outside donut resets to full size
+  document.addEventListener('click', function(e) {
+    if (!wrap.contains(e.target) && !detail.contains(e.target)) {
+      wrap.style.width = '300px';
+      wrap.style.height = '300px';
+      detail.style.display = 'none';
+      detail.innerHTML = '';
+    }
   });
 })();
 </script>
