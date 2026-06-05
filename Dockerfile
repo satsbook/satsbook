@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # Stage 2: Minimal runtime image
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata wget
 
 COPY --from=builder /satsbook /usr/local/bin/satsbook
 
@@ -28,5 +28,8 @@ RUN mkdir -p /data
 VOLUME /data
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:${SATSBOOK_APP_PORT:-3017}/health || exit 1
 
 ENTRYPOINT ["satsbook"]

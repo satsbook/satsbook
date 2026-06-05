@@ -27,7 +27,7 @@
       <input type="file" name="file" accept=".csv" required multiple
              style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
     </div>
-    <button type="submit" class="filter-form" style="display: inline-block;">
+    <button type="submit" class="filter-form" hx-disabled-elt="this" style="display: inline-block;">
       Upload
     </button>
     <span id="import-loading" class="htmx-indicator">Importing...</span>
@@ -53,7 +53,7 @@
       <input type="file" name="file" accept=".csv" required multiple
              style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
     </div>
-    <button type="submit" class="filter-form" style="display: inline-block;">
+    <button type="submit" class="filter-form" hx-disabled-elt="this" style="display: inline-block;">
       Upload
     </button>
     <span id="import-loading-river" class="htmx-indicator">Importing...</span>
@@ -79,7 +79,7 @@
       <input type="file" name="file" accept=".csv" required multiple
              style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%;">
     </div>
-    <button type="submit" class="filter-form" style="display: inline-block;">
+    <button type="submit" class="filter-form" hx-disabled-elt="this" style="display: inline-block;">
       Upload
     </button>
     <span id="import-loading-coinbase" class="htmx-indicator">Importing...</span>
@@ -116,7 +116,7 @@
       <input type="file" name="withdrawals" accept=".csv"
              style="background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 8px; width: 100%; box-sizing: border-box;">
     </div>
-    <button type="submit" class="filter-form" style="display: inline-block;">
+    <button type="submit" class="filter-form" hx-disabled-elt="this" style="display: inline-block;">
       Upload
     </button>
     <span id="import-loading-swan" class="htmx-indicator">Importing...</span>

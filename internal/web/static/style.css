@@ -302,6 +302,32 @@ tr:hover { background: var(--bg-hover); }
 }
 .htmx-request .htmx-indicator { display: inline; }
 
+/* Global top-of-page progress bar */
+#htmx-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  background: var(--accent, #f7931a);
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  pointer-events: none;
+}
+#htmx-progress.htmx-indicator {
+  display: block;
+}
+.htmx-request #htmx-progress {
+  opacity: 1;
+  animation: htmx-progress-pulse 1.2s ease-in-out infinite;
+}
+@keyframes htmx-progress-pulse {
+  0%   { transform: scaleX(0.3); transform-origin: left; }
+  50%  { transform: scaleX(0.7); transform-origin: left; }
+  100% { transform: scaleX(0.3); transform-origin: left; }
+}
+
 /* Scan button spinner */
 .scan-spinner {
   display: none;

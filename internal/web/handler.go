@@ -130,6 +130,8 @@ type Handler struct {
 	pendingMonarch   *monarch.PendingClient
 	logger           *log.Logger
 	renderer         *Renderer
+	version          string
+	startTime        time.Time
 }
 
 // NewHandler creates a new Handler.
@@ -141,7 +143,13 @@ func NewHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider
 		importStore: importStore,
 		logger:      logger,
 		renderer:    NewRenderer(),
+		startTime:   time.Now(),
 	}
+}
+
+// SetVersion records the build version for the health endpoint.
+func (h *Handler) SetVersion(v string) {
+	h.version = v
 }
 
 // getNodeInfo returns node info if an LND connection is configured, otherwise nil.
@@ -1241,4 +1249,38 @@ func (h *Handler) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, result.URL, http.StatusFound)
+}
+
+// healthResponse is the JSON payload returned by GET /health.
+type healthResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	Uptime  int64  `json:"uptime_seconds"`
+	DBOK    bool   `json:"db_ok"`
+	LND     bool   `json:"lnd_configured"`
+}
+
+// HandleHealth returns basic system health information.
+// It is always accessible regardless of license tier.
+func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	dbOK := false
+	if _, err := h.store.LastSyncedAt(ctx); err == nil {
+		dbOK = true
+	}
+
+	v := h.version
+	if v == "" {
+		v = "dev"
+	}
+
+	resp := healthResponse{
+		Status:  "ok",
+		Version: v,
+		Uptime:  int64(time.Since(h.startTime).Seconds()),
+		DBOK:    dbOK,
+		LND:     h.node != nil,
+	}
+	h.writeJSON(w, http.StatusOK, resp)
 }

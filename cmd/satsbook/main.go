@@ -109,6 +109,8 @@ func main() {
 	}
 	handler := web.NewHandler(database, nodeProvider, priceCache, database, httpLogger)
 
+	handler.SetVersion(version)
+
 	// Wire up settings store, transaction store, and optional Monarch sync
 	handler.SetSettingsStore(database)
 	handler.SetTransactionStore(database)

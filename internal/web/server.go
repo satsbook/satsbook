@@ -41,6 +41,9 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	staticSub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
+	// Health check (always accessible, no tier required)
+	mux.HandleFunc("/health", handler.HandleHealth)
+
 	// JSON API routes
 	mux.HandleFunc("/api/summary", handler.HandleSummary)
 	mux.HandleFunc("/api/channels", handler.HandleChannels)
