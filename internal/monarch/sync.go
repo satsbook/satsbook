@@ -145,17 +145,29 @@ func NewSyncerWithClients(accounts AccountClient, transactions TransactionClient
 }
 
 // findAccount looks for an existing satsbook account by name.
+// If duplicates exist, it keeps the first and deletes the rest.
 func (s *Syncer) findAccount(ctx context.Context) (string, error) {
 	accounts, err := s.accounts.List(ctx)
 	if err != nil {
 		return "", fmt.Errorf("list accounts: %w", err)
 	}
+	var found []string
 	for _, a := range accounts {
 		if a.DisplayName == accountName {
-			return a.ID, nil
+			found = append(found, a.ID)
 		}
 	}
-	return "", nil
+	if len(found) == 0 {
+		return "", nil
+	}
+	// Clean up duplicates — keep the first, delete the rest
+	for _, dup := range found[1:] {
+		log.Printf("monarch: deleting duplicate account %s (%s)", accountName, dup)
+		if err := s.accounts.Delete(ctx, dup); err != nil {
+			log.Printf("monarch: warning: failed to delete duplicate %s: %v", dup, err)
+		}
+	}
+	return found[0], nil
 }
 
 // ensureAccount finds or creates the satsbook investment account.
@@ -246,17 +258,28 @@ func (s *Syncer) ensureTxAccount(ctx context.Context) (string, error) {
 		return s.txAccountID, nil
 	}
 
-	// Look for existing tx account
+	// Look for existing tx account, cleaning up duplicates
 	accounts, err := s.accounts.List(ctx)
 	if err != nil {
 		return "", fmt.Errorf("list accounts: %w", err)
 	}
+	var found []string
 	for _, a := range accounts {
 		if a.DisplayName == txAccountName {
-			s.txAccountID = a.ID
-			log.Printf("monarch: found existing tx account %s (%s)", txAccountName, a.ID)
-			return a.ID, nil
+			found = append(found, a.ID)
 		}
+	}
+	if len(found) > 0 {
+		// Clean up duplicates
+		for _, dup := range found[1:] {
+			log.Printf("monarch: deleting duplicate tx account %s (%s)", txAccountName, dup)
+			if err := s.accounts.Delete(ctx, dup); err != nil {
+				log.Printf("monarch: warning: failed to delete duplicate tx account %s: %v", dup, err)
+			}
+		}
+		s.txAccountID = found[0]
+		log.Printf("monarch: found existing tx account %s (%s)", txAccountName, found[0])
+		return found[0], nil
 	}
 
 	// Create a manual checking account for transactions
@@ -471,10 +494,11 @@ func notesForTx(tx TxToSync) string {
 }
 
 // recreateAccount deletes the existing account and creates a fresh one.
+// Returns an error if the old account cannot be deleted to prevent duplicates.
 func (s *Syncer) recreateAccount(ctx context.Context, btcQuantity float64) error {
 	if s.accountID != "" {
 		if err := s.accounts.Delete(ctx, s.accountID); err != nil {
-			log.Printf("monarch: warning: failed to delete account %s: %v", s.accountID, err)
+			return fmt.Errorf("delete old account %s before recreate: %w", s.accountID, err)
 		}
 		s.accountID = ""
 	}

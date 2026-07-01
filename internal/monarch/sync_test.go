@@ -20,7 +20,7 @@ type mockAccountClient struct {
 	createHoldErr error
 
 	createdInvAccount *mm.CreateInvestmentsAccountParams
-	deletedAccountID  string
+	deletedAccountIDs []string
 	deletedHoldingID  string
 	createdHolding    *mm.CreateHoldingParams
 	createInvCount    int
@@ -35,7 +35,7 @@ func (m *mockAccountClient) Create(ctx context.Context, params *mm.CreateAccount
 }
 
 func (m *mockAccountClient) Delete(ctx context.Context, accountID string) error {
-	m.deletedAccountID = accountID
+	m.deletedAccountIDs = append(m.deletedAccountIDs, accountID)
 	return m.deleteErr
 }
 
@@ -144,7 +144,7 @@ func TestSyncHolding(t *testing.T) {
 			},
 			btcQty: 2.0,
 			check: func(t *testing.T, m *mockAccountClient) {
-				if m.deletedAccountID != "existing-id" {
+				if len(m.deletedAccountIDs) == 0 || m.deletedAccountIDs[len(m.deletedAccountIDs)-1] != "existing-id" {
 					t.Error("expected account deletion on fallback")
 				}
 				if m.createInvCount != 1 {
@@ -161,11 +161,27 @@ func TestSyncHolding(t *testing.T) {
 			},
 			btcQty: 2.0,
 			check: func(t *testing.T, m *mockAccountClient) {
-				if m.deletedAccountID != "existing-id" {
+				if len(m.deletedAccountIDs) == 0 || m.deletedAccountIDs[len(m.deletedAccountIDs)-1] != "existing-id" {
 					t.Error("expected account deletion on fallback")
 				}
 				if m.createInvCount != 1 {
 					t.Errorf("expected 1 account recreation, got %d", m.createInvCount)
+				}
+			},
+		},
+		{
+			name:   "recreate fails when account delete fails",
+			initID: "existing-id",
+			mock: &mockAccountClient{
+				holdings:   []*mm.Holding{{ID: "h1", Symbol: "BTC", Quantity: 1.0}},
+				delHoldErr: errors.New("hold delete failed"),
+				deleteErr:  errors.New("account delete failed"),
+			},
+			btcQty:  2.0,
+			wantErr: true,
+			check: func(t *testing.T, m *mockAccountClient) {
+				if m.createInvCount != 0 {
+					t.Error("should not create new account when delete fails")
 				}
 			},
 		},
@@ -195,6 +211,9 @@ func TestSyncHolding(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
+				}
+				if tt.check != nil {
+					tt.check(t, tt.mock)
 				}
 				return
 			}
@@ -623,4 +642,35 @@ func TestEnsureDefaultCategory(t *testing.T) {
 			t.Fatal("expected error for nil category lister")
 		}
 	})
+}
+
+func TestFindAccount_CleansDuplicates(t *testing.T) {
+	mock := &mockAccountClient{
+		accounts: []*mm.Account{
+			{ID: "acct-1", DisplayName: "Bitcoin (Satsbook)"},
+			{ID: "acct-2", DisplayName: "Bitcoin (Satsbook)"},
+			{ID: "acct-3", DisplayName: "Bitcoin (Satsbook)"},
+			{ID: "other", DisplayName: "Other Account"},
+		},
+		holdings: []*mm.Holding{{ID: "h1", Symbol: "BTC", Quantity: 1.0}},
+	}
+
+	s := NewSyncerWithClient(mock, "")
+	err := s.SyncHolding(context.Background(), 1.0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have kept acct-1 and deleted acct-2 and acct-3
+	if len(mock.deletedAccountIDs) != 2 {
+		t.Fatalf("expected 2 deletions, got %d: %v", len(mock.deletedAccountIDs), mock.deletedAccountIDs)
+	}
+	if mock.deletedAccountIDs[0] != "acct-2" || mock.deletedAccountIDs[1] != "acct-3" {
+		t.Errorf("expected deletions of acct-2 and acct-3, got %v", mock.deletedAccountIDs)
+	}
+
+	// Should have used the first account
+	if s.accountID != "acct-1" {
+		t.Errorf("expected accountID acct-1, got %s", s.accountID)
+	}
 }
