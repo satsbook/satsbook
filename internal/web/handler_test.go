@@ -1196,3 +1196,92 @@ func TestDonutChart_ZeroPctSkipped(t *testing.T) {
 		t.Error("zero-pct item should be skipped")
 	}
 }
+
+// --- HandleHealth tests ---
+
+func TestHandleHealth_DBOK(t *testing.T) {
+	store := &mockStore{
+		lastSyncedAtFn: func(_ context.Context) (time.Time, error) {
+			return time.Now(), nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	h.SetVersion("1.2.3")
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	h.HandleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Errorf("expected status ok, got %s", body)
+	}
+	if !strings.Contains(body, `"version":"1.2.3"`) {
+		t.Errorf("expected version 1.2.3, got %s", body)
+	}
+	if !strings.Contains(body, `"db_ok":true`) {
+		t.Errorf("expected db_ok true, got %s", body)
+	}
+	if !strings.Contains(body, `"lnd_configured":false`) {
+		t.Errorf("expected lnd_configured false, got %s", body)
+	}
+}
+
+func TestHandleHealth_DBError(t *testing.T) {
+	store := &mockStore{
+		lastSyncedAtFn: func(_ context.Context) (time.Time, error) {
+			return time.Time{}, errors.New("db unavailable")
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	h.HandleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even on DB error (degraded), got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"db_ok":false`) {
+		t.Errorf("expected db_ok false, got %s", w.Body.String())
+	}
+}
+
+func TestHandleHealth_DefaultVersion(t *testing.T) {
+	store := &mockStore{
+		lastSyncedAtFn: func(_ context.Context) (time.Time, error) {
+			return time.Now(), nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	// version not set — should default to "dev"
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	h.HandleHealth(w, req)
+
+	if !strings.Contains(w.Body.String(), `"version":"dev"`) {
+		t.Errorf("expected version dev, got %s", w.Body.String())
+	}
+}
+
+func TestHandleHealth_LNDConfigured(t *testing.T) {
+	store := &mockStore{
+		lastSyncedAtFn: func(_ context.Context) (time.Time, error) {
+			return time.Now(), nil
+		},
+	}
+	node := &mockNodeInfo{info: &lnd.NodeInfo{Alias: "test-node"}}
+	h := newTestHandler(store, node, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	h.HandleHealth(w, req)
+
+	if !strings.Contains(w.Body.String(), `"lnd_configured":true`) {
+		t.Errorf("expected lnd_configured true, got %s", w.Body.String())
+	}
+}

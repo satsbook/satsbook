@@ -20,7 +20,8 @@
     .tx-summary { display: flex; gap: 16px; margin-bottom: 12px; font-size: 0.8rem; color: var(--text-muted); }
   </style>
 </head>
-<body>
+<body hx-indicator="#htmx-progress">
+  <div id="htmx-progress" class="htmx-indicator"></div>
   <header>
     <div class="container header-inner">
       <div class="header-top">

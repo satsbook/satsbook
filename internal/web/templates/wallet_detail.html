@@ -6,7 +6,8 @@
   <title>Satsbook — {{.Wallet.Label}}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body hx-indicator="#htmx-progress">
+  <div id="htmx-progress" class="htmx-indicator"></div>
   <header>
     <div class="container header-inner">
       <div class="header-top">
