@@ -1,6 +1,8 @@
 package web
 
 import (
+	"encoding/csv"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -265,4 +267,56 @@ type transferBadgeData struct {
 type transferCandidatesData struct {
 	SourceID   string
 	Candidates []db.TransferCandidate
+}
+
+// HandleExportTransactions serves GET /api/export/transactions — downloads all transactions as CSV.
+func (h *Handler) HandleExportTransactions(w http.ResponseWriter, r *http.Request) {
+	if h.txStore == nil {
+		http.Error(w, "transaction store not available", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	result, err := h.txStore.ListUnifiedTransactions(ctx, db.TransactionFilter{
+		SortCol: "ts",
+		SortDir: "desc",
+		Limit:   1_000_000,
+	})
+	if err != nil {
+		h.logger.Printf("export transactions: %v", err)
+		http.Error(w, "failed to load transactions", http.StatusInternalServerError)
+		return
+	}
+
+	filename := fmt.Sprintf("satsbook-transactions-%s.csv", time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"date", "type", "source", "amount_sats", "amount_usd", "fee_sats", "fee_usd", "txid", "memo"})
+	for _, tx := range result.Transactions {
+		amountUSD := ""
+		if tx.AmountUSD != 0 {
+			amountUSD = strconv.FormatFloat(tx.AmountUSD, 'f', 2, 64)
+		}
+		feeUSD := ""
+		if tx.FeeUSD != 0 {
+			feeUSD = strconv.FormatFloat(tx.FeeUSD, 'f', 2, 64)
+		}
+		_ = cw.Write([]string{
+			tx.Time.Format(time.RFC3339),
+			tx.TxType,
+			tx.Source,
+			strconv.FormatInt(tx.AmountSat, 10),
+			amountUSD,
+			strconv.FormatInt(tx.FeeSat, 10),
+			feeUSD,
+			tx.SourceID,
+			tx.Memo,
+		})
+	}
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		h.logger.Printf("export transactions: csv flush: %v", err)
+	}
 }

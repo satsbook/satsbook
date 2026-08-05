@@ -44,7 +44,19 @@
   <div id="source-flows-detail" style="flex: 1; min-width: 280px; display: none;"></div>
 </div>
 {{else}}
-<div class="chart-empty" style="margin: 24px 0;">No portfolio data yet. Import exchange data or connect your LND node to see your allocation breakdown.</div>
+<div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: center; justify-content: center; margin: 24px 0;">
+  <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" style="width:200px;height:200px;flex-shrink:0;opacity:0.25;">
+    <circle cx="100" cy="100" r="70" fill="none" stroke="var(--border,#333)" stroke-width="30"/>
+    <text x="100" y="107" text-anchor="middle" font-size="13" fill="var(--text-muted,#888)">No data</text>
+  </svg>
+  <div style="font-size:0.9rem; color:var(--text-muted);">
+    <p style="margin:0 0 12px;">Your portfolio breakdown will appear here once you have data.</p>
+    <ul style="list-style:none;padding:0;margin:0;line-height:2;">
+      <li><a href="/import" style="color:var(--accent,#f7931a);">Import exchange CSVs →</a> <span style="font-size:0.8em;">(Strike, River, Coinbase, Swan)</span></li>
+      <li><a href="/" style="color:var(--text-muted);">Return to dashboard</a></li>
+    </ul>
+  </div>
+</div>
 {{end}}
 
 <!-- Net Flows -->
