@@ -59,6 +59,7 @@ func requireTier(minTier license.Tier, renderer *Renderer) func(http.HandlerFunc
 }
 
 type upgradeData struct {
-	RequiredTier string
-	CurrentTier  string
+	RequiredTier   string
+	CurrentTier    string
+	FeatureMessage string
 }

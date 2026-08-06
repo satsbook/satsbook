@@ -138,6 +138,7 @@ func NewRenderer() *Renderer {
 			"templates/portfolio_layout.html",
 			"templates/portfolio.html",
 			"templates/settings_layout.html",
+			"templates/plans_layout.html",
 			"templates/transactions_layout.html",
 			"templates/partials/transaction_note.html",
 			"templates/partials/upgrade_required.html",

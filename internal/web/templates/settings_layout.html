@@ -95,6 +95,10 @@
       </div>
       {{end}}
 
+      <p style="margin: 4px 0 8px; font-size: 0.8rem;">
+        <a href="/settings/plans" style="color: var(--accent);">Compare all plans →</a>
+      </p>
+
       <details style="margin-top: 8px;">
         <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Enter license key manually</summary>
         <form hx-post="/api/settings/license" hx-target="#license-result" style="display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; max-width: 500px;">
@@ -114,12 +118,7 @@
       </p>
 
       {{if not .MonarchUnlocked}}
-        <div style="padding: 12px; border: 1px solid #555; border-radius: 6px; background: #1a1a1a;">
-          <p style="margin: 0; color: #aaa;">
-            Monarch Money sync requires the <strong>Power</strong> tier.
-            {{if .Tier}}Your current tier: <span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>{{end}}
-          </p>
-        </div>
+        {{template "upgrade_required" (dict "RequiredTier" "power" "CurrentTier" .Tier "FeatureMessage" "Sync your total BTC holdings and transactions to Monarch Money with Power.")}}
       {{else if .MonarchConnected}}
         <div style="margin-bottom: 12px;">
           <span style="color: #4caf50;">Connected</span> &middot;
