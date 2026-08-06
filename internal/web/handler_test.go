@@ -1285,3 +1285,97 @@ func TestHandleHealth_LNDConfigured(t *testing.T) {
 		t.Errorf("expected lnd_configured true, got %s", w.Body.String())
 	}
 }
+
+// --- mockTransactionStore for export tests ---
+
+type mockTransactionStore struct {
+	result *db.UnifiedTransactionPage
+	err    error
+}
+
+func (m *mockTransactionStore) ListUnifiedTransactions(_ context.Context, _ db.TransactionFilter) (*db.UnifiedTransactionPage, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.result != nil {
+		return m.result, nil
+	}
+	return &db.UnifiedTransactionPage{}, nil
+}
+
+func (m *mockTransactionStore) SetTransactionNote(_ context.Context, _, _ string) error { return nil }
+func (m *mockTransactionStore) DistinctTransactionValues(_ context.Context) ([]string, []string, error) {
+	return nil, nil, nil
+}
+
+func TestHandleExportTransactions_CSV(t *testing.T) {
+	ts := time.Date(2025, 3, 15, 10, 0, 0, 0, time.UTC)
+	store := &mockTransactionStore{
+		result: &db.UnifiedTransactionPage{
+			Transactions: []db.UnifiedTransaction{
+				{Source: "strike", SourceID: "tx-1", Time: ts, TxType: "buy", AmountSat: 500000, AmountUSD: 300.00, FeeSat: 100, FeeUSD: 0.06, Memo: "DCA purchase"},
+				{Source: "lnd_forward", SourceID: "fwd-1", Time: ts, TxType: "fee_income", AmountSat: 250, Memo: ""},
+			},
+			Total: 2,
+		},
+	}
+
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	h.SetTransactionStore(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export/transactions", nil)
+	w := httptest.NewRecorder()
+	h.HandleExportTransactions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/csv" {
+		t.Errorf("expected text/csv, got %s", ct)
+	}
+	if !strings.Contains(w.Header().Get("Content-Disposition"), "attachment") {
+		t.Error("expected attachment content-disposition")
+	}
+
+	body := w.Body.String()
+	if !strings.HasPrefix(body, "date,type,source,amount_sats,amount_usd,fee_sats,fee_usd,txid,memo") {
+		t.Errorf("unexpected CSV header: %q", strings.SplitN(body, "\n", 2)[0])
+	}
+	if !strings.Contains(body, "strike") {
+		t.Error("expected strike row in CSV")
+	}
+	if !strings.Contains(body, "DCA purchase") {
+		t.Error("expected memo in CSV")
+	}
+	if !strings.Contains(body, "500000") {
+		t.Error("expected amount_sats in CSV")
+	}
+}
+
+func TestHandleExportTransactions_NoStore(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	// txStore intentionally not set
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export/transactions", nil)
+	w := httptest.NewRecorder()
+	h.HandleExportTransactions(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestHandleExportTransactions_StoreError(t *testing.T) {
+	store := &mockTransactionStore{err: errors.New("db error")}
+
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	h.SetTransactionStore(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export/transactions", nil)
+	w := httptest.NewRecorder()
+	h.HandleExportTransactions(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+}

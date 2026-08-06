@@ -35,7 +35,10 @@
   </header>
 
   <main class="container" style="padding: 24px 16px;">
-    <h1 style="margin: 0 0 16px; font-size: 1.25rem;">All Transactions</h1>
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
+      <h1 style="margin: 0; font-size: 1.25rem;">All Transactions</h1>
+      <a href="/api/export/transactions" style="font-size: 0.8rem; padding: 6px 14px; background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; text-decoration: none;">↓ Export CSV</a>
+    </div>
 
     <!-- Filters -->
     <form method="GET" action="/transactions" class="tx-filters">
