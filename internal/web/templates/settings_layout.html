@@ -111,6 +111,39 @@
     </section>
 
     <section class="card" style="margin-top: 16px;">
+      <h3>Strike API Sync</h3>
+      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+        Connect your Strike account via API key to automatically sync transaction history.
+        New transactions are imported every sync cycle. Existing CSV-imported data is deduplicated automatically.
+      </p>
+
+      {{if .StrikeAPIConnected}}
+        <div style="margin-bottom: 12px;">
+          <span style="color: #4caf50;">Connected</span> &middot;
+          <code>{{.StrikeAPIKey}}</code>
+        </div>
+        <div id="strike-result">
+          <button hx-post="/api/settings/strike/disconnect" hx-target="#strike-result" hx-confirm="Remove Strike API key?" class="btn btn-danger">
+            Disconnect
+          </button>
+        </div>
+      {{else}}
+        <form hx-post="/api/settings/strike/key" hx-target="#strike-result" style="display: flex; gap: 8px; align-items: flex-end; max-width: 500px;">
+          <div style="flex: 1;">
+            <label for="strike_api_key" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Strike API Key</label>
+            <input type="password" id="strike_api_key" name="strike_api_key" placeholder="sk_..." style="width: 100%;" required autocomplete="off">
+          </div>
+          <button type="submit" class="btn btn-primary">Connect</button>
+        </form>
+        <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
+          Generate a read-only API key at <a href="https://dashboard.strike.me" target="_blank" rel="noopener noreferrer" style="color: #4fc3f7;">dashboard.strike.me</a> → API → Create Key.
+          The <code>partner.invoice.read</code> scope is required.
+        </p>
+        <div id="strike-result" style="margin-top: 8px;"></div>
+      {{end}}
+    </section>
+
+    <section class="card" style="margin-top: 16px;">
       <h3>Monarch Money Integration <span class="tier-badge tier-power">power</span></h3>
       <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
         Sync your total BTC holdings to a Monarch Money investment account.
