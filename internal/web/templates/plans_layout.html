@@ -1,0 +1,135 @@
+{{define "plans_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Plans</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <style>
+    .plans-grid { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 24px; }
+    .plan-card {
+      flex: 1; min-width: 220px; border: 1px solid var(--border, #333);
+      border-radius: 10px; padding: 24px; position: relative;
+    }
+    .plan-card.current { border-color: var(--accent, #f7931a); }
+    .plan-name { font-size: 1.15rem; font-weight: 700; margin: 0 0 4px; }
+    .plan-price { font-size: 1.5rem; font-weight: 700; margin: 8px 0 4px; }
+    .plan-price span { font-size: 0.8rem; font-weight: 400; color: var(--text-muted); }
+    .plan-badge {
+      position: absolute; top: 16px; right: 16px;
+      background: var(--accent, #f7931a); color: #000;
+      font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+    }
+    .plan-features { list-style: none; padding: 0; margin: 16px 0 20px; font-size: 0.85rem; color: var(--text-muted); line-height: 2; }
+    .plan-features li::before { content: "✓ "; color: var(--accent, #f7931a); font-weight: 700; }
+    .plan-features li.muted::before { content: "— "; color: var(--border); }
+    .plan-features li.muted { color: var(--border); }
+    .plan-cta {
+      display: inline-block; padding: 8px 20px; border-radius: 6px;
+      background: var(--accent, #f7931a); color: #000; text-decoration: none;
+      font-size: 0.85rem; font-weight: 700; width: 100%; text-align: center; box-sizing: border-box;
+    }
+    .plan-cta.current-cta {
+      background: transparent; color: var(--text-muted);
+      border: 1px solid var(--border); cursor: default; pointer-events: none;
+    }
+  </style>
+</head>
+<body hx-indicator="#htmx-progress">
+  <div id="htmx-progress" class="htmx-indicator"></div>
+  <header>
+    <div class="container header-inner">
+      <div class="header-top">
+        <a class="logo" href="/">Satsbook</a>
+        <button class="hamburger" id="hamburger" aria-label="Toggle menu" onclick="document.getElementById('main-nav').classList.toggle('nav-open'); this.classList.toggle('hamburger-open');">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+      {{template "nav" "settings"}}
+    </div>
+  </header>
+
+  <main class="container" style="padding: 24px 16px;">
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px;">
+      <h2 style="margin: 0;">Plans</h2>
+      <a href="/settings" style="font-size: 0.8rem; color: var(--text-muted);">← Back to Settings</a>
+    </div>
+    <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0 0 8px;">
+      Your current plan: <span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>
+    </p>
+
+    <div class="plans-grid">
+
+      <!-- Free -->
+      <div class="plan-card{{if eq .Tier "free"}} current{{end}}">
+        {{if eq .Tier "free"}}<div class="plan-badge">Current</div>{{end}}
+        <div class="plan-name">Free</div>
+        <div class="plan-price">$0 <span>/ forever</span></div>
+        <ul class="plan-features">
+          <li>Lightning node dashboard</li>
+          <li>Routing fee tracking</li>
+          <li>Exchange CSV imports</li>
+          <li>Unified transaction ledger</li>
+          <li>Portfolio breakdown</li>
+          <li>Cold storage wallet tracking</li>
+          <li>Raw data export (CSV)</li>
+          <li class="muted">Tax cost basis engine</li>
+          <li class="muted">Form 8949 export</li>
+          <li class="muted">Monarch Money sync</li>
+        </ul>
+        <span class="plan-cta current-cta">Free forever</span>
+      </div>
+
+      <!-- Pro -->
+      <div class="plan-card{{if eq .Tier "pro"}} current{{end}}">
+        {{if eq .Tier "pro"}}<div class="plan-badge">Current</div>{{end}}
+        <div class="plan-name">Pro</div>
+        <div class="plan-price">$9 <span>/ month</span></div>
+        <ul class="plan-features">
+          <li>Everything in Free</li>
+          <li>FIFO / LIFO cost basis engine</li>
+          <li>Form 8949 CSV export</li>
+          <li>Tax summary dashboard</li>
+          <li class="muted">Monarch Money sync</li>
+        </ul>
+        {{if eq .Tier "free"}}
+        <a href="/api/subscribe?tier=pro" class="plan-cta">Upgrade to Pro</a>
+        {{else if eq .Tier "pro"}}
+        <span class="plan-cta current-cta">Current plan</span>
+        {{else}}
+        <span class="plan-cta current-cta">Included in Power</span>
+        {{end}}
+      </div>
+
+      <!-- Power -->
+      <div class="plan-card{{if eq .Tier "power"}} current{{end}}">
+        {{if eq .Tier "power"}}<div class="plan-badge">Current</div>{{end}}
+        <div class="plan-name">Power</div>
+        <div class="plan-price">$19 <span>/ month</span></div>
+        <ul class="plan-features">
+          <li>Everything in Pro</li>
+          <li>Monarch Money net worth sync</li>
+          <li>Transaction export to Monarch</li>
+        </ul>
+        {{if eq .Tier "power"}}
+        <span class="plan-cta current-cta">Current plan</span>
+        {{else}}
+        <a href="/api/subscribe?tier=power" class="plan-cta">Upgrade to Power</a>
+        {{end}}
+      </div>
+
+    </div>
+
+    <p style="margin-top: 24px; font-size: 0.8rem; color: var(--text-muted);">
+      Already have a license key? <a href="/settings" style="color: var(--accent);">Enter it in Settings →</a>
+    </p>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook</span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}

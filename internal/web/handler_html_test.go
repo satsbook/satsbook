@@ -15,6 +15,7 @@ import (
 
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/exchange"
+	"github.com/satsbook/satsbook/internal/license"
 	"github.com/satsbook/satsbook/internal/lnd"
 )
 
@@ -1054,5 +1055,76 @@ func TestHandleRemoveWallet_InvalidID(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// --- Plans page tests ---
+
+func TestHandlePlansPage_Free(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/plans", nil)
+	// No tier in context → defaults to free
+	w := httptest.NewRecorder()
+	h.HandlePlansPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Upgrade to Pro") {
+		t.Error("expected Pro upgrade CTA for free tier")
+	}
+	if !strings.Contains(body, "Upgrade to Power") {
+		t.Error("expected Power upgrade CTA for free tier")
+	}
+	if !strings.Contains(body, "Current") {
+		t.Error("expected Current badge on free plan")
+	}
+	if !strings.Contains(body, "Free forever") {
+		t.Error("expected 'Free forever' label on free plan card")
+	}
+}
+
+func TestHandlePlansPage_Pro(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/plans", nil)
+	ctx := context.WithValue(req.Context(), tierContextKey, license.TierPro)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	h.HandlePlansPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Current plan") {
+		t.Error("expected 'Current plan' on Pro card")
+	}
+	if !strings.Contains(body, "Upgrade to Power") {
+		t.Error("expected Power upgrade CTA for pro tier")
+	}
+}
+
+func TestHandlePlansPage_Power(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/plans", nil)
+	ctx := context.WithValue(req.Context(), tierContextKey, license.TierPower)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	h.HandlePlansPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Count(body, "Current plan") < 1 {
+		t.Error("expected 'Current plan' badge for power tier")
+	}
+	// No upgrade CTAs should be active
+	if strings.Contains(body, `href="/api/subscribe`) {
+		t.Error("should not show subscribe links when already on Power")
 	}
 }

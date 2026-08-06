@@ -34,6 +34,7 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/portfolio", handler.HandlePortfolioPage)
 	mux.HandleFunc("/portfolio/source-flows", handler.HandlePortfolioSourceFlows)
 	mux.HandleFunc("/settings", handler.HandleSettingsPage)
+	mux.HandleFunc("/settings/plans", handler.HandlePlansPage)
 	mux.HandleFunc("/tax", handler.HandleTaxPage)
 	mux.HandleFunc("/transactions", handler.HandleTransactionsPage)
 

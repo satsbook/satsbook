@@ -90,6 +90,23 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// PlansPageData holds data for the /settings/plans page.
+type PlansPageData struct {
+	Tier string
+}
+
+// HandlePlansPage serves GET /settings/plans.
+func (h *Handler) HandlePlansPage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	data := PlansPageData{
+		Tier: string(TierFromContext(ctx)),
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.renderer.Render(w, "plans_layout", data); err != nil {
+		h.logger.Printf("failed to render plans page: %v", err)
+	}
+}
+
 // HandleMonarchSave handles POST /api/monarch/save — logs into Monarch and stores the auth token.
 // Supports two-step flow: if OTP is required, returns an OTP input form.
 func (h *Handler) HandleMonarchSave(w http.ResponseWriter, r *http.Request) {

@@ -2,7 +2,11 @@
 <div class="upgrade-required">
     <div class="upgrade-icon">&#x1f512;</div>
     <h3>{{if eq .RequiredTier "power"}}Power{{else}}Pro{{end}} Feature</h3>
+    {{if .FeatureMessage}}
+    <p>{{.FeatureMessage}}</p>
+    {{else}}
     <p>This feature requires a <strong>{{if eq .RequiredTier "power"}}Power{{else}}Pro{{end}}</strong> subscription.</p>
+    {{end}}
     {{if eq .CurrentTier "free"}}
     <p class="upgrade-hint">You are currently on the <strong>Free</strong> tier.</p>
     {{else if eq .CurrentTier "pro"}}
@@ -11,11 +15,10 @@
     <div style="margin-top: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
       <a href="/api/subscribe?tier={{.RequiredTier}}"
          style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
-        Subscribe to {{if eq .RequiredTier "power"}}Power{{else}}Pro{{end}}
+        Upgrade to {{if eq .RequiredTier "power"}}Power{{else}}Pro{{end}}
       </a>
-      <a href="/settings" style="color: #4fc3f7; font-size: 0.85rem;">
-        Already have a key? Go to Settings
-      </a>
+      <a href="/settings/plans" style="color: #4fc3f7; font-size: 0.85rem;">Compare plans →</a>
+      <a href="/settings" style="color: #888; font-size: 0.85rem;">Already have a key?</a>
     </div>
 </div>
 {{end}}
