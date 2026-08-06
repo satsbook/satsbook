@@ -113,8 +113,9 @@
     <section class="card" style="margin-top: 16px;">
       <h3>Strike API Sync</h3>
       <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
-        Connect your Strike account via API key to automatically sync transaction history.
-        New transactions are imported every sync cycle. Existing CSV-imported data is deduplicated automatically.
+        Connect your Strike API key to automatically sync Lightning invoice receives and your live BTC balance.
+        <strong>Note:</strong> The Strike API only exposes invoices you created (Lightning receives).
+        BTC purchases, DCA orders, sales, and withdrawals are not available via the API — continue using CSV import for those.
       </p>
 
       {{if .StrikeAPIConnected}}
