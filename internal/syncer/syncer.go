@@ -80,6 +80,7 @@ type Syncer struct {
 	settings       SettingsReader
 	strikeClient   StrikeRowFetcher
 	strikeImporter StrikeImporter
+	strikeTrigger  chan struct{}
 	logger         *log.Logger
 	syncInterval   time.Duration
 	maxHistoryDays int
@@ -93,6 +94,7 @@ func New(lnd LNDClient, store Store, logger *log.Logger, syncInterval time.Durat
 		logger:         logger,
 		syncInterval:   syncInterval,
 		maxHistoryDays: maxHistoryDays,
+		strikeTrigger:  make(chan struct{}, 1),
 	}
 }
 
@@ -114,9 +116,16 @@ func (s *Syncer) SetMonarchTxSync(txStore MonarchTxStore, settings SettingsReade
 }
 
 // SetStrikeClient sets the Strike API client and importer for automatic syncing.
+// If a non-nil client is provided, an immediate sync is triggered.
 func (s *Syncer) SetStrikeClient(client StrikeRowFetcher, importer StrikeImporter) {
 	s.strikeClient = client
 	s.strikeImporter = importer
+	if client != nil {
+		select {
+		case s.strikeTrigger <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // Run blocks until ctx is cancelled, syncing on startup and then on the configured interval.
@@ -137,6 +146,8 @@ func (s *Syncer) Run(ctx context.Context) {
 			if err := s.Sync(ctx); err != nil {
 				s.logger.Printf("sync failed: %v", err)
 			}
+		case <-s.strikeTrigger:
+			s.syncStrikeAPI(ctx)
 		}
 	}
 }
