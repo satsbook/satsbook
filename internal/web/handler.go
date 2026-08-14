@@ -39,6 +39,7 @@ type DashboardStore interface {
 	SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error
 	GetTransferFlag(ctx context.Context, sourceID string) (bool, error)
 	ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error)
+	StrikeCollateralSats(ctx context.Context) (int64, error)
 }
 
 // NodeInfoProvider fetches node info from LND.
