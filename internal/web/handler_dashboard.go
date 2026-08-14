@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -291,6 +292,14 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.FeesAllTimeSats = res.portfolioAll.RoutingFeesSats
 		data.RoutedAllTime = res.portfolioAll.RoutedCount
 		data.StrikeBalanceSats = res.portfolioAll.BySource["strike"].NetSats
+		// Override with live API balance when available (more accurate than tx-calculated).
+		if h.settingsStore != nil {
+			if v, _ := h.settingsStore.GetSetting(ctx, "strike_live_balance_sats"); v != "" {
+				if liveBalance, err := strconv.ParseInt(v, 10, 64); err == nil && liveBalance > 0 {
+					data.StrikeBalanceSats = liveBalance
+				}
+			}
+		}
 		data.RiverBalanceSats = res.portfolioAll.BySource["river"].NetSats
 		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
 		data.SwanBalanceSats = res.portfolioAll.BySource["swan"].NetSats

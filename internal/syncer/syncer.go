@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,14 +60,16 @@ type SettingsReader interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 }
 
-// StrikeRowFetcher fetches transaction rows from the Strike REST API.
+// StrikeRowFetcher fetches transaction rows and live balance from the Strike REST API.
 type StrikeRowFetcher interface {
 	FetchRows(ctx context.Context) ([]exchange.StrikeRow, error)
+	FetchBalance(ctx context.Context) (int64, error)
 }
 
 // StrikeImporter persists Strike rows to the database.
 type StrikeImporter interface {
 	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+	SetSetting(ctx context.Context, key, value string) error
 }
 
 // Syncer orchestrates LND data synchronization.
@@ -280,9 +283,21 @@ func (s *Syncer) syncMonarchTransactions(ctx context.Context) {
 	s.logger.Printf("monarch tx sync: %d created, %d skipped, %d errors", result.Created, result.Skipped, result.Errors)
 }
 
-// syncStrikeAPI fetches new transactions from Strike and imports them.
+// syncStrikeAPI fetches new transactions and live balance from Strike and persists them.
 func (s *Syncer) syncStrikeAPI(ctx context.Context) {
 	s.logger.Printf("strike api sync: starting")
+
+	// Fetch and store live balance.
+	if sats, err := s.strikeClient.FetchBalance(ctx); err != nil {
+		s.logger.Printf("strike api sync: fetch balance: %v", err)
+	} else {
+		if err := s.strikeImporter.SetSetting(ctx, "strike_live_balance_sats", strconv.FormatInt(sats, 10)); err != nil {
+			s.logger.Printf("strike api sync: store balance: %v", err)
+		} else {
+			s.logger.Printf("strike api sync: balance %d sats", sats)
+		}
+	}
+
 	rows, err := s.strikeClient.FetchRows(ctx)
 	if err != nil {
 		s.logger.Printf("strike api sync: fetch rows: %v", err)

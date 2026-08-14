@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -264,10 +265,17 @@ func main() {
 // runStrikeSync runs a Strike API sync immediately and then on the given interval.
 // Used in dashboard-only mode (no LND syncer). The syncer handles this automatically
 // when LND is configured.
-func runStrikeSync(ctx context.Context, client *exchange.StrikeAPIClient, importer interface {
+func runStrikeSync(ctx context.Context, client *exchange.StrikeAPIClient, store interface {
 	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+	SetSetting(ctx context.Context, key, value string) error
 }, interval time.Duration, logger *log.Logger) {
 	doSync := func() {
+		if sats, err := client.FetchBalance(ctx); err != nil {
+			logger.Printf("fetch balance: %v", err)
+		} else if err := store.SetSetting(ctx, "strike_live_balance_sats", strconv.FormatInt(sats, 10)); err != nil {
+			logger.Printf("store balance: %v", err)
+		}
+
 		rows, err := client.FetchRows(ctx)
 		if err != nil {
 			logger.Printf("fetch rows: %v", err)
@@ -276,7 +284,7 @@ func runStrikeSync(ctx context.Context, client *exchange.StrikeAPIClient, import
 		if len(rows) == 0 {
 			return
 		}
-		summary, err := importer.ImportStrikeCSV(ctx, rows)
+		summary, err := store.ImportStrikeCSV(ctx, rows)
 		if err != nil {
 			logger.Printf("import: %v", err)
 			return
