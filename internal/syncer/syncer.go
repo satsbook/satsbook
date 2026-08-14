@@ -282,11 +282,13 @@ func (s *Syncer) syncMonarchTransactions(ctx context.Context) {
 
 // syncStrikeAPI fetches new transactions from Strike and imports them.
 func (s *Syncer) syncStrikeAPI(ctx context.Context) {
+	s.logger.Printf("strike api sync: starting")
 	rows, err := s.strikeClient.FetchRows(ctx)
 	if err != nil {
 		s.logger.Printf("strike api sync: fetch rows: %v", err)
 		return
 	}
+	s.logger.Printf("strike api sync: fetched %d rows", len(rows))
 	if len(rows) == 0 {
 		return
 	}
@@ -295,9 +297,7 @@ func (s *Syncer) syncStrikeAPI(ctx context.Context) {
 		s.logger.Printf("strike api sync: import: %v", err)
 		return
 	}
-	if summary.NewPurchases > 0 || summary.Updated > 0 {
-		s.logger.Printf("strike api sync: %d new, %d updated, %d duplicates", summary.NewPurchases, summary.Updated, summary.Duplicates)
-	}
+	s.logger.Printf("strike api sync: %d new, %d updated, %d duplicates", summary.NewPurchases, summary.Updated, summary.Duplicates)
 }
 
 // syncCycle is the core sync logic, executed within a transaction.
