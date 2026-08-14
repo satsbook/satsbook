@@ -293,10 +293,13 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.RoutedAllTime = res.portfolioAll.RoutedCount
 		data.StrikeBalanceSats = res.portfolioAll.BySource["strike"].NetSats
 		// Override with live API balance when available (more accurate than tx-calculated).
+		// Also adjust the aggregate exchange balance so TotalBTCSats reflects the live value.
 		if h.settingsStore != nil {
 			if v, _ := h.settingsStore.GetSetting(ctx, "strike_live_balance_sats"); v != "" {
 				if liveBalance, err := strconv.ParseInt(v, 10, 64); err == nil && liveBalance > 0 {
+					delta := liveBalance - data.StrikeBalanceSats
 					data.StrikeBalanceSats = liveBalance
+					data.ExchangeBalanceSats += delta
 				}
 			}
 		}
