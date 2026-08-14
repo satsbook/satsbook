@@ -2,7 +2,6 @@ package web
 
 import (
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -299,17 +298,6 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.TotalCostBasisUSD = res.portfolioAll.TotalCostBasisUSD
 		if res.portfolioAll.PurchasedSats > 0 {
 			data.AvgCostPerBTC = res.portfolioAll.TotalCostBasisUSD / (float64(res.portfolioAll.PurchasedSats) / 1e8)
-		}
-		// Override Strike balance with live API value when available.
-		// Adjust the aggregate so TotalBTCSats stays consistent.
-		if h.settingsStore != nil {
-			if v, _ := h.settingsStore.GetSetting(ctx, "strike_live_balance_sats"); v != "" {
-				if liveBalance, err := strconv.ParseInt(v, 10, 64); err == nil && liveBalance > 0 {
-					delta := liveBalance - data.StrikeBalanceSats
-					data.StrikeBalanceSats = liveBalance
-					data.ExchangeBalanceSats += delta
-				}
-			}
 		}
 	}
 
