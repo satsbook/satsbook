@@ -292,8 +292,16 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.FeesAllTimeSats = res.portfolioAll.RoutingFeesSats
 		data.RoutedAllTime = res.portfolioAll.RoutedCount
 		data.StrikeBalanceSats = res.portfolioAll.BySource["strike"].NetSats
-		// Override with live API balance when available (more accurate than tx-calculated).
-		// Also adjust the aggregate exchange balance so TotalBTCSats reflects the live value.
+		data.RiverBalanceSats = res.portfolioAll.BySource["river"].NetSats
+		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
+		data.SwanBalanceSats = res.portfolioAll.BySource["swan"].NetSats
+		data.ExchangeBalanceSats = res.portfolioAll.ExchangeNetSats
+		data.TotalCostBasisUSD = res.portfolioAll.TotalCostBasisUSD
+		if res.portfolioAll.PurchasedSats > 0 {
+			data.AvgCostPerBTC = res.portfolioAll.TotalCostBasisUSD / (float64(res.portfolioAll.PurchasedSats) / 1e8)
+		}
+		// Override Strike balance with live API value when available.
+		// Adjust the aggregate so TotalBTCSats stays consistent.
 		if h.settingsStore != nil {
 			if v, _ := h.settingsStore.GetSetting(ctx, "strike_live_balance_sats"); v != "" {
 				if liveBalance, err := strconv.ParseInt(v, 10, 64); err == nil && liveBalance > 0 {
@@ -302,14 +310,6 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 					data.ExchangeBalanceSats += delta
 				}
 			}
-		}
-		data.RiverBalanceSats = res.portfolioAll.BySource["river"].NetSats
-		data.CoinbaseBalanceSats = res.portfolioAll.BySource["coinbase"].NetSats
-		data.SwanBalanceSats = res.portfolioAll.BySource["swan"].NetSats
-		data.ExchangeBalanceSats = res.portfolioAll.ExchangeNetSats
-		data.TotalCostBasisUSD = res.portfolioAll.TotalCostBasisUSD
-		if res.portfolioAll.PurchasedSats > 0 {
-			data.AvgCostPerBTC = res.portfolioAll.TotalCostBasisUSD / (float64(res.portfolioAll.PurchasedSats) / 1e8)
 		}
 	}
 
