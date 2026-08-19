@@ -62,7 +62,7 @@ func WithRPCTimeout(d time.Duration) BitcoinRPCOption {
 func NewBitcoinRPCScanner(host string, port int, opts ...BitcoinRPCOption) *BitcoinRPCScanner {
 	s := &BitcoinRPCScanner{
 		url:    fmt.Sprintf("http://%s:%d", host, port),
-		client: &http.Client{Timeout: 90 * time.Second},
+		client: &http.Client{Timeout: 8 * time.Minute},
 		logger: log.Default(),
 	}
 	for _, opt := range opts {

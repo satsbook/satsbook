@@ -46,6 +46,9 @@ type Config struct {
 	// Monarch Money sync settings
 	MonarchToken     string
 	MonarchAccountID string
+
+	// Exchange API keys
+	StrikeAPIKey string
 }
 
 // Load reads configuration from environment variables.
@@ -90,6 +93,9 @@ func Load() (*Config, error) {
 		// Monarch Money sync
 		MonarchToken:     getEnv("SATSBOOK_MONARCH_TOKEN", ""),
 		MonarchAccountID: getEnv("SATSBOOK_MONARCH_ACCOUNT_ID", ""),
+
+		// Exchange API keys
+		StrikeAPIKey: getEnv("SATSBOOK_STRIKE_API_KEY", ""),
 	}
 
 	// Validate required fields

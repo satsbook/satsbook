@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
@@ -39,6 +40,7 @@ type DashboardStore interface {
 	SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error
 	GetTransferFlag(ctx context.Context, sourceID string) (bool, error)
 	ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error)
+	StrikeCollateralSats(ctx context.Context) (int64, error)
 }
 
 // NodeInfoProvider fetches node info from LND.
@@ -124,14 +126,17 @@ type Handler struct {
 	monarchSyncer    MonarchSyncer
 	monarchTxStore   MonarchTxStore
 	taxStore         TaxStore
-	licenseChecker   *license.DefaultChecker
-	checkoutBaseURL  string // e.g. "https://api.satsbook.io"
-	onMonarchChange  func(MonarchSyncer)
-	pendingMonarch   *monarch.PendingClient
-	logger           *log.Logger
-	renderer         *Renderer
-	version          string
-	startTime        time.Time
+	licenseChecker    *license.DefaultChecker
+	checkoutBaseURL   string // e.g. "https://api.satsbook.io"
+	onMonarchChange   func(MonarchSyncer)
+	onStrikeKeyChange func(apiKey string)
+	pendingMonarch    *monarch.PendingClient
+	logger            *log.Logger
+	renderer          *Renderer
+	version           string
+	startTime         time.Time
+	// scanMu serializes wallet scans — Bitcoin Core only allows one scantxoutset at a time.
+	scanMu sync.Mutex
 }
 
 // NewHandler creates a new Handler.
@@ -215,6 +220,12 @@ func (h *Handler) SetCheckoutBaseURL(url string) {
 // OnMonarchChange registers a callback invoked when the Monarch syncer changes.
 func (h *Handler) OnMonarchChange(fn func(MonarchSyncer)) {
 	h.onMonarchChange = fn
+}
+
+// OnStrikeKeyChange registers a callback invoked when the Strike API key is saved or cleared.
+// The callback receives the new key value ("" means disconnected).
+func (h *Handler) OnStrikeKeyChange(fn func(apiKey string)) {
+	h.onStrikeKeyChange = fn
 }
 
 // backfillSnapshots runs portfolio snapshot backfill in the background after imports.

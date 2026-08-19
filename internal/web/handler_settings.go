@@ -29,6 +29,9 @@ type SettingsPageData struct {
 	AvailableTxTypes   []string // all tx types from data
 	AvailableSources   []string // all sources from data
 	MonarchSyncedCount int      // how many transactions have been synced
+	// Strike API sync
+	StrikeAPIConnected bool
+	StrikeAPIKey       string // masked
 }
 
 // HandleSettingsPage serves GET /settings.
@@ -56,6 +59,14 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 	// Show masked license key
 	if h.licenseChecker != nil && h.licenseChecker.LicenseKey() != "" {
 		data.LicenseKey = maskToken(h.licenseChecker.LicenseKey())
+	}
+
+	// Strike API key status
+	if h.settingsStore != nil {
+		if strikeKey, _ := h.settingsStore.GetSetting(ctx, "strike_api_key"); strikeKey != "" {
+			data.StrikeAPIConnected = true
+			data.StrikeAPIKey = maskToken(strikeKey)
+		}
 	}
 
 	if data.MonarchUnlocked && h.settingsStore != nil {
@@ -460,6 +471,68 @@ func (h *Handler) HandleMonarchTxSync(w http.ResponseWriter, r *http.Request) {
 
 		logger.Printf("monarch tx sync complete: %d created, %d skipped, %d errors", result.Created, result.Skipped, result.Errors)
 	}()
+}
+
+// HandleStrikeAPIKeySave handles POST /api/settings/strike/key — saves the Strike API key.
+func (h *Handler) HandleStrikeAPIKeySave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	key := strings.TrimSpace(r.FormValue("strike_api_key"))
+	if key == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="alert alert-error">API key is required.</div>`)
+		return
+	}
+
+	if err := h.settingsStore.SetSetting(r.Context(), "strike_api_key", key); err != nil {
+		h.logger.Printf("strike: failed to save API key: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="alert alert-error">Failed to save API key.</div>`)
+		return
+	}
+
+	if h.onStrikeKeyChange != nil {
+		h.onStrikeKeyChange(key)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<div class="alert alert-success">Strike API key saved. Syncing will begin automatically.</div>
+<div style="display:flex;gap:8px;margin-top:12px;">
+  <button hx-post="/api/settings/strike/disconnect" hx-target="#strike-result" hx-confirm="Remove Strike API key?" class="btn btn-danger">Disconnect</button>
+</div>`)
+}
+
+// HandleStrikeAPIKeyDisconnect handles POST /api/settings/strike/disconnect — removes the Strike API key.
+func (h *Handler) HandleStrikeAPIKeyDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.settingsStore.SetSetting(r.Context(), "strike_api_key", ""); err != nil {
+		h.logger.Printf("strike: failed to clear API key: %v", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="alert alert-error">Failed to disconnect.</div>`)
+		return
+	}
+
+	if h.onStrikeKeyChange != nil {
+		h.onStrikeKeyChange("")
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<div class="alert alert-success">Strike API key removed.</div>`)
 }
 
 // maskToken shows only the last 4 characters of a token.

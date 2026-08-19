@@ -138,6 +138,7 @@ func (m *mockStore) ListTransferCandidates(ctx context.Context, sourceID string,
 	}
 	return nil, nil
 }
+func (m *mockStore) StrikeCollateralSats(ctx context.Context) (int64, error) { return 0, nil }
 
 type mockNodeInfo struct {
 	info *lnd.NodeInfo

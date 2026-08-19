@@ -193,6 +193,9 @@ func (h *Handler) HandlePortfolioPage(w http.ResponseWriter, r *http.Request) {
 		if breakdown.ColdStorageSats != 0 {
 			entries = append(entries, srcEntry{"Cold Storage", "cold_storage", false, breakdown.ColdStorageSats})
 		}
+		if breakdown.CollateralSats != 0 {
+			entries = append(entries, srcEntry{"Strike Collateral", "strike_collateral", false, breakdown.CollateralSats})
+		}
 		for _, src := range []string{"strike", "river", "coinbase", "swan"} {
 			if sats, ok := breakdown.ExchangeSats[src]; ok && sats != 0 {
 				entries = append(entries, srcEntry{templateSourceLabel(src), src, true, sats})

@@ -59,7 +59,11 @@ type DashboardData struct {
 	ColdStorageSats int64
 	ColdStorageUSD  float64
 
-	// Headline: total BTC under control (wallet + channels + exchange + cold storage)
+	// Strike line-of-credit collateral (BTC locked, still owned)
+	StrikeCollateralSats int64
+	StrikeCollateralUSD  float64
+
+	// Headline: total BTC under control (wallet + channels + exchange + cold storage + collateral)
 	TotalBTCSats int64
 	TotalBTCUSD  float64
 
@@ -134,19 +138,20 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 
 	type result struct {
-		fees30d, routed30d int64
-		fees7d, routed7d   int64
-		activeChannels     int
-		balance            *db.WalletBalanceSnapshot
-		channels           []db.ChannelStat
-		dailyFees          []db.DailyFeeStat
-		nodeInfo           *lnd.NodeInfo
-		lastSynced         time.Time
-		btcPrice           float64
-		priceFetched       time.Time
-		portfolioAll       *db.PortfolioPositionResult
-		portfolioYTD       *db.PortfolioPositionResult
-		coldStorageSats    int64
+		fees30d, routed30d   int64
+		fees7d, routed7d     int64
+		activeChannels       int
+		balance              *db.WalletBalanceSnapshot
+		channels             []db.ChannelStat
+		dailyFees            []db.DailyFeeStat
+		nodeInfo             *lnd.NodeInfo
+		lastSynced           time.Time
+		btcPrice             float64
+		priceFetched         time.Time
+		portfolioAll         *db.PortfolioPositionResult
+		portfolioYTD         *db.PortfolioPositionResult
+		coldStorageSats      int64
+		strikeCollateralSats int64
 	}
 	var res result
 
@@ -273,10 +278,20 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	fetch(func() {
+		sats, err := h.store.StrikeCollateralSats(ctx)
+		if err == nil {
+			mu.Lock()
+			res.strikeCollateralSats = sats
+			mu.Unlock()
+		}
+	})
+
 	wg.Wait()
 
 	// Assemble dashboard template data
 	data.ColdStorageSats = res.coldStorageSats
+	data.StrikeCollateralSats = res.strikeCollateralSats
 
 	if res.nodeInfo != nil {
 		data.NodeAlias = res.nodeInfo.Alias
@@ -319,8 +334,8 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.ChannelLocalBalanceSats += ch.LocalBalance
 	}
 
-	// Headline: total BTC = wallet + channels + exchange + cold storage (routing fees already in channels)
-	data.TotalBTCSats = data.WalletBalanceSats + data.ChannelLocalBalanceSats + data.ExchangeBalanceSats + data.ColdStorageSats
+	// Headline: total BTC = wallet + channels + exchange + cold storage + collateral
+	data.TotalBTCSats = data.WalletBalanceSats + data.ChannelLocalBalanceSats + data.ExchangeBalanceSats + data.ColdStorageSats + data.StrikeCollateralSats
 
 	// YTD section
 	if res.portfolioYTD != nil {
@@ -345,6 +360,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.WalletBalanceUSD = satsToUSD(data.WalletBalanceSats, res.btcPrice)
 		data.ChannelLocalBalanceUSD = satsToUSD(data.ChannelLocalBalanceSats, res.btcPrice)
 		data.ColdStorageUSD = satsToUSD(data.ColdStorageSats, res.btcPrice)
+		data.StrikeCollateralUSD = satsToUSD(data.StrikeCollateralSats, res.btcPrice)
 		data.StrikeBalanceUSD = satsToUSD(data.StrikeBalanceSats, res.btcPrice)
 		data.RiverBalanceUSD = satsToUSD(data.RiverBalanceSats, res.btcPrice)
 		data.CoinbaseBalanceUSD = satsToUSD(data.CoinbaseBalanceSats, res.btcPrice)

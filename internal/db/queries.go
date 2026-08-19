@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -791,6 +792,22 @@ func (d *DB) PortfolioPosition(ctx context.Context, since time.Time) (*Portfolio
 		return nil, fmt.Errorf("portfolio position rows: %w", err)
 	}
 
+	// For the current (all-time) position, override Strike's CSV-calculated balance with
+	// the live API balance when available. Strike's CSV omits BTC amounts for
+	// USD-denominated Lightning sends, so the summed AmountBTC overstates the balance.
+	if since.IsZero() {
+		if liveVal, _ := d.GetSetting(ctx, "strike_live_balance_sats"); liveVal != "" {
+			if liveSats, err := strconv.ParseInt(liveVal, 10, 64); err == nil && liveSats > 0 {
+				if sb, ok := result.BySource["strike"]; ok {
+					result.ExchangeNetSats -= sb.NetSats
+					sb.NetSats = liveSats
+					result.BySource["strike"] = sb
+					result.ExchangeNetSats += liveSats
+				}
+			}
+		}
+	}
+
 	// Query 2: routing fees from forwarding_events.
 	feeMsat, routedCount, err := d.FeeSummary(ctx, since)
 	if err != nil {
@@ -1043,7 +1060,19 @@ func (d *DB) ListExchangeTransactions(ctx context.Context, source string, limit,
 // ExchangeBalance returns the net BTC balance (in sats) for a given exchange source
 // by summing AmountBTC only from rows that actually move BTC (non-zero AmountBTC).
 // USD-only transactions (e.g. cash withdrawals) are excluded.
+//
+// For Strike, the live API balance (strike_live_balance_sats) is preferred when available
+// because Strike's CSV export omits BTC amounts for USD-denominated Lightning sends,
+// which would otherwise cause the calculated balance to be overstated.
 func (d *DB) ExchangeBalance(ctx context.Context, source string) (int64, error) {
+	if source == "strike" {
+		if liveVal, _ := d.GetSetting(ctx, "strike_live_balance_sats"); liveVal != "" {
+			if sats, err := strconv.ParseInt(liveVal, 10, 64); err == nil && sats > 0 {
+				return sats, nil
+			}
+		}
+	}
+
 	var totalBTC sql.NullFloat64
 	err := d.db.QueryRowContext(ctx,
 		`SELECT SUM(json_extract(raw_data, '$.AmountBTC'))
@@ -1729,8 +1758,30 @@ type PortfolioBreakdown struct {
 	OnChainSats     int64
 	ChannelSats     int64
 	ColdStorageSats int64
+	CollateralSats  int64            // BTC locked as Strike line-of-credit collateral
 	ExchangeSats    map[string]int64 // per-exchange (strike, river, coinbase, swan)
 	TotalSats       int64
+}
+
+// StrikeCollateralSats returns the total BTC (in sats) currently locked as Strike
+// line-of-credit collateral. Strike records these as "Loan collateral" rows with
+// negative AmountBTC; we return the absolute value so callers treat it as an asset
+// held in a different location rather than a loss.
+func (d *DB) StrikeCollateralSats(ctx context.Context) (int64, error) {
+	var total sql.NullFloat64
+	err := d.db.QueryRowContext(ctx,
+		`SELECT SUM(json_extract(raw_data, '$.AmountBTC'))
+		 FROM exchange_imports
+		 WHERE source = 'strike'
+		   AND json_extract(raw_data, '$.Type') = 'Loan collateral'`,
+	).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("strike collateral sats: %w", err)
+	}
+	if !total.Valid || total.Float64 >= 0 {
+		return 0, nil
+	}
+	return int64(math.Round(-total.Float64 * 1e8)), nil
 }
 
 // PortfolioBreakdownQuery computes the current point-in-time breakdown of BTC across all sources.
@@ -1774,7 +1825,12 @@ func (d *DB) PortfolioBreakdownQuery(ctx context.Context) (*PortfolioBreakdown, 
 		}
 	}
 
-	b.TotalSats = b.OnChainSats + b.ChannelSats + b.ColdStorageSats
+	// BTC locked as Strike collateral (tracked separately from available balance)
+	if collateral, err := d.StrikeCollateralSats(ctx); err == nil && collateral > 0 {
+		b.CollateralSats = collateral
+	}
+
+	b.TotalSats = b.OnChainSats + b.ChannelSats + b.ColdStorageSats + b.CollateralSats
 	for _, v := range b.ExchangeSats {
 		b.TotalSats += v
 	}

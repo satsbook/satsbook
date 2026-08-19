@@ -6,12 +6,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/config"
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/license"
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
@@ -144,6 +146,15 @@ func main() {
 		}
 	}
 
+	// Wire up Strike API auto-sync (goroutine started after ctx is created below)
+	strikeAPIKey := cfg.StrikeAPIKey
+	if strikeAPIKey == "" {
+		if dbKey, _ := database.GetSetting(context.Background(), "strike_api_key"); dbKey != "" {
+			strikeAPIKey = dbKey
+		}
+	}
+	strikeLogger := log.New(os.Stdout, "[strike] ", log.LstdFlags)
+
 	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)
 	walletLogger := log.New(os.Stdout, "[wallet] ", log.LstdFlags)
@@ -190,6 +201,36 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
+	// Start Strike API sync now that ctx is available
+	if strikeAPIKey != "" {
+		strikeClient := exchange.NewStrikeAPIClient(strikeAPIKey)
+		if s != nil {
+			s.SetStrikeClient(strikeClient, database)
+			log.Printf("strike: API sync enabled (via LND syncer)")
+		} else {
+			go runStrikeSync(ctx, strikeClient, database, 15*time.Minute, strikeLogger)
+			log.Printf("strike: API sync enabled (background goroutine)")
+		}
+	}
+	// Hot-swap when the user saves/clears the key from settings
+	handler.OnStrikeKeyChange(func(apiKey string) {
+		if apiKey == "" {
+			if s != nil {
+				s.SetStrikeClient(nil, nil)
+			}
+			strikeLogger.Printf("API key removed — sync disabled")
+			return
+		}
+		newClient := exchange.NewStrikeAPIClient(apiKey)
+		if s != nil {
+			s.SetStrikeClient(newClient, database)
+			strikeLogger.Printf("API key updated — syncing via LND syncer")
+		} else {
+			go runStrikeSync(ctx, newClient, database, 15*time.Minute, strikeLogger)
+			strikeLogger.Printf("API key updated — background goroutine started")
+		}
+	})
+
 	go func() {
 		sig := <-sigCh
 		log.Printf("received signal %v, shutting down...", sig)
@@ -219,6 +260,51 @@ func main() {
 	}
 
 	log.Println("shutdown complete")
+}
+
+// runStrikeSync runs a Strike API sync immediately and then on the given interval.
+// Used in dashboard-only mode (no LND syncer). The syncer handles this automatically
+// when LND is configured.
+func runStrikeSync(ctx context.Context, client *exchange.StrikeAPIClient, store interface {
+	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+	SetSetting(ctx context.Context, key, value string) error
+}, interval time.Duration, logger *log.Logger) {
+	doSync := func() {
+		if sats, err := client.FetchBalance(ctx); err != nil {
+			logger.Printf("fetch balance: %v", err)
+		} else if err := store.SetSetting(ctx, "strike_live_balance_sats", strconv.FormatInt(sats, 10)); err != nil {
+			logger.Printf("store balance: %v", err)
+		}
+
+		rows, err := client.FetchRows(ctx)
+		if err != nil {
+			logger.Printf("fetch rows: %v", err)
+			return
+		}
+		if len(rows) == 0 {
+			return
+		}
+		summary, err := store.ImportStrikeCSV(ctx, rows)
+		if err != nil {
+			logger.Printf("import: %v", err)
+			return
+		}
+		if summary.NewPurchases > 0 || summary.Updated > 0 {
+			logger.Printf("sync: %d new, %d updated, %d duplicates", summary.NewPurchases, summary.Updated, summary.Duplicates)
+		}
+	}
+
+	doSync()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			doSync()
+		}
+	}
 }
 
 // licenseStoreAdapter bridges db.DB to the license.LicenseStore interface,

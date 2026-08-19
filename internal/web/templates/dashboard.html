@@ -60,6 +60,7 @@
     <span>Channels: {{formatSats .ChannelLocalBalanceSats}}</span>
     {{if .ColdStorageSats}}<span>Cold storage: {{formatSats .ColdStorageSats}}</span>{{end}}
     {{if .ExchangeBalanceSats}}<span>Exchange: {{formatSats .ExchangeBalanceSats}}</span>{{end}}
+    {{if .StrikeCollateralSats}}<span>Strike collateral: {{formatSats .StrikeCollateralSats}}</span>{{end}}
   </div>
   {{if .FeesAllTimeSats}}
   <div style="margin-top: 6px; font-size: 0.8em; color: var(--text-muted);">

@@ -3,10 +3,12 @@ package syncer
 import (
 	"context"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
 )
@@ -58,6 +60,18 @@ type SettingsReader interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 }
 
+// StrikeRowFetcher fetches transaction rows and live balance from the Strike REST API.
+type StrikeRowFetcher interface {
+	FetchRows(ctx context.Context) ([]exchange.StrikeRow, error)
+	FetchBalance(ctx context.Context) (int64, error)
+}
+
+// StrikeImporter persists Strike rows to the database.
+type StrikeImporter interface {
+	ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error)
+	SetSetting(ctx context.Context, key, value string) error
+}
+
 // Syncer orchestrates LND data synchronization.
 type Syncer struct {
 	lnd            LNDClient
@@ -67,6 +81,9 @@ type Syncer struct {
 	monarch        MonarchSyncer
 	monarchTxStore MonarchTxStore
 	settings       SettingsReader
+	strikeClient   StrikeRowFetcher
+	strikeImporter StrikeImporter
+	strikeTrigger  chan struct{}
 	logger         *log.Logger
 	syncInterval   time.Duration
 	maxHistoryDays int
@@ -80,6 +97,7 @@ func New(lnd LNDClient, store Store, logger *log.Logger, syncInterval time.Durat
 		logger:         logger,
 		syncInterval:   syncInterval,
 		maxHistoryDays: maxHistoryDays,
+		strikeTrigger:  make(chan struct{}, 1),
 	}
 }
 
@@ -100,6 +118,19 @@ func (s *Syncer) SetMonarchTxSync(txStore MonarchTxStore, settings SettingsReade
 	s.settings = settings
 }
 
+// SetStrikeClient sets the Strike API client and importer for automatic syncing.
+// If a non-nil client is provided, an immediate sync is triggered.
+func (s *Syncer) SetStrikeClient(client StrikeRowFetcher, importer StrikeImporter) {
+	s.strikeClient = client
+	s.strikeImporter = importer
+	if client != nil {
+		select {
+		case s.strikeTrigger <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // Run blocks until ctx is cancelled, syncing on startup and then on the configured interval.
 func (s *Syncer) Run(ctx context.Context) {
 	// Sync immediately on startup
@@ -118,6 +149,8 @@ func (s *Syncer) Run(ctx context.Context) {
 			if err := s.Sync(ctx); err != nil {
 				s.logger.Printf("sync failed: %v", err)
 			}
+		case <-s.strikeTrigger:
+			s.syncStrikeAPI(ctx)
 		}
 	}
 }
@@ -148,6 +181,11 @@ func (s *Syncer) Sync(ctx context.Context) error {
 	// Sync transactions to Monarch if configured
 	if s.monarch != nil && s.monarchTxStore != nil && s.settings != nil {
 		s.syncMonarchTransactions(ctx)
+	}
+
+	// Sync Strike API transactions if configured
+	if s.strikeClient != nil && s.strikeImporter != nil {
+		s.syncStrikeAPI(ctx)
 	}
 
 	return nil
@@ -243,6 +281,38 @@ func (s *Syncer) syncMonarchTransactions(ctx context.Context) {
 	}
 
 	s.logger.Printf("monarch tx sync: %d created, %d skipped, %d errors", result.Created, result.Skipped, result.Errors)
+}
+
+// syncStrikeAPI fetches new transactions and live balance from Strike and persists them.
+func (s *Syncer) syncStrikeAPI(ctx context.Context) {
+	s.logger.Printf("strike api sync: starting")
+
+	// Fetch and store live balance.
+	if sats, err := s.strikeClient.FetchBalance(ctx); err != nil {
+		s.logger.Printf("strike api sync: fetch balance: %v", err)
+	} else {
+		if err := s.strikeImporter.SetSetting(ctx, "strike_live_balance_sats", strconv.FormatInt(sats, 10)); err != nil {
+			s.logger.Printf("strike api sync: store balance: %v", err)
+		} else {
+			s.logger.Printf("strike api sync: balance %d sats", sats)
+		}
+	}
+
+	rows, err := s.strikeClient.FetchRows(ctx)
+	if err != nil {
+		s.logger.Printf("strike api sync: fetch rows: %v", err)
+		return
+	}
+	s.logger.Printf("strike api sync: fetched %d rows", len(rows))
+	if len(rows) == 0 {
+		return
+	}
+	summary, err := s.strikeImporter.ImportStrikeCSV(ctx, rows)
+	if err != nil {
+		s.logger.Printf("strike api sync: import: %v", err)
+		return
+	}
+	s.logger.Printf("strike api sync: %d new, %d updated, %d duplicates", summary.NewPurchases, summary.Updated, summary.Duplicates)
 }
 
 // syncCycle is the core sync logic, executed within a transaction.

@@ -294,8 +294,13 @@ func (h *Handler) HandleRefreshAll(w http.ResponseWriter, r *http.Request) {
 
 // scanWallet runs a balance scan for a single wallet in the background.
 // It uses context.Background() so it survives after the HTTP request ends.
+// A mutex ensures only one scantxoutset call runs at a time — Bitcoin Core
+// rejects concurrent scans with an -8 error.
 func (h *Handler) scanWallet(id int64, label, walletType, value, derivationType string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	h.scanMu.Lock()
+	defer h.scanMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	var balance int64
