@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
@@ -134,6 +135,8 @@ type Handler struct {
 	renderer          *Renderer
 	version           string
 	startTime         time.Time
+	// scanMu serializes wallet scans — Bitcoin Core only allows one scantxoutset at a time.
+	scanMu sync.Mutex
 }
 
 // NewHandler creates a new Handler.
