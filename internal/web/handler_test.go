@@ -132,6 +132,9 @@ func (m *mockStore) GetTransferFlag(ctx context.Context, sourceID string) (bool,
 	}
 	return false, nil
 }
+func (m *mockStore) GetTransactionNote(ctx context.Context, sourceID string) (string, error) {
+	return "", nil
+}
 func (m *mockStore) ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error) {
 	if m.listTransferCandidatesFn != nil {
 		return m.listTransferCandidatesFn(ctx, sourceID, amountSat, ts)

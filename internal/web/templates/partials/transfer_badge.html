@@ -8,7 +8,7 @@
     style="cursor: pointer; font-size: 0.75rem; padding: 1px 6px; border-radius: 4px; user-select: none;
       {{if .IsTransfer}}background: #1e3a5f; color: #93c5fd;{{else}}background: transparent; color: var(--text-muted); border: 1px dashed var(--border);{{end}}"
     title="{{if .IsTransfer}}Marked as transfer — click to unmark{{else}}Click to mark as internal transfer{{end}}">
-    {{if .IsTransfer}}transfer{{else}}mark{{end}}
+    {{if .IsTransfer}}{{if eq .Note "Channel Open"}}Channel Open{{else if eq .Note "Channel Close"}}Channel Close{{else}}transfer{{end}}{{else}}mark{{end}}
   </span>
   {{if not .IsTransfer}}{{if .AmountSat}}
   <span
@@ -32,7 +32,7 @@
     style="cursor: pointer; font-size: 0.75rem; padding: 1px 6px; border-radius: 4px; user-select: none;
       background: #1e3a5f; color: #93c5fd;"
     title="Marked as transfer — click to unmark">
-    transfer
+    {{if eq .Note "Channel Open"}}Channel Open{{else if eq .Note "Channel Close"}}Channel Close{{else}}transfer{{end}}
   </span>
 </div>
 {{end}}

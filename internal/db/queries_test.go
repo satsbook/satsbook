@@ -3462,7 +3462,7 @@ func TestAutoTagChannelTransfers(t *testing.T) {
 		t.Errorf("expected 2 auto-tagged, got %d", n)
 	}
 
-	// Verify the channel open tx is tagged
+	// Verify the channel open tx is tagged with correct flag and note
 	flagOpen, err := d.GetTransferFlag(ctx, "abc123def456")
 	if err != nil {
 		t.Fatal(err)
@@ -3470,14 +3470,28 @@ func TestAutoTagChannelTransfers(t *testing.T) {
 	if !flagOpen {
 		t.Error("expected channel open tx to be tagged as transfer")
 	}
+	noteOpen, err := d.GetTransactionNote(ctx, "abc123def456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noteOpen != "Channel Open" {
+		t.Errorf("expected channel open note %q, got %q", "Channel Open", noteOpen)
+	}
 
-	// Verify the channel close tx is tagged
+	// Verify the channel close tx is tagged with correct flag and note
 	flagClose, err := d.GetTransferFlag(ctx, "close456def")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !flagClose {
 		t.Error("expected channel close tx to be tagged as transfer")
+	}
+	noteClose, err := d.GetTransactionNote(ctx, "close456def")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noteClose != "Channel Close" {
+		t.Errorf("expected channel close note %q, got %q", "Channel Close", noteClose)
 	}
 
 	// Verify unrelated tx is NOT tagged
@@ -3496,6 +3510,252 @@ func TestAutoTagChannelTransfers(t *testing.T) {
 	}
 	if n2 != 0 {
 		t.Errorf("expected 0 on re-run (idempotent), got %d", n2)
+	}
+}
+
+// TestAutoTagChannelTransfers_TableDriven covers matching logic and edge cases.
+func TestAutoTagChannelTransfers_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		channels    []Channel
+		onchainTxns []OnchainTx
+		// exchangeImport source_id — must NOT be tagged
+		exchangeIDs  []string
+		wantTagged  map[string]string // source_id -> expected note ("Channel Open"/"Channel Close")
+		wantUntagged []string         // source_id -> must not be tagged
+	}{
+		{
+			name: "channel_open_from_channel_point",
+			channels: []Channel{
+				{ChanID: 1, RemotePubKey: "pk1", ChannelPoint: "opentx001:0", Active: true},
+			},
+			onchainTxns: []OnchainTx{
+				{TxHash: "opentx001", AmountSat: -500000, NumConfirmations: 6, Timestamp: time.Now()},
+				{TxHash: "othertx", AmountSat: 100000, NumConfirmations: 6, Timestamp: time.Now()},
+			},
+			wantTagged:   map[string]string{"opentx001": "Channel Open"},
+			wantUntagged: []string{"othertx"},
+		},
+		{
+			name: "channel_close_from_closing_tx_hash",
+			channels: []Channel{
+				{ChanID: 2, RemotePubKey: "pk2", ChannelPoint: "fundtx:1", ClosingTxHash: "closetx002", Active: false},
+			},
+			onchainTxns: []OnchainTx{
+				{TxHash: "closetx002", AmountSat: 490000, NumConfirmations: 6, Timestamp: time.Now()},
+				{TxHash: "randomtx", AmountSat: 50000, NumConfirmations: 6, Timestamp: time.Now()},
+			},
+			wantTagged:   map[string]string{"closetx002": "Channel Close"},
+			wantUntagged: []string{"randomtx"},
+		},
+		{
+			name: "channel_point_with_nonzero_output_index",
+			channels: []Channel{
+				{ChanID: 3, RemotePubKey: "pk3", ChannelPoint: "multitx:2", Active: true},
+			},
+			onchainTxns: []OnchainTx{
+				{TxHash: "multitx", AmountSat: -1000000, NumConfirmations: 6, Timestamp: time.Now()},
+			},
+			wantTagged: map[string]string{"multitx": "Channel Open"},
+		},
+		{
+			name: "open_and_close_both_present",
+			channels: []Channel{
+				{ChanID: 4, RemotePubKey: "pk4", ChannelPoint: "openfund:0", Active: true},
+				{ChanID: 5, RemotePubKey: "pk5", ChannelPoint: "oldfund:0", ClosingTxHash: "closehash5", Active: false},
+			},
+			onchainTxns: []OnchainTx{
+				{TxHash: "openfund", AmountSat: -200000, NumConfirmations: 6, Timestamp: time.Now()},
+				{TxHash: "closehash5", AmountSat: 190000, NumConfirmations: 6, Timestamp: time.Now()},
+			},
+			wantTagged: map[string]string{
+				"openfund":   "Channel Open",
+				"closehash5": "Channel Close",
+			},
+		},
+		{
+			name: "unconfirmed_tx_not_tagged",
+			channels: []Channel{
+				{ChanID: 6, RemotePubKey: "pk6", ChannelPoint: "pendingtx:0", Active: true},
+			},
+			onchainTxns: []OnchainTx{
+				// 0 confirmations — excluded from btc_transactions_v
+				{TxHash: "pendingtx", AmountSat: -300000, NumConfirmations: 0, Timestamp: time.Now()},
+			},
+			wantUntagged: []string{"pendingtx"},
+		},
+		{
+			name: "no_channels_nothing_tagged",
+			channels: []Channel{},
+			onchainTxns: []OnchainTx{
+				{TxHash: "sometx", AmountSat: 100000, NumConfirmations: 6, Timestamp: time.Now()},
+			},
+			wantUntagged: []string{"sometx"},
+		},
+		{
+			name: "user_note_preserved_on_second_run",
+			channels: []Channel{
+				{ChanID: 7, RemotePubKey: "pk7", ChannelPoint: "usernoted:0", Active: true},
+			},
+			onchainTxns: []OnchainTx{
+				{TxHash: "usernoted", AmountSat: -400000, NumConfirmations: 6, Timestamp: time.Now()},
+			},
+			wantTagged: map[string]string{"usernoted": "Channel Open"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newTestDB(t)
+			defer d.Close()
+			ctx := context.Background()
+
+			err := d.RunSync(ctx, func(tx SyncTx) error {
+				if len(tc.channels) > 0 {
+					if err := tx.UpsertChannels(tc.channels); err != nil {
+						return err
+					}
+				}
+				if len(tc.onchainTxns) > 0 {
+					if err := tx.UpsertOnchainTxns(tc.onchainTxns); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+
+			_, err = d.AutoTagChannelTransfers(ctx)
+			if err != nil {
+				t.Fatalf("AutoTagChannelTransfers: %v", err)
+			}
+
+			for sourceID, wantNote := range tc.wantTagged {
+				flagged, err := d.GetTransferFlag(ctx, sourceID)
+				if err != nil {
+					t.Fatalf("GetTransferFlag(%q): %v", sourceID, err)
+				}
+				if !flagged {
+					t.Errorf("%s: expected %q to be tagged as transfer", tc.name, sourceID)
+				}
+				note, err := d.GetTransactionNote(ctx, sourceID)
+				if err != nil {
+					t.Fatalf("GetTransactionNote(%q): %v", sourceID, err)
+				}
+				if note != wantNote {
+					t.Errorf("%s: note for %q = %q, want %q", tc.name, sourceID, note, wantNote)
+				}
+			}
+
+			for _, sourceID := range tc.wantUntagged {
+				flagged, err := d.GetTransferFlag(ctx, sourceID)
+				if err != nil {
+					t.Fatalf("GetTransferFlag(%q): %v", sourceID, err)
+				}
+				if flagged {
+					t.Errorf("%s: expected %q to NOT be tagged as transfer", tc.name, sourceID)
+				}
+			}
+		})
+	}
+}
+
+// TestAutoTagChannelTransfers_ExchangeImportsNotTagged verifies exchange imports are never auto-tagged.
+func TestAutoTagChannelTransfers_ExchangeImportsNotTagged(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Seed a channel whose channel_point txid matches the Strike transaction ID.
+	// The auto-tagger must not tag the exchange import row.
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		return tx.UpsertChannels([]Channel{{
+			ChanID:       99,
+			RemotePubKey: "pkX",
+			ChannelPoint: "exchgtx001:0",
+			Active:       true,
+		}})
+	})
+	if err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+
+	// Import a Strike row whose TransactionID happens to equal the channel open tx_hash.
+	_, err = d.ImportStrikeCSV(ctx, []exchange.StrikeRow{
+		{TransactionID: "exchgtx001", Type: "Purchase", AmountBTC: 0.001, AmountUSD: 65, CostBasisUSD: 65, Date: time.Now()},
+	})
+	if err != nil {
+		t.Fatalf("seed exchange import: %v", err)
+	}
+
+	_, err = d.AutoTagChannelTransfers(ctx)
+	if err != nil {
+		t.Fatalf("AutoTagChannelTransfers: %v", err)
+	}
+
+	// Exchange import source_id format in the view is "strike:exchgtx001:Purchase".
+	// The auto-tag only operates on lnd_onchain source. Verify the exchange row is untouched.
+	flagged, err := d.GetTransferFlag(ctx, "strike:exchgtx001:Purchase")
+	if err != nil {
+		t.Fatalf("GetTransferFlag: %v", err)
+	}
+	if flagged {
+		t.Error("exchange import rows must NOT be auto-tagged as transfers")
+	}
+}
+
+// TestAutoTagChannelTransfers_UserNotePreserved verifies that a user-set note is not
+// overwritten by the auto-tagger on subsequent runs.
+func TestAutoTagChannelTransfers_UserNotePreserved(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	err := d.RunSync(ctx, func(tx SyncTx) error {
+		if err := tx.UpsertChannels([]Channel{{
+			ChanID:       100,
+			RemotePubKey: "pkY",
+			ChannelPoint: "customtx:0",
+			Active:       true,
+		}}); err != nil {
+			return err
+		}
+		return tx.UpsertOnchainTxns([]OnchainTx{
+			{TxHash: "customtx", AmountSat: -100000, NumConfirmations: 6, Timestamp: time.Now()},
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// First auto-tag run — sets note to "Channel Open"
+	if _, err := d.AutoTagChannelTransfers(ctx); err != nil {
+		t.Fatalf("first AutoTagChannelTransfers: %v", err)
+	}
+
+	// User overwrites the note
+	if err := d.SetTransactionNote(ctx, "customtx", "My custom note"); err != nil {
+		t.Fatalf("SetTransactionNote: %v", err)
+	}
+
+	// Second auto-tag run should be idempotent (already is_transfer=1, so no update)
+	n, err := d.AutoTagChannelTransfers(ctx)
+	if err != nil {
+		t.Fatalf("second AutoTagChannelTransfers: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 rows affected on second run, got %d", n)
+	}
+
+	// User note must be preserved
+	note, err := d.GetTransactionNote(ctx, "customtx")
+	if err != nil {
+		t.Fatalf("GetTransactionNote: %v", err)
+	}
+	if note != "My custom note" {
+		t.Errorf("user note was overwritten; got %q, want %q", note, "My custom note")
 	}
 }
 

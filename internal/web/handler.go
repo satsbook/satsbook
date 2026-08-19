@@ -39,6 +39,7 @@ type DashboardStore interface {
 	NetFlowSummaryBySource(ctx context.Context, since time.Time, sources []string, excludeTransfers bool) (*db.NetFlowResult, error)
 	SetTransferFlag(ctx context.Context, sourceID string, isTransfer bool) error
 	GetTransferFlag(ctx context.Context, sourceID string) (bool, error)
+	GetTransactionNote(ctx context.Context, sourceID string) (string, error)
 	ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error)
 	StrikeCollateralSats(ctx context.Context) (int64, error)
 }
