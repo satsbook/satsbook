@@ -183,9 +183,12 @@ func (h *Handler) HandleTransferToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch note so the badge can show "Channel Open"/"Channel Close" if auto-tagged.
+	note, _ := h.store.GetTransactionNote(r.Context(), sourceID)
+
 	// Return updated transfer badge partial
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.renderer.Render(w, "transfer_badge", transferBadgeData{SourceID: sourceID, IsTransfer: newVal}); err != nil {
+	if err := h.renderer.Render(w, "transfer_badge", transferBadgeData{SourceID: sourceID, IsTransfer: newVal, Note: note}); err != nil {
 		h.logger.Printf("render transfer badge: %v", err)
 	}
 }
@@ -262,6 +265,7 @@ type transferBadgeData struct {
 	IsTransfer bool
 	AmountSat  int64
 	Time       time.Time
+	Note       string
 }
 
 type transferCandidatesData struct {

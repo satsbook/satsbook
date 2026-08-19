@@ -1999,40 +1999,62 @@ func (d *DB) NetFlowSummaryBySource(ctx context.Context, since time.Time, source
 }
 
 // AutoTagChannelTransfers finds on-chain transactions that match channel open/close
-// tx hashes and automatically marks them as transfers. Returns the number of newly tagged transactions.
+// tx hashes and automatically marks them as transfers with specific notes.
+// Channel opens are noted as "Channel Open"; channel closes as "Channel Close".
+// Returns the number of newly tagged transactions.
 func (d *DB) AutoTagChannelTransfers(ctx context.Context) (int, error) {
 	// Channel opens: channel_point is "txid:output_index" — extract txid portion.
-	// The on-chain source_id in the view is just the tx_hash.
-	// Channel closes: closing_tx_hash is the tx_hash directly.
-	res, err := d.db.ExecContext(ctx, `
+	// The on-chain source_id in btc_transactions_v is just the tx_hash.
+	resOpens, err := d.db.ExecContext(ctx, `
 		INSERT INTO transaction_notes (source_id, note, is_transfer, updated_at)
-		SELECT v.source_id, '', 1, CURRENT_TIMESTAMP
+		SELECT v.source_id, 'Channel Open', 1, CURRENT_TIMESTAMP
 		FROM btc_transactions_v v
 		WHERE v.source = 'lnd_onchain'
-		  AND (
-		    -- Match channel opens (tx_hash is the txid part of channel_point)
-		    EXISTS (
-		      SELECT 1 FROM channels c
-		      WHERE c.channel_point != ''
-		        AND SUBSTR(c.channel_point, 1, INSTR(c.channel_point, ':') - 1) = v.source_id
-		    )
-		    OR
-		    -- Match channel closes
-		    EXISTS (
-		      SELECT 1 FROM channels c
-		      WHERE c.closing_tx_hash != ''
-		        AND c.closing_tx_hash = v.source_id
-		    )
+		  AND EXISTS (
+		    SELECT 1 FROM channels c
+		    WHERE c.channel_point != ''
+		      AND SUBSTR(c.channel_point, 1, INSTR(c.channel_point, ':') - 1) = v.source_id
 		  )
 		ON CONFLICT(source_id) DO UPDATE SET
+		  note = CASE WHEN note = '' THEN 'Channel Open' ELSE note END,
 		  is_transfer = 1,
 		  updated_at = CURRENT_TIMESTAMP
 		WHERE is_transfer = 0`)
 	if err != nil {
-		return 0, fmt.Errorf("auto-tag channel transfers: %w", err)
+		return 0, fmt.Errorf("auto-tag channel opens: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	nOpens, _ := resOpens.RowsAffected()
+
+	// Channel closes: closing_tx_hash is the tx_hash directly.
+	// A tx may be both a funding tx (open) for one channel and a close for another;
+	// opens take priority and are not overwritten here.
+	resCloses, err := d.db.ExecContext(ctx, `
+		INSERT INTO transaction_notes (source_id, note, is_transfer, updated_at)
+		SELECT v.source_id, 'Channel Close', 1, CURRENT_TIMESTAMP
+		FROM btc_transactions_v v
+		WHERE v.source = 'lnd_onchain'
+		  AND EXISTS (
+		    SELECT 1 FROM channels c
+		    WHERE c.closing_tx_hash != ''
+		      AND c.closing_tx_hash = v.source_id
+		  )
+		  -- Skip if already tagged as a Channel Open by the previous step
+		  AND NOT EXISTS (
+		    SELECT 1 FROM channels c
+		    WHERE c.channel_point != ''
+		      AND SUBSTR(c.channel_point, 1, INSTR(c.channel_point, ':') - 1) = v.source_id
+		  )
+		ON CONFLICT(source_id) DO UPDATE SET
+		  note = CASE WHEN note = '' THEN 'Channel Close' ELSE note END,
+		  is_transfer = 1,
+		  updated_at = CURRENT_TIMESTAMP
+		WHERE is_transfer = 0`)
+	if err != nil {
+		return 0, fmt.Errorf("auto-tag channel closes: %w", err)
+	}
+	nCloses, _ := resCloses.RowsAffected()
+
+	return int(nOpens) + int(nCloses), nil
 }
 
 // SetTransferFlag marks or unmarks a transaction as an internal transfer.
