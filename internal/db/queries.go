@@ -2016,10 +2016,10 @@ func (d *DB) AutoTagChannelTransfers(ctx context.Context) (int, error) {
 		      AND SUBSTR(c.channel_point, 1, INSTR(c.channel_point, ':') - 1) = v.source_id
 		  )
 		ON CONFLICT(source_id) DO UPDATE SET
-		  note = CASE WHEN note = '' THEN 'Channel Open' ELSE note END,
+		  note = CASE WHEN note IN ('', 'Channel Open', 'Channel Close') THEN 'Channel Open' ELSE note END,
 		  is_transfer = 1,
 		  updated_at = CURRENT_TIMESTAMP
-		WHERE is_transfer = 0`)
+		WHERE is_transfer != 1 OR note IN ('', 'Channel Close')`)
 	if err != nil {
 		return 0, fmt.Errorf("auto-tag channel opens: %w", err)
 	}
@@ -2045,10 +2045,10 @@ func (d *DB) AutoTagChannelTransfers(ctx context.Context) (int, error) {
 		      AND SUBSTR(c.channel_point, 1, INSTR(c.channel_point, ':') - 1) = v.source_id
 		  )
 		ON CONFLICT(source_id) DO UPDATE SET
-		  note = CASE WHEN note = '' THEN 'Channel Close' ELSE note END,
+		  note = CASE WHEN note IN ('', 'Channel Open', 'Channel Close') THEN 'Channel Close' ELSE note END,
 		  is_transfer = 1,
 		  updated_at = CURRENT_TIMESTAMP
-		WHERE is_transfer = 0`)
+		WHERE is_transfer != 1 OR note IN ('', 'Channel Open')`)
 	if err != nil {
 		return 0, fmt.Errorf("auto-tag channel closes: %w", err)
 	}

@@ -168,8 +168,8 @@ func (s *Syncer) Sync(ctx context.Context) error {
 	if s.snapshot != nil {
 		if n, err := s.snapshot.AutoTagChannelTransfers(ctx); err != nil {
 			s.logger.Printf("auto-tag channel transfers: %v", err)
-		} else if n > 0 {
-			s.logger.Printf("auto-tagged %d channel open/close transactions as transfers", n)
+		} else {
+			s.logger.Printf("auto-tag channel transfers: %d updated", n)
 		}
 	}
 
