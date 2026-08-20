@@ -1,15 +1,19 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"io"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
 
 // DB wraps a SQLite database connection.
 type DB struct {
-	db *sql.DB
+	db   *sql.DB
+	path string // file path used to open the database (empty for :memory:)
 }
 
 // migrations is the list of SQL DDL statements applied in order.
@@ -475,7 +479,7 @@ func NewDB(path string) (*DB, error) {
 		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
 	}
 
-	db := &DB{db: sqldb}
+	db := &DB{db: sqldb, path: path}
 
 	// Run migrations
 	if err := migrate(sqldb); err != nil {
@@ -539,4 +543,41 @@ func (d *DB) Close() error {
 		return d.db.Close()
 	}
 	return nil
+}
+
+// Path returns the filesystem path of the database file.
+func (d *DB) Path() string {
+	return d.path
+}
+
+// Backup checkpoints the WAL and copies the database file to destPath.
+// destPath must not be the same as the database file path.
+func (d *DB) Backup(ctx context.Context, destPath string) error {
+	if d.path == "" || d.path == ":memory:" {
+		return fmt.Errorf("backup: database has no file path")
+	}
+
+	// Checkpoint WAL so all committed data is in the main database file.
+	if _, err := d.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return fmt.Errorf("backup: wal_checkpoint: %w", err)
+	}
+
+	// Copy the database file.
+	src, err := os.Open(d.path)
+	if err != nil {
+		return fmt.Errorf("backup: open source: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("backup: create dest: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("backup: copy: %w", err)
+	}
+
+	return dst.Sync()
 }

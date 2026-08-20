@@ -1,7 +1,9 @@
 package db
 
 import (
+	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -187,5 +189,68 @@ func TestMigrations_NeverRerun(t *testing.T) {
 
 	if countAfterSecond != countAfterFirst {
 		t.Errorf("expected %d rows in schema_migrations after reopen, got %d", countAfterFirst, countAfterSecond)
+	}
+}
+
+// TestDB_Path verifies that Path() returns the path used to open the database.
+func TestDB_Path(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer db.Close()
+
+	if db.Path() != dbPath {
+		t.Errorf("expected path %q, got %q", dbPath, db.Path())
+	}
+}
+
+// TestDB_Backup verifies that Backup creates a copy of the database file.
+func TestDB_Backup(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "source.db")
+	db, err := NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer db.Close()
+
+	destPath := filepath.Join(dir, "backup.db")
+	if err := db.Backup(context.Background(), destPath); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+
+	// Verify the backup file exists and is non-empty.
+	info, err := os.Stat(destPath)
+	if err != nil {
+		t.Fatalf("stat backup: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("expected non-empty backup file")
+	}
+
+	// Verify the backup is a valid SQLite database.
+	backupDB, err := sql.Open("sqlite", destPath)
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer backupDB.Close()
+	if err := backupDB.Ping(); err != nil {
+		t.Fatalf("backup is not a valid SQLite database: %v", err)
+	}
+}
+
+// TestDB_Backup_InMemory verifies that Backup returns an error for in-memory databases.
+func TestDB_Backup_InMemory(t *testing.T) {
+	db, err := NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer db.Close()
+
+	destPath := filepath.Join(t.TempDir(), "backup.db")
+	if err := db.Backup(context.Background(), destPath); err == nil {
+		t.Error("expected error for in-memory database, got nil")
 	}
 }

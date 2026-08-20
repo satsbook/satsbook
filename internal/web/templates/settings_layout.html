@@ -199,6 +199,41 @@
       <div id="monarch-result" style="margin-top: 12px;"></div>
     </section>
 
+    <section class="card" style="margin-top: 16px;">
+      <h3>Database</h3>
+      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+        Download a backup of the satsbook SQLite database, or restore from a previous backup.
+      </p>
+
+      <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px;">
+        <a href="/api/backup" class="btn btn-primary" download>Download Backup</a>
+      </div>
+
+      <details>
+        <summary style="cursor: pointer; color: #888; font-size: 0.85rem; margin-bottom: 8px;">Restore from backup</summary>
+        <div style="margin-top: 12px;">
+          <p style="color: #e53e3e; font-size: 0.82rem; margin-bottom: 10px;">
+            <strong>Warning:</strong> This will replace ALL current data. A restart is required after restore.
+          </p>
+          <form hx-post="/api/restore"
+                hx-target="#restore-result"
+                hx-encoding="multipart/form-data"
+                style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
+            <div>
+              <label for="restore_file" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Backup file (.db)</label>
+              <input type="file" id="restore_file" name="database" accept=".db" required>
+            </div>
+            <button type="submit" class="btn btn-danger"
+                    hx-confirm="This will replace ALL current data and requires a restart. Continue?"
+                    onclick="this.textContent='Restoring…'; this.disabled=true; this.closest('form').submit();">
+              Restore
+            </button>
+          </form>
+          <div id="restore-result" style="margin-top: 10px;"></div>
+        </div>
+      </details>
+    </section>
+
     {{if and .MonarchUnlocked .MonarchConnected}}
     <section class="card" style="margin-top: 16px;">
       <h3>Transaction Export to Monarch</h3>
