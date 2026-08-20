@@ -155,6 +155,21 @@ func main() {
 	}
 	strikeLogger := log.New(os.Stdout, "[strike] ", log.LstdFlags)
 
+	// Wire up Coinbase CDP API auto-sync
+	coinbaseKeyID := cfg.CoinbaseAPIKeyID
+	coinbaseSecret := cfg.CoinbaseAPISecret
+	if coinbaseKeyID == "" {
+		if dbKey, _ := database.GetSetting(context.Background(), "coinbase_api_key_id"); dbKey != "" {
+			coinbaseKeyID = dbKey
+		}
+	}
+	if coinbaseSecret == "" {
+		if dbSec, _ := database.GetSetting(context.Background(), "coinbase_api_secret"); dbSec != "" {
+			coinbaseSecret = dbSec
+		}
+	}
+	coinbaseLogger := log.New(os.Stdout, "[coinbase] ", log.LstdFlags)
+
 	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)
 	walletLogger := log.New(os.Stdout, "[wallet] ", log.LstdFlags)
@@ -231,6 +246,40 @@ func main() {
 		}
 	})
 
+	// Start Coinbase CDP API sync
+	if coinbaseKeyID != "" && coinbaseSecret != "" {
+		if cbClient, err := exchange.NewCoinbaseAPIClient(coinbaseKeyID, coinbaseSecret); err != nil {
+			coinbaseLogger.Printf("invalid credentials: %v", err)
+		} else if s != nil {
+			s.SetCoinbaseClient(cbClient, database)
+			coinbaseLogger.Printf("API sync enabled (via LND syncer)")
+		} else {
+			go runCoinbaseSync(ctx, cbClient, database, 15*time.Minute, coinbaseLogger)
+			coinbaseLogger.Printf("API sync enabled (background goroutine)")
+		}
+	}
+	handler.OnCoinbaseKeyChange(func(keyID, secret string) {
+		if keyID == "" || secret == "" {
+			if s != nil {
+				s.SetCoinbaseClient(nil, nil)
+			}
+			coinbaseLogger.Printf("credentials removed — sync disabled")
+			return
+		}
+		newClient, err := exchange.NewCoinbaseAPIClient(keyID, secret)
+		if err != nil {
+			coinbaseLogger.Printf("invalid credentials: %v", err)
+			return
+		}
+		if s != nil {
+			s.SetCoinbaseClient(newClient, database)
+			coinbaseLogger.Printf("credentials updated — syncing via LND syncer")
+		} else {
+			go runCoinbaseSync(ctx, newClient, database, 15*time.Minute, coinbaseLogger)
+			coinbaseLogger.Printf("credentials updated — background goroutine started")
+		}
+	})
+
 	go func() {
 		sig := <-sigCh
 		log.Printf("received signal %v, shutting down...", sig)
@@ -285,6 +334,50 @@ func runStrikeSync(ctx context.Context, client *exchange.StrikeAPIClient, store 
 			return
 		}
 		summary, err := store.ImportStrikeCSV(ctx, rows)
+		if err != nil {
+			logger.Printf("import: %v", err)
+			return
+		}
+		if summary.NewPurchases > 0 || summary.Updated > 0 {
+			logger.Printf("sync: %d new, %d updated, %d duplicates", summary.NewPurchases, summary.Updated, summary.Duplicates)
+		}
+	}
+
+	doSync()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			doSync()
+		}
+	}
+}
+
+// runCoinbaseSync runs a Coinbase API sync immediately and then on the given interval.
+// Used in dashboard-only mode (no LND syncer).
+func runCoinbaseSync(ctx context.Context, client *exchange.CoinbaseAPIClient, store interface {
+	ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error)
+	SetSetting(ctx context.Context, key, value string) error
+}, interval time.Duration, logger *log.Logger) {
+	doSync := func() {
+		if sats, err := client.FetchBalance(ctx); err != nil {
+			logger.Printf("fetch balance: %v", err)
+		} else if err := store.SetSetting(ctx, "coinbase_live_balance_sats", strconv.FormatInt(sats, 10)); err != nil {
+			logger.Printf("store balance: %v", err)
+		}
+
+		rows, err := client.FetchRows(ctx)
+		if err != nil {
+			logger.Printf("fetch rows: %v", err)
+			return
+		}
+		if len(rows) == 0 {
+			return
+		}
+		summary, err := store.ImportCoinbaseCSV(ctx, rows)
 		if err != nil {
 			logger.Printf("import: %v", err)
 			return

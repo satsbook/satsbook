@@ -32,6 +32,9 @@ type SettingsPageData struct {
 	// Strike API sync
 	StrikeAPIConnected bool
 	StrikeAPIKey       string // masked
+	// Coinbase CDP API sync
+	CoinbaseAPIConnected bool
+	CoinbaseAPIKeyID     string // masked
 }
 
 // HandleSettingsPage serves GET /settings.
@@ -66,6 +69,10 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		if strikeKey, _ := h.settingsStore.GetSetting(ctx, "strike_api_key"); strikeKey != "" {
 			data.StrikeAPIConnected = true
 			data.StrikeAPIKey = maskToken(strikeKey)
+		}
+		if cbKeyID, _ := h.settingsStore.GetSetting(ctx, "coinbase_api_key_id"); cbKeyID != "" {
+			data.CoinbaseAPIConnected = true
+			data.CoinbaseAPIKeyID = maskToken(cbKeyID)
 		}
 	}
 
@@ -533,6 +540,70 @@ func (h *Handler) HandleStrikeAPIKeyDisconnect(w http.ResponseWriter, r *http.Re
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, `<div class="alert alert-success">Strike API key removed.</div>`)
+}
+
+// HandleCoinbaseAPIKeySave handles POST /api/settings/coinbase/key — saves the Coinbase CDP credentials.
+func (h *Handler) HandleCoinbaseAPIKeySave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	keyID := strings.TrimSpace(r.FormValue("coinbase_api_key_id"))
+	secret := strings.TrimSpace(r.FormValue("coinbase_api_secret"))
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if keyID == "" || secret == "" {
+		fmt.Fprint(w, `<div class="alert alert-error">Key ID and private key are both required.</div>`)
+		return
+	}
+
+	if err := h.settingsStore.SetSetting(r.Context(), "coinbase_api_key_id", keyID); err != nil {
+		h.logger.Printf("coinbase: failed to save key ID: %v", err)
+		fmt.Fprint(w, `<div class="alert alert-error">Failed to save credentials.</div>`)
+		return
+	}
+	if err := h.settingsStore.SetSetting(r.Context(), "coinbase_api_secret", secret); err != nil {
+		h.logger.Printf("coinbase: failed to save secret: %v", err)
+		fmt.Fprint(w, `<div class="alert alert-error">Failed to save credentials.</div>`)
+		return
+	}
+
+	if h.onCoinbaseKeyChange != nil {
+		h.onCoinbaseKeyChange(keyID, secret)
+	}
+
+	fmt.Fprint(w, `<div class="alert alert-success">Coinbase credentials saved. Syncing will begin automatically.</div>
+<div style="display:flex;gap:8px;margin-top:12px;">
+  <button hx-post="/api/settings/coinbase/disconnect" hx-target="#coinbase-result" hx-confirm="Remove Coinbase credentials?" class="btn btn-danger">Disconnect</button>
+</div>`)
+}
+
+// HandleCoinbaseAPIKeyDisconnect handles POST /api/settings/coinbase/disconnect — removes Coinbase credentials.
+func (h *Handler) HandleCoinbaseAPIKeyDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	_ = h.settingsStore.SetSetting(r.Context(), "coinbase_api_key_id", "")
+	_ = h.settingsStore.SetSetting(r.Context(), "coinbase_api_secret", "")
+	_ = h.settingsStore.SetSetting(r.Context(), "coinbase_live_balance_sats", "")
+
+	if h.onCoinbaseKeyChange != nil {
+		h.onCoinbaseKeyChange("", "")
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<div class="alert alert-success">Coinbase credentials removed.</div>`)
 }
 
 // maskToken shows only the last 4 characters of a token.

@@ -48,7 +48,9 @@ type Config struct {
 	MonarchAccountID string
 
 	// Exchange API keys
-	StrikeAPIKey string
+	StrikeAPIKey        string
+	CoinbaseAPIKeyID    string
+	CoinbaseAPISecret   string // base64-encoded Ed25519 private key
 }
 
 // Load reads configuration from environment variables.
@@ -95,7 +97,9 @@ func Load() (*Config, error) {
 		MonarchAccountID: getEnv("SATSBOOK_MONARCH_ACCOUNT_ID", ""),
 
 		// Exchange API keys
-		StrikeAPIKey: getEnv("SATSBOOK_STRIKE_API_KEY", ""),
+		StrikeAPIKey:      getEnv("SATSBOOK_STRIKE_API_KEY", ""),
+		CoinbaseAPIKeyID:  getEnv("SATSBOOK_COINBASE_API_KEY_ID", ""),
+		CoinbaseAPISecret: getEnv("SATSBOOK_COINBASE_API_SECRET", ""),
 	}
 
 	// Validate required fields

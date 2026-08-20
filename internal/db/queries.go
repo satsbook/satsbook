@@ -521,8 +521,11 @@ func (d *DB) ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow)
 	for _, row := range rows {
 		rawData, _ := json.Marshal(row)
 
-		// Coinbase has no transaction ID in struct; use composite key
-		externalID := fmt.Sprintf("%s|%s|%.8f", row.Date.Format("2006-01-02T15:04:05"), row.Type, row.AmountBTC)
+		// Use stable API transaction ID when available; fall back to composite key for CSV rows.
+		externalID := row.TransactionID
+		if externalID == "" {
+			externalID = fmt.Sprintf("%s|%s|%.8f", row.Date.Format("2006-01-02T15:04:05"), row.Type, row.AmountBTC)
+		}
 
 		var existingRaw string
 		err := tx.QueryRowContext(ctx,
@@ -1068,6 +1071,13 @@ func (d *DB) ExchangeBalance(ctx context.Context, source string) (int64, error) 
 	if source == "strike" {
 		if liveVal, _ := d.GetSetting(ctx, "strike_live_balance_sats"); liveVal != "" {
 			if sats, err := strconv.ParseInt(liveVal, 10, 64); err == nil && sats > 0 {
+				return sats, nil
+			}
+		}
+	}
+	if source == "coinbase" {
+		if liveVal, _ := d.GetSetting(ctx, "coinbase_live_balance_sats"); liveVal != "" {
+			if sats, err := strconv.ParseInt(liveVal, 10, 64); err == nil && sats >= 0 {
 				return sats, nil
 			}
 		}

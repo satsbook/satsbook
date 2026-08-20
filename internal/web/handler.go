@@ -130,8 +130,9 @@ type Handler struct {
 	backupDB         BackupDB
 	licenseChecker    *license.DefaultChecker
 	checkoutBaseURL   string // e.g. "https://api.satsbook.io"
-	onMonarchChange   func(MonarchSyncer)
-	onStrikeKeyChange func(apiKey string)
+	onMonarchChange      func(MonarchSyncer)
+	onStrikeKeyChange    func(apiKey string)
+	onCoinbaseKeyChange  func(keyID, secret string)
 	pendingMonarch    *monarch.PendingClient
 	logger            *log.Logger
 	renderer          *Renderer
@@ -233,6 +234,12 @@ func (h *Handler) OnMonarchChange(fn func(MonarchSyncer)) {
 // The callback receives the new key value ("" means disconnected).
 func (h *Handler) OnStrikeKeyChange(fn func(apiKey string)) {
 	h.onStrikeKeyChange = fn
+}
+
+// OnCoinbaseKeyChange registers a callback invoked when the Coinbase CDP credentials are saved or cleared.
+// Both keyID and secret are empty strings when disconnected.
+func (h *Handler) OnCoinbaseKeyChange(fn func(keyID, secret string)) {
+	h.onCoinbaseKeyChange = fn
 }
 
 // backfillSnapshots runs portfolio snapshot backfill in the background after imports.
