@@ -127,6 +127,7 @@ type Handler struct {
 	monarchSyncer    MonarchSyncer
 	monarchTxStore   MonarchTxStore
 	taxStore         TaxStore
+	backupDB         BackupDB
 	licenseChecker    *license.DefaultChecker
 	checkoutBaseURL   string // e.g. "https://api.satsbook.io"
 	onMonarchChange   func(MonarchSyncer)
@@ -206,6 +207,11 @@ func (h *Handler) SetMonarchSyncer(ms MonarchSyncer) {
 // SetTaxStore sets the tax store for cost basis calculations.
 func (h *Handler) SetTaxStore(ts TaxStore) {
 	h.taxStore = ts
+}
+
+// SetBackupDB sets the database used for backup and restore operations.
+func (h *Handler) SetBackupDB(db BackupDB) {
+	h.backupDB = db
 }
 
 // SetLicenseChecker sets the license checker for runtime activation.
