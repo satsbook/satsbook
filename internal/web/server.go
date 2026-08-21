@@ -37,6 +37,8 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/settings/plans", handler.HandlePlansPage)
 	mux.HandleFunc("/tax", handler.HandleTaxPage)
 	mux.HandleFunc("/tax-guide", handler.HandleTaxGuidePage)
+	mux.HandleFunc("/year/", handler.HandleYearReportPage)
+	mux.HandleFunc("/year", handler.HandleYearReportPage)
 	mux.HandleFunc("/transactions", handler.HandleTransactionsPage)
 
 	// Static assets (embedded)

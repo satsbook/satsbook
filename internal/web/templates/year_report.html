@@ -1,0 +1,173 @@
+{{define "year_report_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.NodeAlias}} — {{.Year}} Annual Report — Satsbook</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body hx-indicator="#htmx-progress">
+  <div id="htmx-progress" class="htmx-indicator"></div>
+  <header>
+    <div class="container header-inner">
+      <div class="header-top">
+        <a class="logo" href="/">Satsbook</a>
+        <button class="hamburger" id="hamburger" aria-label="Toggle menu" onclick="document.getElementById('main-nav').classList.toggle('nav-open'); this.classList.toggle('hamburger-open');">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+      {{template "nav" "year"}}
+      <div class="node-info-bar">
+        {{if .NodeAlias}}{{if .NodeSynced}}<strong>{{.NodeAlias}}</strong> <span class="synced" title="synced" style="cursor:default;">&#10003;</span>{{else}}<strong>{{.NodeAlias}}</strong> <span class="not-synced" title="not synced" style="cursor:default;">&#10007;</span>{{end}}{{else}}<span class="not-synced" title="node unreachable">&#10007;</span>{{end}}
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Year selector + title -->
+    <div style="display:flex; align-items:baseline; gap:16px; margin:24px 0 8px; flex-wrap:wrap;">
+      <h1 style="font-size:1.75rem; font-weight:700; color:var(--text); margin:0;">{{.Year}} Annual Report</h1>
+      {{if .AvailableYears}}
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        {{range .AvailableYears}}
+        <a href="/year/{{.}}" style="font-size:0.85rem; padding:3px 10px; border-radius:4px; text-decoration:none;
+          {{if eq . $.Year}}background:var(--accent,#f7931a); color:#000; font-weight:600;{{else}}color:var(--text-muted); border:1px solid var(--border);{{end}}">{{.}}</a>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+    {{if .NodeAlias}}<p style="color:var(--text-muted); margin:0 0 28px; font-size:0.95rem;">{{.NodeAlias}}</p>{{end}}
+
+    <!-- Routing summary cards -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:24px;">
+      <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px;">
+        <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:6px;">Fees Earned</div>
+        <div style="font-size:1.6rem; font-weight:700; color:var(--text);">{{formatSats .TotalFeeSats}}</div>
+        {{if and .BTCPriceUSD (gt .TotalFeeSats 0)}}<div style="font-size:0.85rem; color:var(--text-muted);">{{formatUSD (mul (divf .TotalFeeSats 100000000) .BTCPriceUSD)}}</div>{{end}}
+      </div>
+      <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px;">
+        <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:6px;">Payments Routed</div>
+        <div style="font-size:1.6rem; font-weight:700; color:var(--text);">{{.RoutedCount}}</div>
+        {{if gt .RoutedVolSats 0}}<div style="font-size:0.85rem; color:var(--text-muted);">{{formatSats .RoutedVolSats}} vol</div>{{end}}
+      </div>
+      {{if gt .BestChanFee 0}}
+      <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px;">
+        <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:6px;">Best Channel</div>
+        <div style="font-size:1rem; font-weight:700; color:var(--text); word-break:break-all;">{{.BestChanID}}</div>
+        <div style="font-size:0.85rem; color:var(--text-muted);">{{formatSats .BestChanFee}} earned</div>
+      </div>
+      {{end}}
+      {{if .IsPro}}
+      {{if gt .AcquiredSats 0}}
+      <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px;">
+        <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:6px;">BTC Acquired</div>
+        <div style="font-size:1.6rem; font-weight:700; color:var(--text);">{{formatSats .AcquiredSats}}</div>
+        {{if gt .AcquisitionUSD 0.0}}<div style="font-size:0.85rem; color:var(--text-muted);">{{formatUSD .AcquisitionUSD}} spent</div>{{end}}
+      </div>
+      {{end}}
+      {{end}}
+    </div>
+
+    <!-- Monthly fee bar chart -->
+    {{if .MonthlyFees}}
+    <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:24px; margin-bottom:24px;">
+      <h2 style="font-size:1rem; font-weight:600; color:var(--text); margin:0 0 20px;">Monthly Routing Fees</h2>
+      <div style="display:flex; align-items:flex-end; gap:6px; height:120px;">
+        {{range .MonthlyFees}}
+        {{$sats := div .TotalFeeMsat 1000}}
+        {{$pct := pctOf $sats $.MaxMonthlyFee}}
+        <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; min-width:0;">
+          <div style="width:100%; background:var(--accent,#f7931a); border-radius:3px 3px 0 0; opacity:0.85;"
+               title="{{slice .Month 5 7}}: {{formatSats $sats}}"
+               style="height:{{$pct}}%;"></div>
+        </div>
+        {{end}}
+      </div>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        {{range .MonthlyFees}}
+        <div style="flex:1; font-size:0.65rem; color:var(--text-muted); text-align:center; min-width:0; overflow:hidden;">{{slice .Month 5 7}}</div>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+
+    {{if .IsPro}}
+    <!-- Pro: acquisitions + disposal summary -->
+    {{if or (gt .AcquiredSats 0) (gt .DisposalCount 0)}}
+    <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:24px; margin-bottom:24px;">
+      <h2 style="font-size:1rem; font-weight:600; color:var(--text); margin:0 0 16px;">BTC Activity</h2>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        {{if gt .AcquiredSats 0}}
+        <div>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px;">Acquired</div>
+          <div style="font-weight:600; color:var(--text);">{{formatSats .AcquiredSats}}</div>
+          {{if gt .AcquisitionUSD 0.0}}<div style="font-size:0.85rem; color:var(--text-muted);">{{formatUSD .AcquisitionUSD}} total cost</div>{{end}}
+        </div>
+        {{end}}
+        {{if gt .DisposalCount 0}}
+        <div>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px;">Disposals</div>
+          <div style="font-weight:600; color:var(--text);">{{.DisposalCount}} sale{{if gt .DisposalCount 1}}s{{end}}</div>
+          <div style="font-size:0.85rem; color:var(--text-muted);"><a href="/tax?year={{.Year}}" style="color:var(--accent,#f7931a); text-decoration:none;">View Form 8949 →</a></div>
+        </div>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+    {{end}}
+
+    <!-- Share / copy stats -->
+    <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:24px; margin-bottom:24px;">
+      <h2 style="font-size:1rem; font-weight:600; color:var(--text); margin:0 0 12px;">Share your year</h2>
+      <div id="share-text" style="font-family:monospace; font-size:0.85rem; color:var(--text-muted); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:12px; white-space:pre; margin-bottom:12px;">⚡ {{if .NodeAlias}}{{.NodeAlias}} — {{end}}{{.Year}}
+Fees earned: {{formatSats .TotalFeeSats}}{{if and .BTCPriceUSD (gt .TotalFeeSats 0)}} ({{formatUSD (mul (divf .TotalFeeSats 100000000) .BTCPriceUSD)}}){{end}}
+Payments routed: {{.RoutedCount}}{{if .IsPro}}{{if gt .AcquiredSats 0}}
+BTC acquired: {{formatSats .AcquiredSats}}{{end}}{{end}}
+satsbook.io</div>
+      <button onclick="copyStats()" style="padding:8px 20px; background:var(--accent,#f7931a); color:#000; font-weight:600; border:none; border-radius:var(--radius); cursor:pointer; font-size:0.9rem;">Copy Stats</button>
+      <span id="copy-confirm" style="display:none; margin-left:10px; color:var(--green); font-size:0.85rem;">Copied!</span>
+    </div>
+
+    {{if not .IsPro}}
+    <!-- Pro upsell -->
+    <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:24px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+      <div>
+        <div style="font-weight:600; color:var(--text); margin-bottom:4px;">Unlock the full picture</div>
+        <div style="font-size:0.85rem; color:var(--text-muted);">Pro adds BTC acquisition totals, cost basis, and Form 8949 export to your annual report.</div>
+      </div>
+      <a href="/settings/plans" style="display:inline-block; padding:8px 20px; background:var(--accent,#f7931a); color:#000; font-weight:700; border-radius:var(--radius); text-decoration:none; white-space:nowrap;">Upgrade to Pro</a>
+    </div>
+    {{end}}
+
+    <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:40px;">Data reflects activity synced to Satsbook. Historical data before your first sync may be incomplete.</p>
+
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Last synced: {{timeAgo .LastSyncedAt}}</span>
+      <span>{{if .BTCPriceUSD}}BTC {{formatUSD .BTCPriceUSD}} ({{timeAgo .PriceFetchedAt}}){{end}}</span>
+      {{if .Tier}}<span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>{{end}}
+    </div>
+  </footer>
+
+  <script>
+  function copyStats() {
+    var text = document.getElementById('share-text').innerText;
+    navigator.clipboard.writeText(text).then(function() {
+      var el = document.getElementById('copy-confirm');
+      el.style.display = 'inline';
+      setTimeout(function() { el.style.display = 'none'; }, 2000);
+    });
+  }
+
+  // Render bar chart heights (can't use % in inline style via template directly)
+  document.addEventListener('DOMContentLoaded', function() {
+    var bars = document.querySelectorAll('[data-pct]');
+    bars.forEach(function(b) { b.style.height = b.dataset.pct + '%'; });
+  });
+  </script>
+</body>
+</html>{{end}}

@@ -42,6 +42,8 @@ type DashboardStore interface {
 	GetTransactionNote(ctx context.Context, sourceID string) (string, error)
 	ListTransferCandidates(ctx context.Context, sourceID string, amountSat int64, ts time.Time) ([]db.TransferCandidate, error)
 	StrikeCollateralSats(ctx context.Context) (int64, error)
+	AnnualReport(ctx context.Context, year int) (*db.AnnualReportData, error)
+	AvailableReportYears(ctx context.Context) ([]int, error)
 }
 
 // NodeInfoProvider fetches node info from LND.

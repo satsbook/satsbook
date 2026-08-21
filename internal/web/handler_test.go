@@ -142,6 +142,12 @@ func (m *mockStore) ListTransferCandidates(ctx context.Context, sourceID string,
 	return nil, nil
 }
 func (m *mockStore) StrikeCollateralSats(ctx context.Context) (int64, error) { return 0, nil }
+func (m *mockStore) AnnualReport(ctx context.Context, year int) (*db.AnnualReportData, error) {
+	return &db.AnnualReportData{Year: year}, nil
+}
+func (m *mockStore) AvailableReportYears(ctx context.Context) ([]int, error) {
+	return []int{2026, 2025}, nil
+}
 
 type mockNodeInfo struct {
 	info *lnd.NodeInfo
