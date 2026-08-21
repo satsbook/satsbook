@@ -62,9 +62,9 @@
       {{if .IsPro}}
       {{if gt .AcquiredSats 0}}
       <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px;">
-        <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:6px;">BTC Acquired</div>
+        <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted); margin-bottom:6px;">BTC Purchased</div>
         <div style="font-size:1.6rem; font-weight:700; color:var(--text);">{{formatSats .AcquiredSats}}</div>
-        {{if gt .AcquisitionUSD 0.0}}<div style="font-size:0.85rem; color:var(--text-muted);">{{formatUSD .AcquisitionUSD}} spent</div>{{end}}
+        {{if gt .AcquisitionUSD 0.0}}<div style="font-size:0.85rem; color:var(--text-muted);">{{formatUSD .AcquisitionUSD}} total cost</div>{{end}}
       </div>
       {{end}}
       {{end}}
@@ -101,7 +101,7 @@
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
         {{if gt .AcquiredSats 0}}
         <div>
-          <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px;">Acquired</div>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:4px;">Purchased</div>
           <div style="font-weight:600; color:var(--text);">{{formatSats .AcquiredSats}}</div>
           {{if gt .AcquisitionUSD 0.0}}<div style="font-size:0.85rem; color:var(--text-muted);">{{formatUSD .AcquisitionUSD}} total cost</div>{{end}}
         </div>
@@ -124,7 +124,7 @@
       <div id="share-text" style="font-family:monospace; font-size:0.85rem; color:var(--text-muted); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:12px; white-space:pre; margin-bottom:12px;">⚡ {{if .NodeAlias}}{{.NodeAlias}} — {{end}}{{.Year}}
 Fees earned: {{formatSats .TotalFeeSats}}{{if and .BTCPriceUSD (gt .TotalFeeSats 0)}} ({{formatUSD (mul (satsToBTCf .TotalFeeSats) .BTCPriceUSD)}}){{end}}
 Payments routed: {{.RoutedCount}}{{if .IsPro}}{{if gt .AcquiredSats 0}}
-BTC acquired: {{formatSats .AcquiredSats}}{{end}}{{end}}
+BTC purchased: {{formatSats .AcquiredSats}}{{end}}{{end}}
 satsbook.io</div>
       <button onclick="copyStats()" style="padding:8px 20px; background:var(--accent,#f7931a); color:#000; font-weight:600; border:none; border-radius:var(--radius); cursor:pointer; font-size:0.9rem;">Copy Stats</button>
       <span id="copy-confirm" style="display:none; margin-left:10px; color:var(--green); font-size:0.85rem;">Copied!</span>
