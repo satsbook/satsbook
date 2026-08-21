@@ -79,9 +79,8 @@
         {{$sats := div .TotalFeeMsat 1000}}
         {{$pct := pctOf $sats $.MaxMonthlyFee}}
         <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; min-width:0;">
-          <div style="width:100%; background:var(--accent,#f7931a); border-radius:3px 3px 0 0; opacity:0.85;"
-               title="{{slice .Month 5 7}}: {{formatSats $sats}}"
-               style="height:{{$pct}}%;"></div>
+          <div style="width:100%; background:var(--accent,#f7931a); border-radius:3px 3px 0 0; opacity:0.85; height:{{$pct}}%;"
+               title="{{slice .Month 5 7}}: {{formatSats $sats}}"></div>
         </div>
         {{end}}
       </div>
