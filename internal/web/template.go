@@ -112,6 +112,26 @@ func NewRenderer() *Renderer {
 			}
 			return m, nil
 		},
+		"satsToBTCf": func(sats int64) float64 { return float64(sats) / 100_000_000.0 },
+		"mul": func(a, b float64) float64 { return a * b },
+		"divf": func(a, b float64) float64 {
+			if b == 0 {
+				return 0
+			}
+			return a / b
+		},
+		"div": func(a, b int64) int64 {
+			if b == 0 {
+				return 0
+			}
+			return a / b
+		},
+		"slice": func(s string, i, j int) string {
+			if i < 0 || j > len(s) || i > j {
+				return s
+			}
+			return s[i:j]
+		},
 	}
 
 	tmpl := template.Must(
@@ -146,6 +166,7 @@ func NewRenderer() *Renderer {
 			"templates/partials/transfer_candidates.html",
 			"templates/partials/source_flows.html",
 		"templates/tax_guide.html",
+		"templates/year_report.html",
 		),
 	)
 

@@ -1,13 +1,62 @@
 {{define "nav"}}
 <nav class="main-nav" id="main-nav">
   <a href="/" class="nav-link{{if eq . "dashboard"}} nav-active{{end}}">Dashboard</a>
-  <a href="/lightning" class="nav-link{{if eq . "lightning"}} nav-active{{end}}">Lightning</a>
-  <a href="/transactions" class="nav-link{{if eq . "transactions"}} nav-active{{end}}">Transactions</a>
-  <a href="/import" class="nav-link{{if eq . "import"}} nav-active{{end}}">Import</a>
-  <a href="/wallets" class="nav-link{{if eq . "wallets"}} nav-active{{end}}">Wallets</a>
-  <a href="/portfolio" class="nav-link{{if eq . "portfolio"}} nav-active{{end}}">Portfolio</a>
-  <a href="/pl" class="nav-link{{if eq . "pl"}} nav-active{{end}}">P&amp;L</a>
-  <a href="/tax" class="nav-link{{if eq . "tax"}} nav-active{{end}}">Tax</a>
+
+  <div class="nav-group{{if or (eq . "lightning") (eq . "year")}} nav-group-active{{end}}">
+    <button class="nav-group-btn" onclick="toggleNavGroup(this)" aria-haspopup="true">Node <span class="nav-caret">▾</span></button>
+    <div class="nav-dropdown">
+      <a href="/lightning" class="nav-link{{if eq . "lightning"}} nav-active{{end}}">Lightning</a>
+      <a href="/year" class="nav-link{{if eq . "year"}} nav-active{{end}}">Year</a>
+    </div>
+  </div>
+
+  <div class="nav-group{{if or (eq . "portfolio") (or (eq . "wallets") (eq . "pl"))}} nav-group-active{{end}}">
+    <button class="nav-group-btn" onclick="toggleNavGroup(this)" aria-haspopup="true">Portfolio <span class="nav-caret">▾</span></button>
+    <div class="nav-dropdown">
+      <a href="/portfolio" class="nav-link{{if eq . "portfolio"}} nav-active{{end}}">Portfolio</a>
+      <a href="/wallets" class="nav-link{{if eq . "wallets"}} nav-active{{end}}">Wallets</a>
+      <a href="/pl" class="nav-link{{if eq . "pl"}} nav-active{{end}}">P&amp;L</a>
+    </div>
+  </div>
+
+  <div class="nav-group{{if or (eq . "transactions") (eq . "import")}} nav-group-active{{end}}">
+    <button class="nav-group-btn" onclick="toggleNavGroup(this)" aria-haspopup="true">Activity <span class="nav-caret">▾</span></button>
+    <div class="nav-dropdown">
+      <a href="/transactions" class="nav-link{{if eq . "transactions"}} nav-active{{end}}">Transactions</a>
+      <a href="/import" class="nav-link{{if eq . "import"}} nav-active{{end}}">Import</a>
+    </div>
+  </div>
+
+  <div class="nav-group{{if or (eq . "tax") (eq . "tax-guide")}} nav-group-active{{end}}">
+    <button class="nav-group-btn" onclick="toggleNavGroup(this)" aria-haspopup="true">Tax <span class="nav-caret">▾</span></button>
+    <div class="nav-dropdown">
+      <a href="/tax" class="nav-link{{if eq . "tax"}} nav-active{{end}}">Tax Reports</a>
+      <a href="/tax-guide" class="nav-link{{if eq . "tax-guide"}} nav-active{{end}}">Tax Guide</a>
+    </div>
+  </div>
+
   <a href="/settings" class="nav-link{{if eq . "settings"}} nav-active{{end}}">Settings</a>
 </nav>
+
+<script>
+function toggleNavGroup(btn) {
+  var group = btn.closest('.nav-group');
+  var isOpen = group.classList.contains('nav-group-open');
+  // Close all open groups first
+  document.querySelectorAll('.nav-group.nav-group-open').forEach(function(g) {
+    g.classList.remove('nav-group-open');
+  });
+  if (!isOpen) {
+    group.classList.add('nav-group-open');
+  }
+}
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.nav-group')) {
+    document.querySelectorAll('.nav-group.nav-group-open').forEach(function(g) {
+      g.classList.remove('nav-group-open');
+    });
+  }
+});
+</script>
 {{end}}

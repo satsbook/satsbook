@@ -86,6 +86,46 @@ header {
 }
 .nav-link:hover { background: var(--bg-hover); }
 .nav-link.nav-active { color: var(--text); font-weight: 600; }
+
+/* Nav dropdowns */
+.nav-group { position: relative; display: flex; align-items: center; }
+.nav-group-btn {
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.nav-group-btn:hover { background: var(--bg-hover); }
+.nav-group-active .nav-group-btn { color: var(--text); font-weight: 600; }
+.nav-caret { font-size: 0.6rem; opacity: 0.5; }
+.nav-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  min-width: 150px;
+  z-index: 200;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  flex-direction: column;
+  gap: 2px;
+}
+.nav-group:hover .nav-dropdown,
+.nav-group.nav-group-open .nav-dropdown { display: flex; }
+.nav-dropdown .nav-link { display: block; border-radius: 4px; }
+
 .node-info-bar { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; display: flex; align-items: center; gap: 4px; flex-shrink: 0; padding-left: 8px; }
 .node-info-bar .synced { color: var(--green); }
 .node-info-bar .not-synced { color: var(--red); }
@@ -366,6 +406,19 @@ tr:hover { background: var(--bg-hover); }
     border-radius: 4px;
   }
   .main-nav .nav-link:hover { background: var(--bg-hover); }
+  /* Mobile nav groups — expand inline, no hover dropdown */
+  .nav-group { flex-direction: column; align-items: stretch; }
+  .nav-group-btn { text-align: left; padding: 8px 12px; width: 100%; }
+  .nav-group:hover .nav-dropdown { display: none; }
+  .nav-group.nav-group-open .nav-dropdown { display: flex; }
+  .nav-dropdown {
+    position: static;
+    box-shadow: none;
+    border: none;
+    background: transparent;
+    padding: 0 0 0 12px;
+    min-width: unset;
+  }
   .footer-inner { flex-direction: column; }
   .truncate { max-width: 80px; }
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2149,4 +2150,162 @@ func (d *DB) ListTransferCandidates(ctx context.Context, sourceID string, amount
 		candidates = append(candidates, c)
 	}
 	return candidates, rows.Err()
+}
+
+// --- Annual Report ---
+
+// MonthlyFeeStat holds aggregated fee data for a single month.
+type MonthlyFeeStat struct {
+	Month        string // "2026-01"
+	TotalFeeMsat int64
+	Count        int64
+}
+
+// AnnualReportData holds all data needed to render the year-in-review page.
+type AnnualReportData struct {
+	Year int
+
+	// Routing (free)
+	TotalFeeMsat   int64
+	RoutedCount    int64
+	RoutedVolMsat  int64
+	MonthlyFees    []MonthlyFeeStat
+	BestChanID     string
+	BestChanFee    int64 // msat
+
+	// Exchange acquisitions (pro)
+	AcquiredSats   int64
+	AcquisitionUSD float64 // total cost basis of acquisitions this year
+	DisposalCount  int     // number of sales/disposals this year
+}
+
+// AnnualReport computes all year-in-review data for the given calendar year.
+func (d *DB) AnnualReport(ctx context.Context, year int) (*AnnualReportData, error) {
+	start := fmt.Sprintf("%d-01-01T00:00:00Z", year)
+	end := fmt.Sprintf("%d-01-01T00:00:00Z", year+1)
+
+	data := &AnnualReportData{Year: year}
+
+	// Routing summary for the year
+	err := d.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(fee_msat),0), COUNT(*), COALESCE(SUM(amt_in_msat),0)
+		FROM forwarding_events
+		WHERE timestamp >= ? AND timestamp < ?
+	`, start, end).Scan(&data.TotalFeeMsat, &data.RoutedCount, &data.RoutedVolMsat)
+	if err != nil {
+		return nil, fmt.Errorf("annual routing summary: %w", err)
+	}
+
+	// Monthly fees — always produce 12 entries (Jan–Dec), zeroed if no data.
+	{
+		monthMap := make(map[string]MonthlyFeeStat, 12)
+		for m := 1; m <= 12; m++ {
+			key := fmt.Sprintf("%04d-%02d", year, m)
+			monthMap[key] = MonthlyFeeStat{Month: key}
+		}
+		mrows, merr := d.db.QueryContext(ctx, `
+			SELECT SUBSTR(timestamp,1,7) AS month, COALESCE(SUM(fee_msat),0), COUNT(*)
+			FROM forwarding_events
+			WHERE timestamp >= ? AND timestamp < ?
+			GROUP BY SUBSTR(timestamp,1,7)
+			ORDER BY month ASC
+		`, start, end)
+		if merr != nil {
+			return nil, fmt.Errorf("annual monthly fees: %w", merr)
+		}
+		defer mrows.Close()
+		for mrows.Next() {
+			var m MonthlyFeeStat
+			if err := mrows.Scan(&m.Month, &m.TotalFeeMsat, &m.Count); err != nil {
+				return nil, fmt.Errorf("scan monthly fee: %w", err)
+			}
+			monthMap[m.Month] = m
+		}
+		if err := mrows.Err(); err != nil {
+			return nil, err
+		}
+		data.MonthlyFees = make([]MonthlyFeeStat, 0, 12)
+		for m := 1; m <= 12; m++ {
+			key := fmt.Sprintf("%04d-%02d", year, m)
+			data.MonthlyFees = append(data.MonthlyFees, monthMap[key])
+		}
+	}
+
+	// Best channel for the year (by fees earned)
+	_ = d.db.QueryRowContext(ctx, `
+		SELECT chan_id, COALESCE(SUM(fee_msat),0) AS total
+		FROM (
+			SELECT chan_id_in AS chan_id, fee_msat FROM forwarding_events WHERE timestamp >= ? AND timestamp < ?
+			UNION ALL
+			SELECT chan_id_out AS chan_id, fee_msat FROM forwarding_events WHERE timestamp >= ? AND timestamp < ?
+		)
+		GROUP BY chan_id
+		ORDER BY total DESC
+		LIMIT 1
+	`, start, end, start, end).Scan(&data.BestChanID, &data.BestChanFee)
+	// ignore error — no data is fine
+
+	// Exchange acquisitions for the year (all sources)
+	var purchBTC float64
+	var costUSD float64
+	err = d.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data,'$.Type')) IN ('purchase','buy')
+				THEN json_extract(raw_data,'$.AmountBTC') ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN LOWER(json_extract(raw_data,'$.Type')) IN ('purchase','buy')
+				THEN ABS(COALESCE(json_extract(raw_data,'$.CostBasisUSD'), json_extract(raw_data,'$.AmountUSD'), 0)) ELSE 0 END), 0)
+		FROM exchange_imports
+		WHERE json_extract(raw_data,'$.Date') >= ? AND json_extract(raw_data,'$.Date') < ?
+	`, start, end).Scan(&purchBTC, &costUSD)
+	if err == nil {
+		data.AcquiredSats = int64(math.Round(purchBTC * 1e8))
+		data.AcquisitionUSD = costUSD
+	}
+
+	// Sales/disposals count for the year
+	_ = d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM exchange_imports
+		WHERE LOWER(tx_type) IN ('sale','sell')
+		  AND json_extract(raw_data,'$.Date') >= ? AND json_extract(raw_data,'$.Date') < ?
+	`, start, end).Scan(&data.DisposalCount)
+
+	return data, nil
+}
+
+// AvailableReportYears returns years available for the annual report page.
+// Always includes the last 4 calendar years plus any additional years that
+// have forwarding event data, sorted descending.
+func (d *DB) AvailableReportYears(ctx context.Context) ([]int, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT DISTINCT CAST(SUBSTR(timestamp,1,4) AS INTEGER) AS yr
+		FROM forwarding_events
+		ORDER BY yr DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("available report years: %w", err)
+	}
+	defer rows.Close()
+	seen := map[int]bool{}
+	for rows.Next() {
+		var y int
+		if err := rows.Scan(&y); err != nil {
+			return nil, err
+		}
+		seen[y] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Always include the last 4 calendar years so users can navigate back.
+	cur := time.Now().Year()
+	for y := cur; y >= cur-3; y-- {
+		seen[y] = true
+	}
+	years := make([]int, 0, len(seen))
+	for y := range seen {
+		years = append(years, y)
+	}
+	sort.Slice(years, func(i, j int) bool { return years[i] > years[j] })
+	return years, nil
 }
