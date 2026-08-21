@@ -11,6 +11,13 @@
     <div class="container header-inner">
       <div class="header-top">
         <a class="logo" href="/">Satsbook</a>
+        <button class="hamburger" id="hamburger" aria-label="Toggle menu" onclick="document.getElementById('main-nav').classList.toggle('nav-open'); this.classList.toggle('hamburger-open');">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+      {{template "nav" "tax-guide"}}
+      <div class="node-info-bar">
+        {{if .NodeAlias}}{{if .NodeSynced}}<strong>{{.NodeAlias}}</strong> <span class="synced" title="synced" style="cursor:default;">&#10003;</span>{{else}}<strong>{{.NodeAlias}}</strong> <span class="not-synced" title="not synced" style="cursor:default;">&#10007;</span>{{end}}{{else}}<span class="not-synced" title="node unreachable">&#10007;</span>{{end}}
       </div>
     </div>
   </header>
@@ -184,8 +191,11 @@
 
   <footer>
     <div class="container footer-inner">
-      <span>Satsbook &mdash; Bitcoin accounting for Lightning operators</span>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">This is not tax advice. Consult a qualified tax professional.</span>
+      <span>Last synced: {{timeAgo .LastSyncedAt}}</span>
+      <span>
+        {{if .BTCPriceUSD}}BTC {{formatUSD .BTCPriceUSD}} (mempool.space, {{timeAgo .PriceFetchedAt}}){{else}}BTC price unavailable{{end}}
+      </span>
+      {{if .Tier}}<span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>{{end}}
     </div>
   </footer>
 </body>
