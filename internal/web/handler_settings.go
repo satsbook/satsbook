@@ -35,6 +35,9 @@ type SettingsPageData struct {
 	// Coinbase CDP API sync
 	CoinbaseAPIConnected bool
 	CoinbaseAPIKeyID     string // masked
+	// Node info (for header indicator)
+	NodeAlias  string
+	NodeSynced bool
 }
 
 // HandleSettingsPage serves GET /settings.
@@ -57,6 +60,11 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		Tier:            string(tier),
 		MonarchUnlocked: license.TierAtLeast(tier, license.TierPower),
 		AutoActivateKey: autoKey,
+	}
+
+	if info := h.getNodeInfo(ctx); info != nil {
+		data.NodeAlias = info.Alias
+		data.NodeSynced = info.Synced
 	}
 
 	// Show masked license key
