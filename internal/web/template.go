@@ -112,6 +112,7 @@ func NewRenderer() *Renderer {
 			}
 			return m, nil
 		},
+		"satsToBTCf": func(sats int64) float64 { return float64(sats) / 100_000_000.0 },
 		"mul": func(a, b float64) float64 { return a * b },
 		"divf": func(a, b float64) float64 {
 			if b == 0 {
