@@ -72,32 +72,48 @@ type StrikeImporter interface {
 	SetSetting(ctx context.Context, key, value string) error
 }
 
+// CoinbaseRowFetcher fetches transaction rows and live balance from the Coinbase CDP API.
+type CoinbaseRowFetcher interface {
+	FetchRows(ctx context.Context) ([]exchange.CoinbaseRow, error)
+	FetchBalance(ctx context.Context) (int64, error)
+}
+
+// CoinbaseImporter persists Coinbase rows to the database.
+type CoinbaseImporter interface {
+	ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error)
+	SetSetting(ctx context.Context, key, value string) error
+}
+
 // Syncer orchestrates LND data synchronization.
 type Syncer struct {
-	lnd            LNDClient
-	store          Store
-	snapshot       SnapshotStore
-	price          PriceProvider
-	monarch        MonarchSyncer
-	monarchTxStore MonarchTxStore
-	settings       SettingsReader
-	strikeClient   StrikeRowFetcher
-	strikeImporter StrikeImporter
-	strikeTrigger  chan struct{}
-	logger         *log.Logger
-	syncInterval   time.Duration
-	maxHistoryDays int
+	lnd              LNDClient
+	store            Store
+	snapshot         SnapshotStore
+	price            PriceProvider
+	monarch          MonarchSyncer
+	monarchTxStore   MonarchTxStore
+	settings         SettingsReader
+	strikeClient     StrikeRowFetcher
+	strikeImporter   StrikeImporter
+	strikeTrigger    chan struct{}
+	coinbaseClient   CoinbaseRowFetcher
+	coinbaseImporter CoinbaseImporter
+	coinbaseTrigger  chan struct{}
+	logger           *log.Logger
+	syncInterval     time.Duration
+	maxHistoryDays   int
 }
 
 // New creates a new Syncer.
 func New(lnd LNDClient, store Store, logger *log.Logger, syncInterval time.Duration, maxHistoryDays int) *Syncer {
 	return &Syncer{
-		lnd:            lnd,
-		store:          store,
-		logger:         logger,
-		syncInterval:   syncInterval,
-		maxHistoryDays: maxHistoryDays,
-		strikeTrigger:  make(chan struct{}, 1),
+		lnd:             lnd,
+		store:           store,
+		logger:          logger,
+		syncInterval:    syncInterval,
+		maxHistoryDays:  maxHistoryDays,
+		strikeTrigger:   make(chan struct{}, 1),
+		coinbaseTrigger: make(chan struct{}, 1),
 	}
 }
 
@@ -131,6 +147,19 @@ func (s *Syncer) SetStrikeClient(client StrikeRowFetcher, importer StrikeImporte
 	}
 }
 
+// SetCoinbaseClient sets the Coinbase CDP API client and importer for automatic syncing.
+// If a non-nil client is provided, an immediate sync is triggered.
+func (s *Syncer) SetCoinbaseClient(client CoinbaseRowFetcher, importer CoinbaseImporter) {
+	s.coinbaseClient = client
+	s.coinbaseImporter = importer
+	if client != nil {
+		select {
+		case s.coinbaseTrigger <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // Run blocks until ctx is cancelled, syncing on startup and then on the configured interval.
 func (s *Syncer) Run(ctx context.Context) {
 	// Sync immediately on startup
@@ -151,6 +180,8 @@ func (s *Syncer) Run(ctx context.Context) {
 			}
 		case <-s.strikeTrigger:
 			s.syncStrikeAPI(ctx)
+		case <-s.coinbaseTrigger:
+			s.syncCoinbaseAPI(ctx)
 		}
 	}
 }
@@ -313,6 +344,40 @@ func (s *Syncer) syncStrikeAPI(ctx context.Context) {
 		return
 	}
 	s.logger.Printf("strike api sync: %d new, %d updated, %d duplicates", summary.NewPurchases, summary.Updated, summary.Duplicates)
+}
+
+// syncCoinbaseAPI fetches new transactions and live balance from Coinbase and persists them.
+func (s *Syncer) syncCoinbaseAPI(ctx context.Context) {
+	if s.coinbaseClient == nil || s.coinbaseImporter == nil {
+		return
+	}
+	s.logger.Printf("coinbase api sync: starting")
+
+	if sats, err := s.coinbaseClient.FetchBalance(ctx); err != nil {
+		s.logger.Printf("coinbase api sync: fetch balance: %v", err)
+	} else {
+		if err := s.coinbaseImporter.SetSetting(ctx, "coinbase_live_balance_sats", strconv.FormatInt(sats, 10)); err != nil {
+			s.logger.Printf("coinbase api sync: store balance: %v", err)
+		} else {
+			s.logger.Printf("coinbase api sync: balance %d sats", sats)
+		}
+	}
+
+	rows, err := s.coinbaseClient.FetchRows(ctx)
+	if err != nil {
+		s.logger.Printf("coinbase api sync: fetch rows: %v", err)
+		return
+	}
+	s.logger.Printf("coinbase api sync: fetched %d rows", len(rows))
+	if len(rows) == 0 {
+		return
+	}
+	summary, err := s.coinbaseImporter.ImportCoinbaseCSV(ctx, rows)
+	if err != nil {
+		s.logger.Printf("coinbase api sync: import: %v", err)
+		return
+	}
+	s.logger.Printf("coinbase api sync: %d new, %d updated, %d duplicates", summary.NewPurchases, summary.Updated, summary.Duplicates)
 }
 
 // syncCycle is the core sync logic, executed within a transaction.

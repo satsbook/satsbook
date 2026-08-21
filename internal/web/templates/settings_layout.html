@@ -145,6 +145,45 @@
     </section>
 
     <section class="card" style="margin-top: 16px;">
+      <h3>Coinbase API Sync</h3>
+      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+        Connect your Coinbase CDP API key to automatically sync your full BTC transaction history
+        (buys, sells, sends, receives, and crypto-to-crypto trades) and live balance.
+      </p>
+
+      {{if .CoinbaseAPIConnected}}
+        <div style="margin-bottom: 12px;">
+          <span style="color: #4caf50;">Connected</span> &middot;
+          <code>{{.CoinbaseAPIKeyID}}</code>
+        </div>
+        <div id="coinbase-result">
+          <button hx-post="/api/settings/coinbase/disconnect" hx-target="#coinbase-result" hx-confirm="Remove Coinbase credentials?" class="btn btn-danger">
+            Disconnect
+          </button>
+        </div>
+      {{else}}
+        <form hx-post="/api/settings/coinbase/key" hx-target="#coinbase-result" style="display: flex; flex-direction: column; gap: 10px; max-width: 500px;">
+          <div>
+            <label for="coinbase_api_key_id" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Key ID</label>
+            <input type="text" id="coinbase_api_key_id" name="coinbase_api_key_id" placeholder="767b9d0a-4303-467b-85f1-..." style="width: 100%;" required autocomplete="off">
+          </div>
+          <div>
+            <label for="coinbase_api_secret" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Private Key (base64)</label>
+            <input type="password" id="coinbase_api_secret" name="coinbase_api_secret" placeholder="dCoHxTcI8+iq..." style="width: 100%;" required autocomplete="off">
+          </div>
+          <div>
+            <button type="submit" class="btn btn-primary">Connect</button>
+          </div>
+        </form>
+        <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
+          Create an API key at <a href="https://cdp.coinbase.com" target="_blank" rel="noopener noreferrer" style="color: #4fc3f7;">cdp.coinbase.com</a> with <strong>Trade - View</strong> permission and <strong>Ed25519</strong> algorithm.
+          Enter the Key ID and the base64-encoded private key shown after creation.
+        </p>
+        <div id="coinbase-result" style="margin-top: 8px;"></div>
+      {{end}}
+    </section>
+
+    <section class="card" style="margin-top: 16px;">
       <h3>Monarch Money Integration <span class="tier-badge tier-power">power</span></h3>
       <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
         Sync your total BTC holdings to a Monarch Money investment account.

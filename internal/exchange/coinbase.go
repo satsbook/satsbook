@@ -15,17 +15,18 @@ import (
 	"time"
 )
 
-// CoinbaseRow represents a single parsed row from a Coinbase CSV export.
+// CoinbaseRow represents a single parsed row from a Coinbase CSV export or API response.
 // JSON field names match StrikeRow/RiverRow so ExchangeSummary/ExchangeBalance queries work unchanged.
 type CoinbaseRow struct {
-	Date         time.Time `json:"Date"`
-	Type         string    `json:"Type"`         // "buy", "sale", "send", "receive"
-	AmountBTC    float64   `json:"AmountBTC"`    // positive for buys/receives, negative for sends/sales
-	AmountSat    int64     `json:"-"`            // derived from AmountBTC
-	AmountUSD    float64   `json:"AmountUSD"`
-	FeeUSD       float64   `json:"FeeUSD"`
-	CostBasisUSD float64   `json:"CostBasisUSD"` // for buys: total USD spent
-	RawLine      string    `json:"-"`
+	TransactionID string    `json:"-"`            // Coinbase UUID from API; empty for CSV rows
+	Date          time.Time `json:"Date"`
+	Type          string    `json:"Type"`         // "buy", "sale", "send", "receive"
+	AmountBTC     float64   `json:"AmountBTC"`    // always positive; direction implied by Type
+	AmountSat     int64     `json:"-"`            // derived from AmountBTC
+	AmountUSD     float64   `json:"AmountUSD"`
+	FeeUSD        float64   `json:"FeeUSD"`
+	CostBasisUSD  float64   `json:"CostBasisUSD"` // for buys: total USD spent
+	RawLine       string    `json:"-"`
 }
 
 // CoinbaseResult holds the result of parsing a Coinbase CSV.

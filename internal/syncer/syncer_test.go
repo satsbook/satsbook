@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/satsbook/satsbook/internal/db"
+	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
 )
@@ -1355,5 +1356,324 @@ func TestRun_StopsOnCancel(t *testing.T) {
 		// Success
 	case <-time.After(2 * time.Second):
 		t.Error("Run did not stop within timeout after context cancel")
+	}
+}
+
+// --- Mocks and tests for Strike/Coinbase API sync ---
+
+type mockStrikeClient struct {
+	rows       []exchange.StrikeRow
+	rowsErr    error
+	balance    int64
+	balanceErr error
+}
+
+func (m *mockStrikeClient) FetchRows(ctx context.Context) ([]exchange.StrikeRow, error) {
+	return m.rows, m.rowsErr
+}
+func (m *mockStrikeClient) FetchBalance(ctx context.Context) (int64, error) {
+	return m.balance, m.balanceErr
+}
+
+type mockStrikeImporter struct {
+	imported    []exchange.StrikeRow
+	importErr   error
+	settings    map[string]string
+	settingsErr error
+}
+
+func newMockStrikeImporter() *mockStrikeImporter {
+	return &mockStrikeImporter{settings: make(map[string]string)}
+}
+func (m *mockStrikeImporter) ImportStrikeCSV(ctx context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+	if m.importErr != nil {
+		return nil, m.importErr
+	}
+	m.imported = append(m.imported, rows...)
+	return &db.ImportSummary{NewPurchases: len(rows)}, nil
+}
+func (m *mockStrikeImporter) SetSetting(ctx context.Context, key, value string) error {
+	if m.settingsErr != nil {
+		return m.settingsErr
+	}
+	m.settings[key] = value
+	return nil
+}
+
+type mockCoinbaseClient struct {
+	rows       []exchange.CoinbaseRow
+	rowsErr    error
+	balance    int64
+	balanceErr error
+}
+
+func (m *mockCoinbaseClient) FetchRows(ctx context.Context) ([]exchange.CoinbaseRow, error) {
+	return m.rows, m.rowsErr
+}
+func (m *mockCoinbaseClient) FetchBalance(ctx context.Context) (int64, error) {
+	return m.balance, m.balanceErr
+}
+
+type mockCoinbaseImporter struct {
+	imported    []exchange.CoinbaseRow
+	importErr   error
+	settings    map[string]string
+	settingsErr error
+}
+
+func newMockCoinbaseImporter() *mockCoinbaseImporter {
+	return &mockCoinbaseImporter{settings: make(map[string]string)}
+}
+func (m *mockCoinbaseImporter) ImportCoinbaseCSV(ctx context.Context, rows []exchange.CoinbaseRow) (*db.ImportSummary, error) {
+	if m.importErr != nil {
+		return nil, m.importErr
+	}
+	m.imported = append(m.imported, rows...)
+	return &db.ImportSummary{NewPurchases: len(rows)}, nil
+}
+func (m *mockCoinbaseImporter) SetSetting(ctx context.Context, key, value string) error {
+	if m.settingsErr != nil {
+		return m.settingsErr
+	}
+	m.settings[key] = value
+	return nil
+}
+
+func TestSetStrikeClient(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockStrikeClient{balance: 100000}
+	importer := newMockStrikeImporter()
+	s.SetStrikeClient(client, importer)
+	if s.strikeClient == nil {
+		t.Error("expected strikeClient to be set")
+	}
+	if s.strikeImporter == nil {
+		t.Error("expected strikeImporter to be set")
+	}
+}
+
+func TestSetStrikeClient_Nil(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	s.SetStrikeClient(nil, nil)
+	if s.strikeClient != nil {
+		t.Error("expected strikeClient to be nil")
+	}
+}
+
+func TestSetCoinbaseClient(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockCoinbaseClient{balance: 500000}
+	importer := newMockCoinbaseImporter()
+	s.SetCoinbaseClient(client, importer)
+	if s.coinbaseClient == nil {
+		t.Error("expected coinbaseClient to be set")
+	}
+	if s.coinbaseImporter == nil {
+		t.Error("expected coinbaseImporter to be set")
+	}
+}
+
+func TestSetCoinbaseClient_Nil(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	s.SetCoinbaseClient(nil, nil)
+	if s.coinbaseClient != nil {
+		t.Error("expected coinbaseClient to be nil")
+	}
+}
+
+func TestSyncStrikeAPI_Success(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockStrikeClient{
+		balance: 250000,
+		rows: []exchange.StrikeRow{
+			{TransactionID: "tx1", AmountSat: 10000, Type: "receive"},
+		},
+	}
+	importer := newMockStrikeImporter()
+	s.strikeClient = client
+	s.strikeImporter = importer
+
+	s.syncStrikeAPI(context.Background())
+
+	if importer.settings["strike_live_balance_sats"] != "250000" {
+		t.Errorf("expected balance 250000, got %q", importer.settings["strike_live_balance_sats"])
+	}
+	if len(importer.imported) != 1 {
+		t.Errorf("expected 1 imported row, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncStrikeAPI_BalanceError(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockStrikeClient{
+		balanceErr: errors.New("api down"),
+		rows:       []exchange.StrikeRow{{TransactionID: "tx1", AmountSat: 1000}},
+	}
+	importer := newMockStrikeImporter()
+	s.strikeClient = client
+	s.strikeImporter = importer
+
+	// Should not panic; balance error is logged, rows still imported
+	s.syncStrikeAPI(context.Background())
+	if len(importer.imported) != 1 {
+		t.Errorf("expected rows to be imported even after balance error, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncStrikeAPI_RowsError(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockStrikeClient{
+		balance: 1000,
+		rowsErr: errors.New("fetch failed"),
+	}
+	importer := newMockStrikeImporter()
+	s.strikeClient = client
+	s.strikeImporter = importer
+
+	s.syncStrikeAPI(context.Background())
+	if len(importer.imported) != 0 {
+		t.Errorf("expected 0 imports after rows error, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncStrikeAPI_EmptyRows(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockStrikeClient{balance: 1000, rows: []exchange.StrikeRow{}}
+	importer := newMockStrikeImporter()
+	s.strikeClient = client
+	s.strikeImporter = importer
+
+	s.syncStrikeAPI(context.Background())
+	if len(importer.imported) != 0 {
+		t.Errorf("expected 0 imports for empty rows, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncStrikeAPI_ImportError(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockStrikeClient{
+		balance: 1000,
+		rows:    []exchange.StrikeRow{{TransactionID: "tx1"}},
+	}
+	importer := newMockStrikeImporter()
+	importer.importErr = errors.New("db write failed")
+	s.strikeClient = client
+	s.strikeImporter = importer
+
+	// Should not panic; import error is logged
+	s.syncStrikeAPI(context.Background())
+}
+
+func TestSyncCoinbaseAPI_Success(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockCoinbaseClient{
+		balance: 500000,
+		rows: []exchange.CoinbaseRow{
+			{TransactionID: "cb1", AmountSat: 50000, Type: "buy"},
+			{TransactionID: "cb2", AmountSat: 10000, Type: "receive"},
+		},
+	}
+	importer := newMockCoinbaseImporter()
+	s.coinbaseClient = client
+	s.coinbaseImporter = importer
+
+	s.syncCoinbaseAPI(context.Background())
+
+	if importer.settings["coinbase_live_balance_sats"] != "500000" {
+		t.Errorf("expected balance 500000, got %q", importer.settings["coinbase_live_balance_sats"])
+	}
+	if len(importer.imported) != 2 {
+		t.Errorf("expected 2 imported rows, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncCoinbaseAPI_NilClient(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	// Should return immediately without panic
+	s.syncCoinbaseAPI(context.Background())
+}
+
+func TestSyncCoinbaseAPI_BalanceError(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockCoinbaseClient{
+		balanceErr: errors.New("api down"),
+		rows:       []exchange.CoinbaseRow{{TransactionID: "cb1", AmountSat: 1000, Type: "buy"}},
+	}
+	importer := newMockCoinbaseImporter()
+	s.coinbaseClient = client
+	s.coinbaseImporter = importer
+
+	s.syncCoinbaseAPI(context.Background())
+	// Rows should still be imported despite balance error
+	if len(importer.imported) != 1 {
+		t.Errorf("expected 1 import after balance error, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncCoinbaseAPI_RowsError(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockCoinbaseClient{
+		balance: 1000,
+		rowsErr: errors.New("fetch failed"),
+	}
+	importer := newMockCoinbaseImporter()
+	s.coinbaseClient = client
+	s.coinbaseImporter = importer
+
+	s.syncCoinbaseAPI(context.Background())
+	if len(importer.imported) != 0 {
+		t.Errorf("expected 0 imports after rows error, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncCoinbaseAPI_EmptyRows(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockCoinbaseClient{balance: 1000, rows: []exchange.CoinbaseRow{}}
+	importer := newMockCoinbaseImporter()
+	s.coinbaseClient = client
+	s.coinbaseImporter = importer
+
+	s.syncCoinbaseAPI(context.Background())
+	if len(importer.imported) != 0 {
+		t.Errorf("expected 0 imports for empty rows, got %d", len(importer.imported))
+	}
+}
+
+func TestSyncCoinbaseAPI_ImportError(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockCoinbaseClient{
+		balance: 1000,
+		rows:    []exchange.CoinbaseRow{{TransactionID: "cb1", Type: "buy"}},
+	}
+	importer := newMockCoinbaseImporter()
+	importer.importErr = errors.New("db write failed")
+	s.coinbaseClient = client
+	s.coinbaseImporter = importer
+
+	// Should not panic
+	s.syncCoinbaseAPI(context.Background())
+}
+
+func TestRun_CoinbaseTrigger(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	client := &mockCoinbaseClient{balance: 100, rows: []exchange.CoinbaseRow{}}
+	importer := newMockCoinbaseImporter()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.Run(ctx)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	s.SetCoinbaseClient(client, importer)
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("Run did not stop within timeout")
 	}
 }
