@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2260,8 +2261,9 @@ func (d *DB) AnnualReport(ctx context.Context, year int) (*AnnualReportData, err
 	return data, nil
 }
 
-// AvailableReportYears returns the distinct years for which forwarding_events exist,
-// plus the current year (even if empty), sorted descending.
+// AvailableReportYears returns years available for the annual report page.
+// Always includes the last 4 calendar years plus any additional years that
+// have forwarding event data, sorted descending.
 func (d *DB) AvailableReportYears(ctx context.Context) ([]int, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT DISTINCT CAST(SUBSTR(timestamp,1,4) AS INTEGER) AS yr
@@ -2273,19 +2275,25 @@ func (d *DB) AvailableReportYears(ctx context.Context) ([]int, error) {
 	}
 	defer rows.Close()
 	seen := map[int]bool{}
-	var years []int
 	for rows.Next() {
 		var y int
 		if err := rows.Scan(&y); err != nil {
 			return nil, err
 		}
 		seen[y] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Always include the last 4 calendar years so users can navigate back.
+	cur := time.Now().Year()
+	for y := cur; y >= cur-3; y-- {
+		seen[y] = true
+	}
+	years := make([]int, 0, len(seen))
+	for y := range seen {
 		years = append(years, y)
 	}
-	// Always include current year
-	cur := time.Now().Year()
-	if !seen[cur] {
-		years = append([]int{cur}, years...)
-	}
-	return years, rows.Err()
+	sort.Slice(years, func(i, j int) bool { return years[i] > years[j] })
+	return years, nil
 }
