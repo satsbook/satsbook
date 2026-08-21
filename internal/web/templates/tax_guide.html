@@ -136,7 +136,18 @@
       </div>
     </div>
 
-    <!-- Section 5: CTA — Upgrade to Pro -->
+    <!-- Section 5: CTA -->
+    {{if .IsPro}}
+    <div style="background: var(--bg-card); border: 2px solid var(--accent, #f7931a); border-radius: var(--radius); padding: 32px; margin-bottom: 40px; text-align: center;">
+      <div style="font-size: 1.5rem; font-weight: 700; color: var(--text); margin-bottom: 8px;">You're all set &#10003;</div>
+      <p style="color: var(--text-muted); font-size: 1rem; line-height: 1.6; max-width: 480px; margin: 0 auto 24px;">
+        Your Pro subscription is active. Head to the Tax page to generate your Form 8949 report.
+      </p>
+      <a href="/tax" style="display: inline-block; padding: 12px 32px; background: var(--accent, #f7931a); color: #000; font-weight: 700; font-size: 1rem; border-radius: var(--radius); text-decoration: none;">
+        Go to Tax Reports &#8594;
+      </a>
+    </div>
+    {{else}}
     <div style="background: var(--bg-card); border: 2px solid var(--accent, #f7931a); border-radius: var(--radius); padding: 32px; margin-bottom: 40px; text-align: center;">
       <div style="font-size: 1.5rem; font-weight: 700; color: var(--text); margin-bottom: 8px;">
         Upgrade to Pro
@@ -168,6 +179,7 @@
         Already have a license key? <a href="/settings" style="color: var(--accent, #f7931a); text-decoration: none;">Activate it in Settings.</a>
       </p>
     </div>
+    {{end}}
   </main>
 
   <footer>
