@@ -145,6 +145,7 @@ func NewRenderer() *Renderer {
 			"templates/partials/transfer_badge.html",
 			"templates/partials/transfer_candidates.html",
 			"templates/partials/source_flows.html",
+		"templates/tax_guide.html",
 		),
 	)
 
