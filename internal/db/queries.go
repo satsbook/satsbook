@@ -2196,27 +2196,39 @@ func (d *DB) AnnualReport(ctx context.Context, year int) (*AnnualReportData, err
 		return nil, fmt.Errorf("annual routing summary: %w", err)
 	}
 
-	// Monthly fees
-	rows, err := d.db.QueryContext(ctx, `
-		SELECT SUBSTR(timestamp,1,7) AS month, COALESCE(SUM(fee_msat),0), COUNT(*)
-		FROM forwarding_events
-		WHERE timestamp >= ? AND timestamp < ?
-		GROUP BY SUBSTR(timestamp,1,7)
-		ORDER BY month ASC
-	`, start, end)
-	if err != nil {
-		return nil, fmt.Errorf("annual monthly fees: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var m MonthlyFeeStat
-		if err := rows.Scan(&m.Month, &m.TotalFeeMsat, &m.Count); err != nil {
-			return nil, fmt.Errorf("scan monthly fee: %w", err)
+	// Monthly fees — always produce 12 entries (Jan–Dec), zeroed if no data.
+	{
+		monthMap := make(map[string]MonthlyFeeStat, 12)
+		for m := 1; m <= 12; m++ {
+			key := fmt.Sprintf("%04d-%02d", year, m)
+			monthMap[key] = MonthlyFeeStat{Month: key}
 		}
-		data.MonthlyFees = append(data.MonthlyFees, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+		mrows, merr := d.db.QueryContext(ctx, `
+			SELECT SUBSTR(timestamp,1,7) AS month, COALESCE(SUM(fee_msat),0), COUNT(*)
+			FROM forwarding_events
+			WHERE timestamp >= ? AND timestamp < ?
+			GROUP BY SUBSTR(timestamp,1,7)
+			ORDER BY month ASC
+		`, start, end)
+		if merr != nil {
+			return nil, fmt.Errorf("annual monthly fees: %w", merr)
+		}
+		defer mrows.Close()
+		for mrows.Next() {
+			var m MonthlyFeeStat
+			if err := mrows.Scan(&m.Month, &m.TotalFeeMsat, &m.Count); err != nil {
+				return nil, fmt.Errorf("scan monthly fee: %w", err)
+			}
+			monthMap[m.Month] = m
+		}
+		if err := mrows.Err(); err != nil {
+			return nil, err
+		}
+		data.MonthlyFees = make([]MonthlyFeeStat, 0, 12)
+		for m := 1; m <= 12; m++ {
+			key := fmt.Sprintf("%04d-%02d", year, m)
+			data.MonthlyFees = append(data.MonthlyFees, monthMap[key])
+		}
 	}
 
 	// Best channel for the year (by fees earned)
