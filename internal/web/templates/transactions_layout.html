@@ -192,8 +192,11 @@
 
   <footer>
     <div class="container footer-inner">
-      <span>Satsbook</span>
-      {{if .BTCPriceUSD}}<span>BTC {{formatUSD .BTCPriceUSD}}</span>{{end}}
+      <span>Last synced: {{timeAgo .LastSyncedAt}}</span>
+      <span>
+        {{if .BTCPriceUSD}}BTC {{formatUSD .BTCPriceUSD}} (mempool.space, {{timeAgo .PriceFetchedAt}}){{else}}BTC price unavailable{{end}}
+      </span>
+      {{if .Tier}}<span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>{{end}}
     </div>
   </footer>
 </body>
