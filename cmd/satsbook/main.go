@@ -80,6 +80,10 @@ func main() {
 		log.Printf("No license key configured — running free tier")
 	}
 	var licenseChecker license.Checker = lc
+	if cfg.OverrideTier != "" {
+		log.Printf("WARNING: tier override active — running as %s (demo mode)", cfg.OverrideTier)
+		licenseChecker = license.FixedTierChecker{Tier: license.Tier(cfg.OverrideTier)}
+	}
 
 	// Initialize price cache
 	priceCache := price.NewCache(price.WithAPIURL(cfg.PriceAPIURL))

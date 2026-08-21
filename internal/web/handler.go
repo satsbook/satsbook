@@ -163,15 +163,20 @@ func (h *Handler) SetVersion(v string) {
 }
 
 // getNodeInfo returns node info if an LND connection is configured, otherwise nil.
+// If LND is unavailable, falls back to the node_alias setting so the header
+// can still show the node name on every page.
 func (h *Handler) getNodeInfo(ctx context.Context) *lnd.NodeInfo {
-	if h.node == nil {
-		return nil
+	if h.node != nil {
+		if info, err := h.node.GetInfo(ctx); err == nil {
+			return info
+		}
 	}
-	info, err := h.node.GetInfo(ctx)
-	if err != nil {
-		return nil
+	if h.settingsStore != nil {
+		if alias, _ := h.settingsStore.GetSetting(ctx, "node_alias"); alias != "" {
+			return &lnd.NodeInfo{Alias: alias, Synced: false}
+		}
 	}
-	return info
+	return nil
 }
 
 // SetWalletStore sets the wallet store (optional, may not be available without Electrum).

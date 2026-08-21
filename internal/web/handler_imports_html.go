@@ -11,14 +11,36 @@ type ImportPageData struct {
 	HasRiver    bool
 	HasCoinbase bool
 	HasSwan     bool
+
+	// Header / footer
+	NodeAlias      string
+	NodeSynced     bool
+	LastSyncedAt   time.Time
+	BTCPriceUSD    float64
+	PriceFetchedAt time.Time
+	Tier           string
 }
 
 // HandleImportPage serves GET /import.
 func (h *Handler) HandleImportPage(w http.ResponseWriter, r *http.Request) {
-	data := ImportPageData{}
+	ctx := r.Context()
+	data := ImportPageData{
+		Tier: string(TierFromContext(ctx)),
+	}
+	if info := h.getNodeInfo(ctx); info != nil {
+		data.NodeAlias = info.Alias
+		data.NodeSynced = info.Synced
+	}
+	if t, err := h.store.LastSyncedAt(ctx); err == nil {
+		data.LastSyncedAt = t
+	}
+	if price, err := h.price.GetBTCPrice(ctx); err == nil {
+		data.BTCPriceUSD = price
+		data.PriceFetchedAt = h.price.FetchedAt()
+	}
 	// Query per-source presence. We only care whether the vendor has any
 	// rows so the danger zone can be revealed; any error here is non-fatal.
-	if pos, err := h.store.PortfolioPosition(r.Context(), time.Time{}); err == nil && pos != nil {
+	if pos, err := h.store.PortfolioPosition(ctx, time.Time{}); err == nil && pos != nil {
 		if s, ok := pos.BySource["strike"]; ok && (s.NetSats != 0 || s.PurchasedSats != 0) {
 			data.HasStrike = true
 		}

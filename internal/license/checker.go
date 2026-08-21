@@ -280,3 +280,9 @@ type FreeChecker struct{}
 
 func (FreeChecker) CurrentTier() Tier              { return TierFree }
 func (FreeChecker) Verify(_ context.Context) error { return nil }
+
+// FixedTierChecker always returns the configured tier. Used for demo/override mode.
+type FixedTierChecker struct{ Tier Tier }
+
+func (f FixedTierChecker) CurrentTier() Tier          { return f.Tier }
+func (f FixedTierChecker) Verify(_ context.Context) error { return nil }
