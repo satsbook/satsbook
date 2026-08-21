@@ -51,6 +51,9 @@ type Config struct {
 	StrikeAPIKey        string
 	CoinbaseAPIKeyID    string
 	CoinbaseAPISecret   string // base64-encoded Ed25519 private key
+
+	// Demo / override settings
+	OverrideTier string // SATSBOOK_OVERRIDE_TIER — bypasses license check (demo mode only)
 }
 
 // Load reads configuration from environment variables.
@@ -100,6 +103,9 @@ func Load() (*Config, error) {
 		StrikeAPIKey:      getEnv("SATSBOOK_STRIKE_API_KEY", ""),
 		CoinbaseAPIKeyID:  getEnv("SATSBOOK_COINBASE_API_KEY_ID", ""),
 		CoinbaseAPISecret: getEnv("SATSBOOK_COINBASE_API_SECRET", ""),
+
+		// Demo / override settings
+		OverrideTier: getEnv("SATSBOOK_OVERRIDE_TIER", ""),
 	}
 
 	// Validate required fields

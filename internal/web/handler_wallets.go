@@ -22,6 +22,7 @@ type WalletsPageData struct {
 	BTCPriceUSD    float64
 	PriceFetchedAt time.Time
 
+	Tier              string
 	Wallets           []db.WatchedWallet
 	TotalBalanceSats  int64
 	TotalBalanceUSD   float64
@@ -35,6 +36,7 @@ func (h *Handler) HandleWalletsPage(w http.ResponseWriter, r *http.Request) {
 	data := WalletsPageData{
 		ElectrumAvailable: h.walletScanner != nil,
 		Toast:             r.URL.Query().Get("toast"),
+		Tier:              string(TierFromContext(ctx)),
 	}
 
 	var mu sync.Mutex

@@ -351,7 +351,7 @@ func (h *Handler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.StrikeBalanceSats != 0 || data.RiverBalanceSats != 0 || data.CoinbaseBalanceSats != 0 || data.SwanBalanceSats != 0
 	data.ShowOnboarding = !data.HasFeeHistory && !data.HasExchangeImports
 	data.ShowImportBanner = data.HasFeeHistory && !data.HasExchangeImports
-	data.ShowLNDBanner = data.HasExchangeImports && !data.LNDConnected
+	data.ShowLNDBanner = data.HasExchangeImports && !data.LNDConnected && !data.HasFeeHistory
 
 	if res.btcPrice > 0 {
 		data.BTCPriceUSD = res.btcPrice

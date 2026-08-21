@@ -166,7 +166,7 @@ satsbook.io</div>
   // Set bar heights — can't use float % in html/template CSS context directly.
   document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.year-bar[data-pct]').forEach(function(b) {
-      b.style.height = b.dataset.pct + '%';
+      b.style.height = Math.round(parseFloat(b.dataset.pct) / 100 * 120) + 'px';
     });
   });
   </script>

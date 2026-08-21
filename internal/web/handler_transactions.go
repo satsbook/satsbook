@@ -20,6 +20,13 @@ type TransactionsPageData struct {
 	TotalPages   int
 	BTCPriceUSD  float64
 
+	// Header / footer
+	NodeAlias      string
+	NodeSynced     bool
+	LastSyncedAt   time.Time
+	PriceFetchedAt time.Time
+	Tier           string
+
 	// Current filter/sort state (for preserving in links and form)
 	DateFrom string
 	DateTo   string
@@ -96,13 +103,22 @@ func (h *Handler) HandleTransactionsPage(w http.ResponseWriter, r *http.Request)
 		SortDir:      sortDir,
 		Sources:      sources,
 		TxTypes:      txTypes,
+		Tier:         string(TierFromContext(ctx)),
 	}
 	if result.Total > 0 {
 		data.TotalPages = (result.Total + limit - 1) / limit
 	}
 
+	if info := h.getNodeInfo(ctx); info != nil {
+		data.NodeAlias = info.Alias
+		data.NodeSynced = info.Synced
+	}
+	if t, err := h.store.LastSyncedAt(ctx); err == nil {
+		data.LastSyncedAt = t
+	}
 	if price, err := h.price.GetBTCPrice(ctx); err == nil {
 		data.BTCPriceUSD = price
+		data.PriceFetchedAt = h.price.FetchedAt()
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
