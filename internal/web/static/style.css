@@ -86,7 +86,7 @@ header {
 }
 .nav-link:hover { background: var(--bg-hover); }
 .nav-link.nav-active { color: var(--text); font-weight: 600; }
-.node-info-bar { font-size: 0.8rem; color: var(--text-muted); }
+.node-info-bar { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; display: flex; align-items: center; gap: 4px; flex-shrink: 0; padding-left: 8px; }
 .node-info-bar .synced { color: var(--green); }
 .node-info-bar .not-synced { color: var(--red); }
 

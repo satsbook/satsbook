@@ -19,14 +19,7 @@
       </div>
       {{template "nav" "dashboard"}}
       <div class="node-info-bar">
-        {{if .NodeAlias}}
-          <strong>{{.NodeAlias}}</strong> &middot;
-          <span class="truncate" title="{{.NodePubKey}}">{{.NodePubKey}}</span> &middot;
-          {{if .NodeSynced}}<span class="synced">synced</span>{{else}}<span class="not-synced">not synced</span>{{end}}
-          &middot; block {{.BlockHeight}} &middot; LND {{.LNDVersion}}
-        {{else}}
-          <span class="not-synced">node unreachable</span>
-        {{end}}
+        {{if .NodeAlias}}{{if .NodeSynced}}<strong>{{.NodeAlias}}</strong> <span class="synced" title="synced" style="cursor:default;">&#10003;</span>{{else}}<strong>{{.NodeAlias}}</strong> <span class="not-synced" title="not synced" style="cursor:default;">&#10007;</span>{{end}}{{else}}<span class="not-synced" title="node unreachable">&#10007;</span>{{end}}
       </div>
     </div>
   </header>

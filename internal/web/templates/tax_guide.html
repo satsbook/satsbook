@@ -1,0 +1,192 @@
+{{define "tax_guide_layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satsbook — Lightning Node Tax Guide</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="container header-inner">
+      <div class="header-top">
+        <a class="logo" href="/">Satsbook</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Disclaimer -->
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin: 24px 0; font-size: 0.85rem; color: var(--text-muted);">
+      <strong>Disclaimer:</strong> This is not tax advice. Consult a qualified tax professional before making any tax decisions.
+    </div>
+
+    <!-- Hero -->
+    <div style="margin-bottom: 40px;">
+      <h1 style="font-size: 1.75rem; font-weight: 700; color: var(--text); margin-bottom: 8px;">Lightning Node Tax Guide</h1>
+      <p style="color: var(--text-muted); font-size: 1rem; line-height: 1.6; max-width: 640px;">
+        Everything Lightning node operators need to know about Bitcoin taxes in the US — routing fees, channel opens, cost basis methods, and how to export Form 8949 automatically with Satsbook Pro.
+      </p>
+    </div>
+
+    <!-- Section 1: Routing fees as taxable income -->
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px;">
+      <h2 style="font-size: 1.15rem; font-weight: 600; color: var(--text); margin: 0 0 12px;">
+        1. Do Lightning routing fees count as taxable income?
+      </h2>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0 0 12px;">
+        <strong style="color: var(--text);">Yes.</strong> The IRS treats routing fees earned by Lightning nodes as self-employment income in the United States. When you route a payment and collect a fee in sats, the fair market value of those sats at the time you receive them is ordinary income — just like getting paid in cash.
+      </p>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0 0 12px;">
+        This means:
+      </p>
+      <ul style="color: var(--text-muted); line-height: 1.8; margin: 0 0 12px; padding-left: 20px;">
+        <li>Routing fees are reported as self-employment income (Schedule C or Schedule 1)</li>
+        <li>You may owe self-employment tax (15.3%) on net routing income</li>
+        <li>The USD value at time of receipt sets the cost basis for those sats</li>
+        <li>Satsbook tracks your routing fees at the millisat level so nothing is missed</li>
+      </ul>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0;">
+        Keep detailed records of every forwarding event. Satsbook stores each one with a timestamp and fee amount so your records are audit-ready.
+      </p>
+    </div>
+
+    <!-- Section 2: Cost basis for channel opens -->
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px;">
+      <h2 style="font-size: 1.15rem; font-weight: 600; color: var(--text); margin: 0 0 12px;">
+        2. How is cost basis calculated for channel opens?
+      </h2>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0 0 12px;">
+        When you open a Lightning channel, you are moving BTC from your on-chain wallet into the channel. <strong style="color: var(--text);">This is not a taxable event by itself</strong> — it is simply a movement of coins you already own.
+      </p>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0 0 12px;">
+        However, cost basis matters for when you eventually close the channel or spend those sats:
+      </p>
+      <ul style="color: var(--text-muted); line-height: 1.8; margin: 0 0 12px; padding-left: 20px;">
+        <li><strong style="color: var(--text);">Cost basis is set at the time of the original on-chain acquisition</strong> — the BTC price when you purchased or received those coins, not when you opened the channel</li>
+        <li>On-chain transaction fees paid to open the channel can be added to your cost basis</li>
+        <li>When the channel closes, the returned sats carry the same original cost basis</li>
+        <li>Routing fees earned inside the channel create new lots with a cost basis equal to the BTC price at time of receipt</li>
+      </ul>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0;">
+        Satsbook tracks your imported exchange lots so cost basis flows correctly through channel open and close events.
+      </p>
+    </div>
+
+    <!-- Section 3: FIFO vs LIFO -->
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px;">
+      <h2 style="font-size: 1.15rem; font-weight: 600; color: var(--text); margin: 0 0 12px;">
+        3. FIFO vs LIFO — which method applies to your situation?
+      </h2>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0 0 16px;">
+        When you sell or spend BTC, you must specify which "lot" (batch of coins) you are disposing of. The two most common methods are:
+      </p>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div style="background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;">
+          <div style="font-weight: 600; color: var(--text); margin-bottom: 8px;">FIFO — First In, First Out</div>
+          <p style="color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; margin: 0 0 8px;">
+            Your oldest coins are sold first. Since BTC has generally appreciated over time, FIFO typically results in <strong>higher taxable gains</strong> — your cheapest lots are matched first.
+          </p>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0;">
+            Most tax software and CPAs default to FIFO. It is the safest choice if you are unsure.
+          </p>
+        </div>
+        <div style="background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;">
+          <div style="font-weight: 600; color: var(--text); margin-bottom: 8px;">LIFO — Last In, First Out</div>
+          <p style="color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; margin: 0 0 8px;">
+            Your newest coins are sold first. If you bought recently at a higher price, LIFO can result in <strong>smaller gains or losses</strong> — useful if BTC price has dropped since your last purchase.
+          </p>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0;">
+            LIFO may not always be accepted. Confirm with your tax advisor before using it.
+          </p>
+        </div>
+      </div>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0;">
+        <strong style="color: var(--text);">Key rule:</strong> Once you choose a method for a tax year, the IRS expects you to apply it consistently. Do not switch between FIFO and LIFO mid-year. Satsbook Pro lets you generate Form 8949 reports in both methods so you can compare them before deciding.
+      </p>
+    </div>
+
+    <!-- Section 4: How to export Form 8949 from Satsbook -->
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 24px;">
+      <h2 style="font-size: 1.15rem; font-weight: 600; color: var(--text); margin: 0 0 12px;">
+        4. How to export Form 8949 from Satsbook
+      </h2>
+      <p style="color: var(--text-muted); line-height: 1.6; margin: 0 0 16px;">
+        Satsbook Pro automates the Form 8949 generation process. Here is the step-by-step walkthrough:
+      </p>
+      <ol style="color: var(--text-muted); line-height: 1.8; margin: 0 0 16px; padding-left: 20px;">
+        <li>
+          <strong style="color: var(--text);">Import your exchange history</strong> — Go to <a href="/import" style="color: var(--accent); text-decoration: none;">Import</a> and upload CSVs from Strike, River, Coinbase, or Swan. Each purchase creates a cost basis lot.
+        </li>
+        <li>
+          <strong style="color: var(--text);">Connect your Lightning node</strong> — Satsbook fetches your forwarding history automatically. Routing fees are recorded with timestamps and USD values.
+        </li>
+        <li>
+          <strong style="color: var(--text);">Open the Tax page</strong> — Navigate to <a href="/tax" style="color: var(--accent); text-decoration: none;">Tax</a>. Select your tax year and cost basis method (FIFO or LIFO).
+        </li>
+        <li>
+          <strong style="color: var(--text);">Review the summary</strong> — See your total proceeds, cost basis, short-term vs long-term gains, and disposal count before downloading.
+        </li>
+        <li>
+          <strong style="color: var(--text);">Download Form 8949 CSV</strong> — Click "Download CSV" to get a Form 8949-ready file with one row per disposal event. Share it with your tax software or CPA.
+        </li>
+      </ol>
+      <div style="background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; font-size: 0.85rem; color: var(--text-muted);">
+        Form 8949 export requires a <strong style="color: var(--text);">Satsbook Pro</strong> subscription. See the CTA below to upgrade.
+      </div>
+    </div>
+
+    <!-- Section 5: CTA -->
+    {{if .IsPro}}
+    <div style="background: var(--bg-card); border: 2px solid var(--accent, #f7931a); border-radius: var(--radius); padding: 32px; margin-bottom: 40px; text-align: center;">
+      <div style="font-size: 1.5rem; font-weight: 700; color: var(--text); margin-bottom: 8px;">You're all set &#10003;</div>
+      <p style="color: var(--text-muted); font-size: 1rem; line-height: 1.6; max-width: 480px; margin: 0 auto 24px;">
+        Your Pro subscription is active. Head to the Tax page to generate your Form 8949 report.
+      </p>
+      <a href="/tax" style="display: inline-block; padding: 12px 32px; background: var(--accent, #f7931a); color: #000; font-weight: 700; font-size: 1rem; border-radius: var(--radius); text-decoration: none;">
+        Go to Tax Reports &#8594;
+      </a>
+    </div>
+    {{else}}
+    <div style="background: var(--bg-card); border: 2px solid var(--accent, #f7931a); border-radius: var(--radius); padding: 32px; margin-bottom: 40px; text-align: center;">
+      <div style="font-size: 1.5rem; font-weight: 700; color: var(--text); margin-bottom: 8px;">
+        Upgrade to Pro
+      </div>
+      <p style="color: var(--text-muted); font-size: 1rem; line-height: 1.6; max-width: 480px; margin: 0 auto 8px;">
+        Get automated tax reports for your Lightning node. FIFO and LIFO cost basis engine, Form 8949 CSV export, and full routing fee history — all included.
+      </p>
+      <div style="font-size: 1.25rem; font-weight: 600; color: var(--accent, #f7931a); margin-bottom: 24px;">
+        $9 / month
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.9rem;">
+          <span style="color: var(--accent, #f7931a);">&#10003;</span> Automated Form 8949 CSV
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.9rem;">
+          <span style="color: var(--accent, #f7931a);">&#10003;</span> FIFO &amp; LIFO cost basis
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.9rem;">
+          <span style="color: var(--accent, #f7931a);">&#10003;</span> Routing fee income tracking
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.9rem;">
+          <span style="color: var(--accent, #f7931a);">&#10003;</span> Filter by tax year
+        </div>
+      </div>
+      <a href="/settings/plans" style="display: inline-block; padding: 12px 32px; background: var(--accent, #f7931a); color: #000; font-weight: 700; font-size: 1rem; border-radius: var(--radius); text-decoration: none;">
+        Upgrade to Pro — $9/month
+      </a>
+      <p style="color: var(--text-muted); font-size: 0.8rem; margin: 16px 0 0;">
+        Already have a license key? <a href="/settings" style="color: var(--accent, #f7931a); text-decoration: none;">Activate it in Settings.</a>
+      </p>
+    </div>
+    {{end}}
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <span>Satsbook &mdash; Bitcoin accounting for Lightning operators</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">This is not tax advice. Consult a qualified tax professional.</span>
+    </div>
+  </footer>
+</body>
+</html>{{end}}
