@@ -19,16 +19,7 @@
       </div>
       {{template "nav" "tax"}}
       <div class="node-info-bar">
-        {{if .NodeAlias}}
-          <strong>{{.NodeAlias}}</strong>
-          {{if .NodeSynced}}
-            <span class="synced" title="synced" style="cursor: default; margin-left: 6px;">&#10003;</span>
-          {{else}}
-            <span class="not-synced" title="not synced" style="cursor: default; margin-left: 6px;">&#10007;</span>
-          {{end}}
-        {{else}}
-          <span class="not-synced" title="node unreachable">&#10007;</span>
-        {{end}}
+        {{if .NodeAlias}}{{if .NodeSynced}}<strong>{{.NodeAlias}}</strong> <span class="synced" title="synced" style="cursor:default;">&#10003;</span>{{else}}<strong>{{.NodeAlias}}</strong> <span class="not-synced" title="not synced" style="cursor:default;">&#10007;</span>{{end}}{{else}}<span class="not-synced" title="node unreachable">&#10007;</span>{{end}}
       </div>
     </div>
   </header>
