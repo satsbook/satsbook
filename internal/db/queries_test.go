@@ -214,6 +214,129 @@ func TestChannelStats_Empty(t *testing.T) {
 	}
 }
 
+func TestChannelStats_ROI(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	openedAt := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	// Capacity 1_000_000, open tx spent 1_001_500 sats (open fee = 1500 sats)
+	seedChannels(t, d, []Channel{
+		{
+			ChanID: 100, RemotePubKey: "nodeA",
+			ChannelPoint: "abc123:0",
+			Capacity:     1_000_000,
+			LocalBalance: 500_000, RemoteBalance: 500_000, Active: true,
+		},
+	})
+	// Seed the funding onchain tx: amount_sat = -1_001_500 (outgoing)
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertOnchainTxns([]OnchainTx{
+			{TxHash: "abc123", AmountSat: -1_001_500, NumConfirmations: 100, Timestamp: openedAt},
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed onchain tx: %v", err)
+	}
+	// Seed 3000 msat (3 sats) of routing fees
+	seedForwardingEvents(t, d, []ForwardingEvent{
+		{Timestamp: openedAt.Add(time.Hour), ChanIDIn: 100, ChanIDOut: 200, AmtInMsat: 3000, AmtOutMsat: 2000, FeeMsat: 3_000_000},
+	})
+
+	stats, err := d.ChannelStats(context.Background())
+	if err != nil {
+		t.Fatalf("ChannelStats: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(stats))
+	}
+	s := stats[0]
+
+	if s.OpenFeeSats != 1500 {
+		t.Errorf("OpenFeeSats: expected 1500, got %d", s.OpenFeeSats)
+	}
+	if s.CapacitySats != 1_000_000 {
+		t.Errorf("CapacitySats: expected 1000000, got %d", s.CapacitySats)
+	}
+	if s.DataPartial {
+		t.Errorf("expected DataPartial=false for channel with matching onchain tx")
+	}
+	if s.DaysOpen < 29 || s.DaysOpen > 31 {
+		t.Errorf("DaysOpen: expected ~30, got %d", s.DaysOpen)
+	}
+	// 3000 sats earned / 1500 sats open fee = 200%
+	if s.ROIPct < 199 || s.ROIPct > 201 {
+		t.Errorf("ROIPct: expected ~200, got %.2f", s.ROIPct)
+	}
+	// ROI > 100%, so break-even already passed
+	if s.BreakEvenDays != 0 {
+		t.Errorf("BreakEvenDays: expected 0 (already recovered), got %d", s.BreakEvenDays)
+	}
+}
+
+func TestChannelStats_ROI_Partial(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	// Channel with no channel_point — predates tracking
+	seedChannels(t, d, []Channel{
+		{ChanID: 200, RemotePubKey: "nodeB", Capacity: 500_000,
+			LocalBalance: 250_000, RemoteBalance: 250_000, Active: true},
+	})
+
+	stats, err := d.ChannelStats(context.Background())
+	if err != nil {
+		t.Fatalf("ChannelStats: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(stats))
+	}
+	s := stats[0]
+	if !s.DataPartial {
+		t.Errorf("expected DataPartial=true for channel with no channel_point")
+	}
+	if s.OpenFeeSats != 0 {
+		t.Errorf("expected OpenFeeSats=0 for partial channel, got %d", s.OpenFeeSats)
+	}
+	if s.ROIPct != 0 {
+		t.Errorf("expected ROIPct=0 for partial channel, got %.2f", s.ROIPct)
+	}
+}
+
+func TestChannelStats_ROI_BreakEven(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+
+	openedAt := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	// Open fee = 2000 sats, earned = 500 sats over 10 days → avg 50/day → break-even in ~30 more days
+	seedChannels(t, d, []Channel{
+		{ChanID: 300, RemotePubKey: "nodeC", ChannelPoint: "def456:0",
+			Capacity: 1_000_000, LocalBalance: 500_000, RemoteBalance: 500_000, Active: true},
+	})
+	err := d.RunSync(context.Background(), func(tx SyncTx) error {
+		return tx.UpsertOnchainTxns([]OnchainTx{
+			{TxHash: "def456", AmountSat: -1_002_000, NumConfirmations: 50, Timestamp: openedAt},
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed onchain tx: %v", err)
+	}
+	seedForwardingEvents(t, d, []ForwardingEvent{
+		{Timestamp: openedAt.Add(time.Hour), ChanIDIn: 300, ChanIDOut: 400, AmtInMsat: 1000, AmtOutMsat: 500, FeeMsat: 500_000},
+	})
+
+	stats, err := d.ChannelStats(context.Background())
+	if err != nil {
+		t.Fatalf("ChannelStats: %v", err)
+	}
+	s := stats[0]
+	if s.ROIPct >= 100 {
+		t.Errorf("expected ROIPct < 100 (not yet profitable), got %.2f", s.ROIPct)
+	}
+	if s.BreakEvenDays <= 0 {
+		t.Errorf("expected BreakEvenDays > 0, got %d", s.BreakEvenDays)
+	}
+}
+
 func TestForwardingEvents_Pagination(t *testing.T) {
 	d := newTestDB(t)
 	defer d.Close()

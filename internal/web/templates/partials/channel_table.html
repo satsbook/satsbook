@@ -13,6 +13,7 @@
         <th>Local / Remote</th>
         <th>Fees (all time)</th>
         <th>Fees (30d)</th>
+        <th>ROI</th>
       </tr>
     </thead>
     <tbody>
@@ -31,6 +32,19 @@
         <td>{{formatSats .LocalBalance}} / {{formatSats .RemoteBalance}}</td>
         <td>{{formatSats (msatToSat .FeesEarnedAllTimeMsat)}} sats</td>
         <td>{{formatSats (msatToSat .FeesEarned30dMsat)}} sats</td>
+        <td>
+          {{if .DataPartial}}
+            <span style="color:var(--text-muted); font-size:0.8rem;" title="Channel opened before Satsbook tracking began — open cost unknown">partial</span>
+          {{else if gt .OpenFeeSats 0}}
+            {{if ge .ROIPct 100.0}}
+              <span style="color:var(--green,#4ade80); font-weight:600;" title="Open cost: {{formatSats .OpenFeeSats}} sats · {{.DaysOpen}} days open">{{printf "%.0f" .ROIPct}}%</span>
+            {{else}}
+              <span style="color:var(--accent,#f7931a);" title="Open cost: {{formatSats .OpenFeeSats}} sats · Break-even in ~{{.BreakEvenDays}} days">{{printf "%.0f" .ROIPct}}%</span>
+            {{end}}
+          {{else}}
+            <span style="color:var(--text-muted); font-size:0.8rem;" title="On-chain open tx not found in wallet history">—</span>
+          {{end}}
+        </td>
       </tr>
       {{end}}
     </tbody>

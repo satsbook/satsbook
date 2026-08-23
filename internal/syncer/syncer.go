@@ -471,6 +471,7 @@ func (s *Syncer) syncChannels(ctx context.Context, tx db.SyncTx) error {
 			ChanID:        ch.ChannelID,
 			RemotePubKey:  ch.RemotePubKey,
 			ChannelPoint:  ch.ChannelPoint,
+			Capacity:      ch.Capacity,
 			LocalBalance:  ch.LocalBalance,
 			RemoteBalance: ch.RemoteBalance,
 			Active:        ch.Active,
@@ -493,6 +494,7 @@ func (s *Syncer) syncChannels(ctx context.Context, tx db.SyncTx) error {
 				RemotePubKey:  ch.RemotePubKey,
 				ChannelPoint:  ch.ChannelPoint,
 				ClosingTxHash: ch.ClosingTxHash,
+				Capacity:      ch.Capacity,
 				Active:        false,
 			}
 		}
