@@ -731,6 +731,87 @@ func defaultEmptyLND() *mockLNDClient {
 
 // --- Tests for SetMonarchSyncer / SetMonarchTxSync ---
 
+// --- Alert checker hook tests (issue #31) ---
+
+// mockAlertChecker captures whether Check was called.
+type mockAlertChecker struct {
+	called int
+}
+
+func (m *mockAlertChecker) Check(_ context.Context) {
+	m.called++
+}
+
+// TestSetAlertChecker verifies that SetAlertChecker stores the checker.
+func TestSetAlertChecker(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	ac := &mockAlertChecker{}
+	s.SetAlertChecker(ac)
+	if s.alertChecker == nil {
+		t.Error("expected alertChecker to be set after SetAlertChecker")
+	}
+}
+
+// TestSync_AlertCheckerCalledAfterSync verifies the alert checker runs once per
+// successful sync cycle. Issue #31: "Checker runs after each sync cycle."
+func TestSync_AlertCheckerCalledAfterSync(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	ac := &mockAlertChecker{}
+	s.SetAlertChecker(ac)
+
+	if err := s.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if ac.called != 1 {
+		t.Errorf("expected alertChecker.Check called 1 time, got %d", ac.called)
+	}
+}
+
+// TestSync_AlertCheckerCalledOnEachCycle verifies the checker fires on every
+// sync, not just the first one. A second Sync call must trigger a second check.
+func TestSync_AlertCheckerCalledOnEachCycle(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	ac := &mockAlertChecker{}
+	s.SetAlertChecker(ac)
+
+	for i := 0; i < 3; i++ {
+		if err := s.Sync(context.Background()); err != nil {
+			t.Fatalf("Sync %d: %v", i, err)
+		}
+	}
+
+	if ac.called != 3 {
+		t.Errorf("expected alertChecker.Check called 3 times, got %d", ac.called)
+	}
+}
+
+// TestSync_NoAlertCheckerDoesNotPanic verifies that a nil alert checker (not
+// configured) does not cause a panic — Syncer must be usable without alerts.
+func TestSync_NoAlertCheckerDoesNotPanic(t *testing.T) {
+	s := newTestSyncer(defaultEmptyLND(), newMockStore())
+	// alertChecker is nil by default — must not panic
+	if err := s.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync without alert checker: %v", err)
+	}
+}
+
+// TestSync_AlertCheckerNotCalledOnSyncError verifies the checker is NOT invoked
+// when the sync cycle fails — alerts should only fire on healthy state.
+func TestSync_AlertCheckerNotCalledOnSyncError(t *testing.T) {
+	store := newMockStore()
+	store.txConfig = &mockSyncTx{insertForwardingErr: errors.New("db write failed")}
+	s := newTestSyncer(defaultEmptyLND(), store)
+	ac := &mockAlertChecker{}
+	s.SetAlertChecker(ac)
+
+	_ = s.Sync(context.Background()) // error is expected
+
+	if ac.called != 0 {
+		t.Errorf("alert checker must not be called when sync fails, got %d calls", ac.called)
+	}
+}
+
 func TestSetMonarchSyncer(t *testing.T) {
 	s := newTestSyncer(defaultEmptyLND(), newMockStore())
 	ms := &mockMonarchSyncer{}

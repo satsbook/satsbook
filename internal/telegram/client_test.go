@@ -149,3 +149,44 @@ func TestWaitForRateLimit_RespectsWindow(t *testing.T) {
 		t.Error("expected rate limit to block and context to expire")
 	}
 }
+
+// TestMaxPerMinute_Is20 verifies the constant matches the Telegram Bot API
+// documented limit of 20 messages/minute. Issue #31: "Rate limiting (max 20
+// messages/minute per Telegram limits)." This test would fail if the constant
+// was changed to a different value.
+func TestMaxPerMinute_Is20(t *testing.T) {
+	if maxPerMinute != 20 {
+		t.Errorf("maxPerMinute = %d, want 20 (Telegram Bot API group chat limit)", maxPerMinute)
+	}
+}
+
+// TestRateLimit_BlocksAt20_NotBefore verifies that the 20th send succeeds but
+// the 21st is blocked. This confirms the rate limiter kicks in at exactly the
+// documented boundary, not before or after.
+func TestRateLimit_BlocksAt20_NotBefore(t *testing.T) {
+	var count atomic.Int32
+	c, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+
+	// Send exactly maxPerMinute messages — all should succeed immediately.
+	for i := 0; i < maxPerMinute; i++ {
+		if err := c.SendMessage(context.Background(), "msg"); err != nil {
+			t.Fatalf("message %d (within limit) failed: %v", i+1, err)
+		}
+	}
+	if count.Load() != int32(maxPerMinute) {
+		t.Errorf("expected %d requests sent, got %d", maxPerMinute, count.Load())
+	}
+
+	// The 21st message must be rate-limited. Use a short context so the test
+	// doesn't hang — the rate limiter should block until the context expires.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	err := c.SendMessage(ctx, "over-limit")
+	if err == nil {
+		t.Error("expected 21st message to be rate-limited (context should expire before window resets)")
+	}
+}

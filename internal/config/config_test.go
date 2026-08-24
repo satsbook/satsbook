@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoad_WithSatsbookPrefix(t *testing.T) {
@@ -324,6 +325,133 @@ func TestValidate_LNDPartialConfig_MissingHost(t *testing.T) {
 	}
 	if err := cfg.validate(); err == nil {
 		t.Fatal("validate() should fail when LND creds are set but host is empty")
+	}
+}
+
+// --- Telegram config tests (issue #31) ---
+
+func TestLoad_TelegramEnvVars(t *testing.T) {
+	clearEnv()
+	os.Setenv("SATSBOOK_DATABASE_PATH", "/test/db.sqlite")
+	os.Setenv("SATSBOOK_TELEGRAM_BOT_TOKEN", "bot123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+	os.Setenv("SATSBOOK_TELEGRAM_CHAT_ID", "-100987654321")
+	defer func() {
+		os.Unsetenv("SATSBOOK_TELEGRAM_BOT_TOKEN")
+		os.Unsetenv("SATSBOOK_TELEGRAM_CHAT_ID")
+		clearEnv()
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.TelegramBotToken != "bot123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" {
+		t.Errorf("TelegramBotToken = %q, want the configured token", cfg.TelegramBotToken)
+	}
+	if cfg.TelegramChatID != "-100987654321" {
+		t.Errorf("TelegramChatID = %q, want -100987654321", cfg.TelegramChatID)
+	}
+}
+
+func TestLoad_TelegramDefaults_Empty(t *testing.T) {
+	clearEnv()
+	os.Setenv("SATSBOOK_DATABASE_PATH", "/test/db.sqlite")
+	defer clearEnv()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	// Without env vars, Telegram must default to empty strings — not crash.
+	if cfg.TelegramBotToken != "" {
+		t.Errorf("expected empty TelegramBotToken by default, got %q", cfg.TelegramBotToken)
+	}
+	if cfg.TelegramChatID != "" {
+		t.Errorf("expected empty TelegramChatID by default, got %q", cfg.TelegramChatID)
+	}
+}
+
+// --- BitcoinRPCConfigured tests ---
+
+func TestBitcoinRPCConfigured_WithHostAndCookie(t *testing.T) {
+	c := &Config{
+		BitcoinRPCHost:       "localhost",
+		BitcoinRPCCookiePath: "/run/bitcoin/cookie",
+	}
+	if !c.BitcoinRPCConfigured() {
+		t.Error("expected BitcoinRPCConfigured to be true with host + cookie")
+	}
+}
+
+func TestBitcoinRPCConfigured_WithHostAndCredentials(t *testing.T) {
+	c := &Config{
+		BitcoinRPCHost:     "localhost",
+		BitcoinRPCUser:     "rpcuser",
+		BitcoinRPCPassword: "rpcpass",
+	}
+	if !c.BitcoinRPCConfigured() {
+		t.Error("expected BitcoinRPCConfigured to be true with host + user + password")
+	}
+}
+
+func TestBitcoinRPCConfigured_NoHost(t *testing.T) {
+	c := &Config{
+		BitcoinRPCCookiePath: "/run/bitcoin/cookie",
+	}
+	if c.BitcoinRPCConfigured() {
+		t.Error("expected BitcoinRPCConfigured to be false with no host")
+	}
+}
+
+func TestBitcoinRPCConfigured_HostButNoCredentials(t *testing.T) {
+	c := &Config{
+		BitcoinRPCHost: "localhost",
+	}
+	if c.BitcoinRPCConfigured() {
+		t.Error("expected BitcoinRPCConfigured to be false with host but no credentials")
+	}
+}
+
+func TestBitcoinRPCConfigured_PartialCredentials_UserOnly(t *testing.T) {
+	c := &Config{
+		BitcoinRPCHost: "localhost",
+		BitcoinRPCUser: "user",
+		// no password, no cookie
+	}
+	if c.BitcoinRPCConfigured() {
+		t.Error("expected BitcoinRPCConfigured to be false with user but no password or cookie")
+	}
+}
+
+// --- getEnvAsDuration tests ---
+
+func TestGetEnvAsDuration_ValidDuration(t *testing.T) {
+	os.Setenv("TEST_DURATION_VALID", "30s")
+	defer os.Unsetenv("TEST_DURATION_VALID")
+
+	got := getEnvAsDuration("TEST_DURATION_VALID", 5*time.Minute)
+	if got != 30*time.Second {
+		t.Errorf("getEnvAsDuration = %v, want 30s", got)
+	}
+}
+
+func TestGetEnvAsDuration_InvalidFallsBackToDefault(t *testing.T) {
+	os.Setenv("TEST_DURATION_INVALID", "not-a-duration")
+	defer os.Unsetenv("TEST_DURATION_INVALID")
+
+	defaultVal := 5 * time.Minute
+	got := getEnvAsDuration("TEST_DURATION_INVALID", defaultVal)
+	if got != defaultVal {
+		t.Errorf("getEnvAsDuration with invalid value should return default %v, got %v", defaultVal, got)
+	}
+}
+
+func TestGetEnvAsDuration_MissingFallsBackToDefault(t *testing.T) {
+	os.Unsetenv("TEST_DURATION_MISSING_XYZ")
+	defaultVal := 10 * time.Minute
+	got := getEnvAsDuration("TEST_DURATION_MISSING_XYZ", defaultVal)
+	if got != defaultVal {
+		t.Errorf("getEnvAsDuration with missing env should return default %v, got %v", defaultVal, got)
 	}
 }
 
