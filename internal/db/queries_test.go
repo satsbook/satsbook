@@ -3882,3 +3882,191 @@ func TestAutoTagChannelTransfers_UserNotePreserved(t *testing.T) {
 	}
 }
 
+// --- Alert history ---
+
+func TestRecordAlert_And_HasAlertedRecently(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Not alerted yet
+	ok, err := d.HasAlertedRecently(ctx, "channel_close", "123", time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected false before any alert")
+	}
+
+	// Record an alert
+	if err := d.RecordAlert(ctx, "channel_close", "123", "Channel 123 closed"); err != nil {
+		t.Fatalf("RecordAlert: %v", err)
+	}
+
+	// Now should be alerted
+	ok, err = d.HasAlertedRecently(ctx, "channel_close", "123", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected true after recording alert")
+	}
+
+	// Different type — should not count
+	ok, err = d.HasAlertedRecently(ctx, "low_balance", "123", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("different alert type should not match")
+	}
+
+	// Future `since` — should not count
+	ok, err = d.HasAlertedRecently(ctx, "channel_close", "123", time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("alert recorded before `since` should not count")
+	}
+}
+
+func TestListAlertHistory(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Empty
+	records, err := d.ListAlertHistory(ctx, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(records) != 0 {
+		t.Errorf("expected empty list, got %d records", len(records))
+	}
+
+	// Insert two records
+	if err := d.RecordAlert(ctx, "daily_summary", "2026-01-01", "msg1"); err != nil {
+		t.Fatalf("RecordAlert: %v", err)
+	}
+	if err := d.RecordAlert(ctx, "fee_spike", "2026-01-01", "msg2"); err != nil {
+		t.Fatalf("RecordAlert: %v", err)
+	}
+
+	records, err = d.ListAlertHistory(ctx, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Errorf("expected 2 records, got %d", len(records))
+	}
+	// Respect limit
+	records, err = d.ListAlertHistory(ctx, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Errorf("expected 1 record with limit=1, got %d", len(records))
+	}
+}
+
+func TestChannelsWithClosingTx(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// No channels yet
+	chs, err := d.ChannelsWithClosingTx(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chs) != 0 {
+		t.Errorf("expected 0, got %d", len(chs))
+	}
+
+	// Seed one open and one closed channel
+	seedChannels(t, d, []Channel{
+		{ChanID: 1, RemotePubKey: "pk1", ChannelPoint: "tx:0", Capacity: 1_000_000, LocalBalance: 500_000, Active: true},
+		{ChanID: 2, RemotePubKey: "pk2", ChannelPoint: "tx:1", Capacity: 500_000, LocalBalance: 0, Active: false, ClosingTxHash: "deadbeef"},
+	})
+
+	chs, err = d.ChannelsWithClosingTx(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chs) != 1 {
+		t.Fatalf("expected 1 closed channel, got %d", len(chs))
+	}
+	if chs[0].ChanID != 2 {
+		t.Errorf("expected chan 2, got %d", chs[0].ChanID)
+	}
+	if chs[0].ClosingTxHash != "deadbeef" {
+		t.Errorf("expected closing_tx_hash 'deadbeef', got %q", chs[0].ClosingTxHash)
+	}
+}
+
+func TestChannelsBelowBalancePct(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	seedChannels(t, d, []Channel{
+		// 5% local — below 10% threshold
+		{ChanID: 10, RemotePubKey: "pk10", ChannelPoint: "tx:10", Capacity: 1_000_000, LocalBalance: 50_000, Active: true},
+		// 50% local — above threshold
+		{ChanID: 11, RemotePubKey: "pk11", ChannelPoint: "tx:11", Capacity: 1_000_000, LocalBalance: 500_000, Active: true},
+		// 5% but inactive — should not appear
+		{ChanID: 12, RemotePubKey: "pk12", ChannelPoint: "tx:12", Capacity: 1_000_000, LocalBalance: 50_000, Active: false},
+	})
+
+	chs, err := d.ChannelsBelowBalancePct(ctx, 0.10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chs) != 1 {
+		t.Fatalf("expected 1 channel below threshold, got %d", len(chs))
+	}
+	if chs[0].ChanID != 10 {
+		t.Errorf("expected chan 10, got %d", chs[0].ChanID)
+	}
+}
+
+func TestFeesMsatSince(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	seedForwardingEvents(t, d, []ForwardingEvent{
+		{Timestamp: now.Add(-2 * time.Hour), AmtInMsat: 100_000, AmtOutMsat: 99_000, FeeMsat: 1_000},
+		{Timestamp: now.Add(-10 * time.Hour), AmtInMsat: 200_000, AmtOutMsat: 198_000, FeeMsat: 2_000},
+	})
+
+	// All fees (since epoch)
+	total, err := d.FeesMsatSince(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 3_000 {
+		t.Errorf("expected 3000 msat total, got %d", total)
+	}
+
+	// Only the recent one (within last 5 hours)
+	recent, err := d.FeesMsatSince(ctx, now.Add(-5*time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if recent != 1_000 {
+		t.Errorf("expected 1000 msat recent, got %d", recent)
+	}
+
+	// Nothing in the future
+	future, err := d.FeesMsatSince(ctx, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if future != 0 {
+		t.Errorf("expected 0, got %d", future)
+	}
+}
+

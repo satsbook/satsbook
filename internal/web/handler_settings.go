@@ -38,6 +38,9 @@ type SettingsPageData struct {
 	// Node info (for header indicator)
 	NodeAlias  string
 	NodeSynced bool
+	// Telegram alerts
+	TelegramBotToken string // non-empty means configured (actual value masked)
+	TelegramChatID   string
 }
 
 // HandleSettingsPage serves GET /settings.
@@ -110,6 +113,16 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 			data.MonarchSyncedCount = count
 		}
 	}
+	// Telegram alert config
+	if h.settingsStore != nil {
+		if tok, _ := h.settingsStore.GetSetting(ctx, "telegram_bot_token"); tok != "" {
+			data.TelegramBotToken = tok // non-empty signals "configured" to template
+		}
+		if chatID, _ := h.settingsStore.GetSetting(ctx, "telegram_chat_id"); chatID != "" {
+			data.TelegramChatID = chatID
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.renderer.Render(w, "settings_layout", data); err != nil {
 		h.logger.Printf("failed to render settings page: %v", err)
@@ -620,4 +633,80 @@ func maskToken(token string) string {
 		return "****"
 	}
 	return strings.Repeat("*", 8) + token[len(token)-4:]
+}
+
+// HandleTelegramSave handles POST /api/settings/telegram — saves bot token and chat ID.
+func (h *Handler) HandleTelegramSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	token := strings.TrimSpace(r.FormValue("telegram_bot_token"))
+	chatID := strings.TrimSpace(r.FormValue("telegram_chat_id"))
+
+	// A placeholder value means the user didn't change the masked token — keep existing.
+	if token == "••••••••" {
+		if existing, _ := h.settingsStore.GetSetting(r.Context(), "telegram_bot_token"); existing != "" {
+			token = existing
+		}
+	}
+
+	if token == "" || chatID == "" {
+		fmt.Fprint(w, `<div class="alert alert-error">Both Bot Token and Chat ID are required.</div>`)
+		return
+	}
+
+	if err := h.settingsStore.SetSetting(r.Context(), "telegram_bot_token", token); err != nil {
+		h.logger.Printf("telegram: save token: %v", err)
+		fmt.Fprint(w, `<div class="alert alert-error">Failed to save token.</div>`)
+		return
+	}
+	if err := h.settingsStore.SetSetting(r.Context(), "telegram_chat_id", chatID); err != nil {
+		h.logger.Printf("telegram: save chat ID: %v", err)
+		fmt.Fprint(w, `<div class="alert alert-error">Failed to save chat ID.</div>`)
+		return
+	}
+
+	w.Header().Set("HX-Refresh", "true")
+}
+
+// HandleTelegramTest handles POST /api/settings/telegram/test — sends a test message.
+func (h *Handler) HandleTelegramTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.settingsStore == nil {
+		http.Error(w, "settings not available", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	token, _ := h.settingsStore.GetSetting(r.Context(), "telegram_bot_token")
+	chatID, _ := h.settingsStore.GetSetting(r.Context(), "telegram_chat_id")
+	if token == "" || chatID == "" {
+		fmt.Fprint(w, `<div class="alert alert-error">Telegram not configured.</div>`)
+		return
+	}
+
+	if h.telegramSender == nil {
+		fmt.Fprint(w, `<div class="alert alert-error">Telegram client not active. Restart the app after saving credentials.</div>`)
+		return
+	}
+
+	if err := h.telegramSender.SendMessage(r.Context(), "✅ *Satsbook test message* — Telegram alerts are working!"); err != nil {
+		h.logger.Printf("telegram: test message: %v", err)
+		fmt.Fprintf(w, `<div class="alert alert-error">Failed to send: %s</div>`, err.Error())
+		return
+	}
+
+	fmt.Fprint(w, `<div class="alert alert-success">Test message sent! Check your Telegram chat.</div>`)
 }

@@ -84,6 +84,11 @@ type CoinbaseImporter interface {
 	SetSetting(ctx context.Context, key, value string) error
 }
 
+// AlertChecker runs alert checks after each sync cycle.
+type AlertChecker interface {
+	Check(ctx context.Context)
+}
+
 // Syncer orchestrates LND data synchronization.
 type Syncer struct {
 	lnd              LNDClient
@@ -99,6 +104,7 @@ type Syncer struct {
 	coinbaseClient   CoinbaseRowFetcher
 	coinbaseImporter CoinbaseImporter
 	coinbaseTrigger  chan struct{}
+	alertChecker     AlertChecker
 	logger           *log.Logger
 	syncInterval     time.Duration
 	maxHistoryDays   int
@@ -145,6 +151,11 @@ func (s *Syncer) SetStrikeClient(client StrikeRowFetcher, importer StrikeImporte
 		default:
 		}
 	}
+}
+
+// SetAlertChecker sets the alert checker to run after each sync cycle.
+func (s *Syncer) SetAlertChecker(ac AlertChecker) {
+	s.alertChecker = ac
 }
 
 // SetCoinbaseClient sets the Coinbase CDP API client and importer for automatic syncing.
@@ -217,6 +228,11 @@ func (s *Syncer) Sync(ctx context.Context) error {
 	// Sync Strike API transactions if configured
 	if s.strikeClient != nil && s.strikeImporter != nil {
 		s.syncStrikeAPI(ctx)
+	}
+
+	// Run alert checks after a successful sync
+	if s.alertChecker != nil {
+		s.alertChecker.Check(ctx)
 	}
 
 	return nil

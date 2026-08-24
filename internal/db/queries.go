@@ -2366,3 +2366,134 @@ func (d *DB) AvailableReportYears(ctx context.Context) ([]int, error) {
 	sort.Slice(years, func(i, j int) bool { return years[i] > years[j] })
 	return years, nil
 }
+
+// ---------------------------------------------------------------------------
+// Alert history
+// ---------------------------------------------------------------------------
+
+// AlertRecord represents a row in the alert_history table.
+type AlertRecord struct {
+	ID           int64
+	Type         string
+	ExternalID   string
+	Message      string
+	SentAt       time.Time
+	Acknowledged bool
+}
+
+// HasAlertedRecently returns true if an alert of the given type and external_id
+// was recorded on or after `since`.
+func (d *DB) HasAlertedRecently(ctx context.Context, alertType, externalID string, since time.Time) (bool, error) {
+	var count int
+	err := d.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM alert_history WHERE type = ? AND external_id = ? AND sent_at >= ?`,
+		alertType, externalID, since.UTC(),
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("has alerted recently: %w", err)
+	}
+	return count > 0, nil
+}
+
+// RecordAlert inserts a row into alert_history.
+func (d *DB) RecordAlert(ctx context.Context, alertType, externalID, message string) error {
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO alert_history (type, external_id, message, sent_at) VALUES (?, ?, ?, ?)`,
+		alertType, externalID, message, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("record alert: %w", err)
+	}
+	return nil
+}
+
+// ListAlertHistory returns the most recent alert records, newest first.
+func (d *DB) ListAlertHistory(ctx context.Context, limit int) ([]AlertRecord, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, type, external_id, message, sent_at, acknowledged
+		 FROM alert_history ORDER BY sent_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list alert history: %w", err)
+	}
+	defer rows.Close()
+
+	var records []AlertRecord
+	for rows.Next() {
+		var r AlertRecord
+		var ack int
+		if err := rows.Scan(&r.ID, &r.Type, &r.ExternalID, &r.Message, &r.SentAt, &ack); err != nil {
+			return nil, fmt.Errorf("scan alert record: %w", err)
+		}
+		r.Acknowledged = ack == 1
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+// ChannelsWithClosingTx returns channels that have a non-empty closing_tx_hash.
+func (d *DB) ChannelsWithClosingTx(ctx context.Context) ([]Channel, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT chan_id, remote_pubkey, channel_point, closing_tx_hash, capacity, local_balance, remote_balance, active
+		 FROM channels WHERE closing_tx_hash != ''`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("channels with closing tx: %w", err)
+	}
+	defer rows.Close()
+
+	var channels []Channel
+	for rows.Next() {
+		var ch Channel
+		var active int
+		if err := rows.Scan(&ch.ChanID, &ch.RemotePubKey, &ch.ChannelPoint, &ch.ClosingTxHash,
+			&ch.Capacity, &ch.LocalBalance, &ch.RemoteBalance, &active); err != nil {
+			return nil, fmt.Errorf("scan channel: %w", err)
+		}
+		ch.Active = active == 1
+		channels = append(channels, ch)
+	}
+	return channels, rows.Err()
+}
+
+// ChannelsBelowBalancePct returns active channels where local_balance/capacity < pct.
+// pct is expressed as a fraction (e.g. 0.10 for 10%).
+func (d *DB) ChannelsBelowBalancePct(ctx context.Context, pct float64) ([]Channel, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT chan_id, remote_pubkey, channel_point, closing_tx_hash, capacity, local_balance, remote_balance, active
+		 FROM channels
+		 WHERE active = 1
+		   AND capacity > 0
+		   AND CAST(local_balance AS REAL) / capacity < ?`,
+		pct,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("channels below balance pct: %w", err)
+	}
+	defer rows.Close()
+
+	var channels []Channel
+	for rows.Next() {
+		var ch Channel
+		var active int
+		if err := rows.Scan(&ch.ChanID, &ch.RemotePubKey, &ch.ChannelPoint, &ch.ClosingTxHash,
+			&ch.Capacity, &ch.LocalBalance, &ch.RemoteBalance, &active); err != nil {
+			return nil, fmt.Errorf("scan channel: %w", err)
+		}
+		ch.Active = active == 1
+		channels = append(channels, ch)
+	}
+	return channels, rows.Err()
+}
+
+// FeesMsatSince returns the total routing fee income (in msat) since the given time.
+func (d *DB) FeesMsatSince(ctx context.Context, since time.Time) (int64, error) {
+	var total int64
+	err := d.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(fee_msat), 0) FROM forwarding_events WHERE timestamp >= ?`, since,
+	).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("fees msat since: %w", err)
+	}
+	return total, nil
+}

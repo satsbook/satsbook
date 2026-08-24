@@ -52,6 +52,10 @@ type Config struct {
 	CoinbaseAPIKeyID    string
 	CoinbaseAPISecret   string // base64-encoded Ed25519 private key
 
+	// Telegram alert settings
+	TelegramBotToken string
+	TelegramChatID   string
+
 	// Demo / override settings
 	OverrideTier string // SATSBOOK_OVERRIDE_TIER — bypasses license check (demo mode only)
 }
@@ -103,6 +107,10 @@ func Load() (*Config, error) {
 		StrikeAPIKey:      getEnv("SATSBOOK_STRIKE_API_KEY", ""),
 		CoinbaseAPIKeyID:  getEnv("SATSBOOK_COINBASE_API_KEY_ID", ""),
 		CoinbaseAPISecret: getEnv("SATSBOOK_COINBASE_API_SECRET", ""),
+
+		// Telegram alert settings
+		TelegramBotToken: getEnv("SATSBOOK_TELEGRAM_BOT_TOKEN", ""),
+		TelegramChatID:   getEnv("SATSBOOK_TELEGRAM_CHAT_ID", ""),
 
 		// Demo / override settings
 		OverrideTier: getEnv("SATSBOOK_OVERRIDE_TIER", ""),
