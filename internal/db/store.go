@@ -24,6 +24,7 @@ type Channel struct {
 	RemotePubKey  string
 	ChannelPoint  string
 	ClosingTxHash string
+	Capacity      int64
 	LocalBalance  int64
 	RemoteBalance int64
 	Active        bool
@@ -147,16 +148,17 @@ func (t *dbSyncTx) UpsertChannels(channels []Channel) error {
 
 	for _, ch := range channels {
 		_, err := t.tx.Exec(
-			`INSERT INTO channels (chan_id, remote_pubkey, channel_point, closing_tx_hash, local_balance, remote_balance, active)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO channels (chan_id, remote_pubkey, channel_point, closing_tx_hash, capacity, local_balance, remote_balance, active)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(chan_id) DO UPDATE SET
 			   remote_pubkey = excluded.remote_pubkey,
 			   channel_point = CASE WHEN excluded.channel_point != '' THEN excluded.channel_point ELSE channels.channel_point END,
 			   closing_tx_hash = CASE WHEN excluded.closing_tx_hash != '' THEN excluded.closing_tx_hash ELSE channels.closing_tx_hash END,
+			   capacity = CASE WHEN excluded.capacity > 0 THEN excluded.capacity ELSE channels.capacity END,
 			   local_balance = excluded.local_balance,
 			   remote_balance = excluded.remote_balance,
 			   active = excluded.active`,
-			ch.ChanID, ch.RemotePubKey, ch.ChannelPoint, ch.ClosingTxHash, ch.LocalBalance, ch.RemoteBalance, boolToInt(ch.Active),
+			ch.ChanID, ch.RemotePubKey, ch.ChannelPoint, ch.ClosingTxHash, ch.Capacity, ch.LocalBalance, ch.RemoteBalance, boolToInt(ch.Active),
 		)
 		if err != nil {
 			return fmt.Errorf("upsert channel %d: %w", ch.ChanID, err)

@@ -67,18 +67,28 @@ func (d *DB) LatestWalletBalance(ctx context.Context) (*WalletBalanceSnapshot, e
 
 // ChannelStat holds per-channel stats for the dashboard.
 type ChannelStat struct {
-	ChanID               uint64
-	RemotePubKey         string
-	LocalBalance         int64
-	RemoteBalance        int64
-	Active               bool
+	ChanID                uint64
+	RemotePubKey          string
+	LocalBalance          int64
+	RemoteBalance         int64
+	Active                bool
 	FeesEarnedAllTimeMsat int64
-	FeesEarned30dMsat    int64
+	FeesEarned30dMsat     int64
+
+	// ROI fields
+	CapacitySats  int64   // channel capacity in sats
+	OpenFeeSats   int64   // on-chain fee paid to open (0 if unknown)
+	OpenDate      time.Time // when the funding tx was confirmed
+	DaysOpen      int     // days since open (0 if unknown)
+	ROIPct        float64 // fees earned / open fee * 100 (0 if open fee unknown)
+	BreakEvenDays int     // days until open cost recovered at current rate (0 if already recovered or unknown)
+	DataPartial   bool    // true if channel predates Satsbook tracking
 }
 
-// ChannelStats returns per-channel stats with fee aggregations.
+// ChannelStats returns per-channel stats with fee aggregations and ROI data.
 func (d *DB) ChannelStats(ctx context.Context) ([]ChannelStat, error) {
 	thirtyDaysAgo := time.Now().AddDate(0, 0, -30)
+	now := time.Now()
 
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT
@@ -87,19 +97,36 @@ func (d *DB) ChannelStats(ctx context.Context) ([]ChannelStat, error) {
 			c.local_balance,
 			c.remote_balance,
 			c.active,
-			COALESCE(all_fees.total_fee, 0) AS fees_all_time,
-			COALESCE(recent_fees.total_fee, 0) AS fees_30d
+			c.capacity,
+			COALESCE(all_fees.total_fee, 0)    AS fees_all_time,
+			COALESCE(recent_fees.total_fee, 0) AS fees_30d,
+			-- open fee: |onchain amount| - capacity (negative amount = outgoing spend)
+			CASE
+				WHEN c.channel_point != '' AND o.tx_hash IS NOT NULL AND c.capacity > 0
+				     AND (-o.amount_sat) > c.capacity
+				THEN (-o.amount_sat) - c.capacity
+				ELSE 0
+			END AS open_fee_sats,
+			o.timestamp AS open_date,
+			-- partial if channel_point is blank or no matching onchain tx
+			CASE WHEN c.channel_point = '' OR o.tx_hash IS NULL THEN 1 ELSE 0 END AS data_partial
 		FROM channels c
+		LEFT JOIN onchain_txns o
+			ON c.channel_point != ''
+			AND o.tx_hash = SUBSTR(c.channel_point, 1,
+				CASE WHEN INSTR(c.channel_point, ':') > 0
+				     THEN INSTR(c.channel_point, ':') - 1
+				     ELSE LENGTH(c.channel_point) END)
 		LEFT JOIN (
 			SELECT chan_id, SUM(fee_msat) AS total_fee FROM (
-				SELECT chan_id_in AS chan_id, fee_msat FROM forwarding_events
+				SELECT chan_id_in  AS chan_id, fee_msat FROM forwarding_events
 				UNION ALL
 				SELECT chan_id_out AS chan_id, fee_msat FROM forwarding_events
 			) GROUP BY chan_id
 		) all_fees ON all_fees.chan_id = c.chan_id
 		LEFT JOIN (
 			SELECT chan_id, SUM(fee_msat) AS total_fee FROM (
-				SELECT chan_id_in AS chan_id, fee_msat FROM forwarding_events WHERE timestamp >= ?
+				SELECT chan_id_in  AS chan_id, fee_msat FROM forwarding_events WHERE timestamp >= ?
 				UNION ALL
 				SELECT chan_id_out AS chan_id, fee_msat FROM forwarding_events WHERE timestamp >= ?
 			) GROUP BY chan_id
@@ -114,12 +141,42 @@ func (d *DB) ChannelStats(ctx context.Context) ([]ChannelStat, error) {
 	var stats []ChannelStat
 	for rows.Next() {
 		var s ChannelStat
-		var active int
-		if err := rows.Scan(&s.ChanID, &s.RemotePubKey, &s.LocalBalance, &s.RemoteBalance,
-			&active, &s.FeesEarnedAllTimeMsat, &s.FeesEarned30dMsat); err != nil {
+		var active, dataPartial int
+		var openDate sql.NullString
+		if err := rows.Scan(
+			&s.ChanID, &s.RemotePubKey, &s.LocalBalance, &s.RemoteBalance,
+			&active, &s.CapacitySats,
+			&s.FeesEarnedAllTimeMsat, &s.FeesEarned30dMsat,
+			&s.OpenFeeSats, &openDate, &dataPartial,
+		); err != nil {
 			return nil, fmt.Errorf("scan channel stat: %w", err)
 		}
 		s.Active = active == 1
+		s.DataPartial = dataPartial == 1
+
+		if openDate.Valid && openDate.String != "" {
+			if t, err := time.Parse("2006-01-02T15:04:05Z", openDate.String); err == nil {
+				s.OpenDate = t
+			} else if t, err := time.Parse("2006-01-02 15:04:05", openDate.String); err == nil {
+				s.OpenDate = t
+			}
+			if !s.OpenDate.IsZero() {
+				s.DaysOpen = int(now.Sub(s.OpenDate).Hours() / 24)
+			}
+		}
+
+		feesEarnedSats := s.FeesEarnedAllTimeMsat / 1000
+		if s.OpenFeeSats > 0 {
+			s.ROIPct = float64(feesEarnedSats) / float64(s.OpenFeeSats) * 100
+			if feesEarnedSats < s.OpenFeeSats && s.DaysOpen > 0 {
+				avgDailyFee := float64(feesEarnedSats) / float64(s.DaysOpen)
+				if avgDailyFee > 0 {
+					remaining := float64(s.OpenFeeSats - feesEarnedSats)
+					s.BreakEvenDays = int(remaining/avgDailyFee) + 1
+				}
+			}
+		}
+
 		stats = append(stats, s)
 	}
 	return stats, rows.Err()

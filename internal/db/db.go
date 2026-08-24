@@ -453,6 +453,10 @@ var migrations = []string{
 	ALTER TABLE channels ADD COLUMN channel_point TEXT NOT NULL DEFAULT '';
 	ALTER TABLE channels ADD COLUMN closing_tx_hash TEXT NOT NULL DEFAULT '';
 	`,
+	// Migration 16: Add capacity to channels for per-channel ROI calculation.
+	`
+	ALTER TABLE channels ADD COLUMN capacity INTEGER NOT NULL DEFAULT 0;
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.
