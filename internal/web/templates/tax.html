@@ -47,6 +47,90 @@
   {{template "tax_summary_cards" .}}
 </div>
 
+{{if .Harvest}}
+<!-- Tax-Loss Harvesting -->
+<div style="margin-top: 40px;">
+  <h2 style="font-size: 1rem; color: var(--text-muted); margin-bottom: 12px;">Tax-Loss Harvesting Opportunities</h2>
+
+  {{if le .Harvest.DaysUntilYearEnd 91}}
+  <div style="background: rgba(247,147,26,0.12); border: 1px solid var(--accent,#f7931a); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; font-size: 0.85rem; color: var(--accent,#f7931a); font-weight: 600;">
+    Year-end deadline: {{.Harvest.DaysUntilYearEnd}} days left to harvest losses before Dec 31.
+  </div>
+  {{end}}
+
+  {{if .Harvest.WashSaleWarning}}
+  <div style="background: rgba(239,68,68,0.08); border: 1px solid #ef4444; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; font-size: 0.85rem; color: #ef4444;">
+    <strong>Wash-Sale Risk:</strong> You acquired BTC within the past 30 days. Selling at a loss now may trigger the wash-sale rule, disallowing the loss deduction. Consult a tax advisor.
+  </div>
+  {{end}}
+
+  {{if eq (len .Harvest.Candidates) 0}}
+  <div style="color: var(--text-muted); font-size: 0.9rem; padding: 16px 0;">
+    No open lots are currently at an unrealized loss at the current BTC price ({{formatUSD .BTCPriceUSD}}/BTC).
+  </div>
+  {{else}}
+  <!-- Summary cards -->
+  <div class="cards" style="margin-bottom: 24px;">
+    <div class="card">
+      <div class="card-label">Total Harvestable Loss</div>
+      <div class="card-value loss">{{formatUSD .Harvest.TotalUnrealizedLoss}}</div>
+      <div class="card-sub">{{len .Harvest.Candidates}} open lot{{if gt (len .Harvest.Candidates) 1}}s{{end}} at a loss</div>
+    </div>
+    <div class="card">
+      <div class="card-label">YTD Realized G/L</div>
+      <div class="card-value {{if ge .Harvest.YTDRealizedGainLoss 0.0}}gain{{else}}loss{{end}}">{{formatUSD .Harvest.YTDRealizedGainLoss}}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Net After Harvest</div>
+      <div class="card-value {{if ge .Harvest.NetAfterHarvest 0.0}}gain{{else}}loss{{end}}">{{formatUSD .Harvest.NetAfterHarvest}}</div>
+      <div class="card-sub">YTD realized + harvestable losses</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Est. Tax Savings</div>
+      <div class="card-value" style="color: var(--green,#4ade80);">{{formatUSD .Harvest.EstimatedSavingsLongTerm}} – {{formatUSD .Harvest.EstimatedSavingsShortTerm}}</div>
+      <div class="card-sub">at 20% (LT) – 37% (ST) rates</div>
+    </div>
+  </div>
+
+  <!-- Candidates table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Acquired</th>
+          <th>Source</th>
+          <th>Remaining</th>
+          <th>Cost Basis</th>
+          <th>Market Value</th>
+          <th>Unrealized Loss</th>
+          <th>Holding</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Harvest.Candidates}}
+        <tr>
+          <td>{{.AcquiredAt.Format "2006-01-02"}}</td>
+          <td>{{.Source}}</td>
+          <td>{{formatSats .RemainSat}} sats</td>
+          <td>{{formatUSD .CostBasisUSD}}</td>
+          <td>{{formatUSD .MarketValueUSD}}</td>
+          <td style="color: #ef4444; font-weight: 600;">{{formatUSD .UnrealizedLoss}}</td>
+          <td>
+            {{if .IsLongTerm}}<span style="color: var(--green,#4ade80);">Long-term</span>{{else}}<span style="color: var(--accent,#f7931a);">Short-term</span>{{end}}
+            {{if .WashSaleRisk}}<span style="font-size: 0.75rem; color: #ef4444;" title="A recent purchase may trigger the wash-sale rule"> ⚠</span>{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 10px;">
+    Estimated savings use 37% (short-term ordinary income) and 20% (long-term LTCG) federal rates. State taxes and individual circumstances vary — consult a tax professional.
+  </p>
+  {{end}}
+</div>
+{{end}}
+
 <script>
 function updateTaxSummary() {
   var method = document.getElementById('tax-method').value;

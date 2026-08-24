@@ -34,6 +34,9 @@ type TaxPageData struct {
 	LongTermCount     int
 	TotalDisposals    int
 	UnmatchedSat      int64
+
+	// Harvest fields (nil when price unavailable or no lots)
+	Harvest *tax.HarvestResult
 }
 
 // HandleTaxPage serves GET /tax.
@@ -128,6 +131,13 @@ func (h *Handler) HandleTaxPage(w http.ResponseWriter, r *http.Request) {
 					data.LongTermCount = summary.LongTermCount
 					data.TotalDisposals = summary.TotalDisposals
 					data.UnmatchedSat = summary.UnmatchedSat
+
+					// Harvest analysis — only meaningful when current price is available
+					if data.BTCPriceUSD > 0 {
+						if hr, herr := tax.Harvest(lots, disposals, taxMethod, data.BTCPriceUSD, now); herr == nil {
+							data.Harvest = hr
+						}
+					}
 				}
 			}
 		}
