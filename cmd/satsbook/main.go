@@ -18,7 +18,9 @@ import (
 	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
 	"github.com/satsbook/satsbook/internal/price"
+	"github.com/satsbook/satsbook/internal/alerts"
 	"github.com/satsbook/satsbook/internal/syncer"
+	"github.com/satsbook/satsbook/internal/telegram"
 	"github.com/satsbook/satsbook/internal/wallet"
 	"github.com/satsbook/satsbook/internal/web"
 )
@@ -173,6 +175,33 @@ func main() {
 		}
 	}
 	coinbaseLogger := log.New(os.Stdout, "[coinbase] ", log.LstdFlags)
+
+	// Wire up Telegram alert engine
+	{
+		telegramBotToken := cfg.TelegramBotToken
+		if telegramBotToken == "" {
+			if dbTok, _ := database.GetSetting(context.Background(), "telegram_bot_token"); dbTok != "" {
+				telegramBotToken = dbTok
+			}
+		}
+		telegramChatID := cfg.TelegramChatID
+		if telegramChatID == "" {
+			if dbID, _ := database.GetSetting(context.Background(), "telegram_chat_id"); dbID != "" {
+				telegramChatID = dbID
+			}
+		}
+		if telegramBotToken != "" && telegramChatID != "" {
+			tgClient := telegram.New(telegramBotToken, telegramChatID)
+			handler.SetTelegramSender(tgClient)
+			if s != nil {
+				alertStore := alerts.NewDBStore(database)
+				alertLogger := log.New(os.Stdout, "[alerts] ", log.LstdFlags)
+				checker := alerts.New(alertStore, tgClient, alertLogger)
+				s.SetAlertChecker(checker)
+			}
+			log.Printf("telegram alerts enabled for chat %s", telegramChatID)
+		}
+	}
 
 	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)

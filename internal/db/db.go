@@ -457,6 +457,19 @@ var migrations = []string{
 	`
 	ALTER TABLE channels ADD COLUMN capacity INTEGER NOT NULL DEFAULT 0;
 	`,
+
+	// Migration 17: Alert history table for Telegram notification dedup and in-app history.
+	`
+	CREATE TABLE IF NOT EXISTS alert_history (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		type        TEXT     NOT NULL,
+		external_id TEXT     NOT NULL DEFAULT '',
+		message     TEXT     NOT NULL,
+		sent_at     DATETIME NOT NULL DEFAULT (datetime('now')),
+		acknowledged INTEGER  NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_alert_history_type_ext ON alert_history (type, external_id);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

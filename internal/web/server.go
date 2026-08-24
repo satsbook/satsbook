@@ -77,6 +77,8 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/export/transactions", handler.HandleExportTransactions)
 	mux.HandleFunc("/api/backup", handler.HandleBackup)
 	mux.HandleFunc("/api/restore", handler.HandleRestore)
+	mux.HandleFunc("/api/settings/telegram", handler.HandleTelegramSave)
+	mux.HandleFunc("/api/settings/telegram/test", handler.HandleTelegramTest)
 	mux.Handle("/api/import/strike/clear", handler.HandleClearImport("strike"))
 	mux.Handle("/api/import/river/clear", handler.HandleClearImport("river"))
 	mux.Handle("/api/import/coinbase/clear", handler.HandleClearImport("coinbase"))

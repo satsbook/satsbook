@@ -116,6 +116,11 @@ type TaxStore interface {
 	ListDisposals(ctx context.Context) ([]db.DisposalRow, error)
 }
 
+// TelegramSender delivers a text message via Telegram.
+type TelegramSender interface {
+	SendMessage(ctx context.Context, text string) error
+}
+
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
 	store            DashboardStore
@@ -130,6 +135,7 @@ type Handler struct {
 	monarchTxStore   MonarchTxStore
 	taxStore         TaxStore
 	backupDB         BackupDB
+	telegramSender   TelegramSender
 	licenseChecker    *license.DefaultChecker
 	checkoutBaseURL   string // e.g. "https://api.satsbook.io"
 	onMonarchChange      func(MonarchSyncer)
@@ -220,6 +226,11 @@ func (h *Handler) SetTaxStore(ts TaxStore) {
 // SetBackupDB sets the database used for backup and restore operations.
 func (h *Handler) SetBackupDB(db BackupDB) {
 	h.backupDB = db
+}
+
+// SetTelegramSender sets the Telegram sender for alert test messages.
+func (h *Handler) SetTelegramSender(s TelegramSender) {
+	h.telegramSender = s
 }
 
 // SetLicenseChecker sets the license checker for runtime activation.

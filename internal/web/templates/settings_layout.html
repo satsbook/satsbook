@@ -328,6 +328,47 @@
       <div id="monarch-tx-result"></div>
     </section>
     {{end}}
+
+    <!-- Telegram Alerts -->
+    <section class="card" style="margin-top: 16px;">
+      <h2 style="font-size: 1rem; margin-bottom: 4px;">Telegram Alerts</h2>
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
+        Get notified on channel closes, low balance, fee spikes, and a daily summary.
+        Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color: var(--accent);">@BotFather</a> and paste your token below.
+        To find your Chat ID, send a message to your bot and visit <code style="font-size: 0.75rem;">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.
+      </p>
+      <form hx-post="/api/settings/telegram" hx-target="#telegram-result" hx-swap="innerHTML"
+            style="display: flex; flex-direction: column; gap: 12px; max-width: 480px;">
+        <div>
+          <label for="telegram_bot_token" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Bot Token</label>
+          <input type="password" id="telegram_bot_token" name="telegram_bot_token"
+                 placeholder="123456:ABC-DEF..."
+                 value="{{if .TelegramBotToken}}••••••••{{end}}"
+                 style="width: 100%;" autocomplete="off">
+        </div>
+        <div>
+          <label for="telegram_chat_id" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Chat ID</label>
+          <input type="text" id="telegram_chat_id" name="telegram_chat_id"
+                 placeholder="-100123456789"
+                 value="{{.TelegramChatID}}"
+                 style="width: 100%;">
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button type="submit"
+                  style="background: var(--accent); color: #000; border: none; border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
+            Save
+          </button>
+          {{if .TelegramBotToken}}
+          <button type="button" hx-post="/api/settings/telegram/test" hx-target="#telegram-result"
+                  style="background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">
+            Send Test Message
+          </button>
+          <a href="/alerts" style="font-size: 0.8rem; color: var(--accent); margin-left: 4px;">View alert history →</a>
+          {{end}}
+        </div>
+      </form>
+      <div id="telegram-result" style="margin-top: 8px; font-size: 0.85rem;"></div>
+    </section>
   </main>
 
   <footer>
