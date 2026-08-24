@@ -674,7 +674,7 @@ func (h *Handler) HandleTelegramSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprint(w, `<div class="alert alert-success">Telegram alerts saved. Use "Send Test Message" to verify.</div>`)
+	w.Header().Set("HX-Refresh", "true")
 }
 
 // HandleTelegramTest handles POST /api/settings/telegram/test — sends a test message.
