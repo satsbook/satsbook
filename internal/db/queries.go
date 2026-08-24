@@ -2387,7 +2387,7 @@ func (d *DB) HasAlertedRecently(ctx context.Context, alertType, externalID strin
 	var count int
 	err := d.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM alert_history WHERE type = ? AND external_id = ? AND sent_at >= ?`,
-		alertType, externalID, since,
+		alertType, externalID, since.UTC(),
 	).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("has alerted recently: %w", err)
@@ -2398,8 +2398,8 @@ func (d *DB) HasAlertedRecently(ctx context.Context, alertType, externalID strin
 // RecordAlert inserts a row into alert_history.
 func (d *DB) RecordAlert(ctx context.Context, alertType, externalID, message string) error {
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO alert_history (type, external_id, message) VALUES (?, ?, ?)`,
-		alertType, externalID, message,
+		`INSERT INTO alert_history (type, external_id, message, sent_at) VALUES (?, ?, ?, ?)`,
+		alertType, externalID, message, time.Now().UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("record alert: %w", err)
