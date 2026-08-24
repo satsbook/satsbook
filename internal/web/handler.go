@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/satsbook/satsbook/internal/apikey"
 	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/exchange"
 	"github.com/satsbook/satsbook/internal/license"
@@ -136,6 +137,9 @@ type Handler struct {
 	taxStore         TaxStore
 	backupDB         BackupDB
 	telegramSender   TelegramSender
+	apiKeyStore      APIKeyStore
+	apiv1Store       APIv1Store
+	rateLimiter      *apikey.RateLimiter
 	licenseChecker    *license.DefaultChecker
 	checkoutBaseURL   string // e.g. "https://api.satsbook.io"
 	onMonarchChange      func(MonarchSyncer)
@@ -160,6 +164,7 @@ func NewHandler(store DashboardStore, node NodeInfoProvider, price PriceProvider
 		logger:      logger,
 		renderer:    NewRenderer(),
 		startTime:   time.Now(),
+		rateLimiter: apikey.NewRateLimiter(),
 	}
 }
 
@@ -231,6 +236,16 @@ func (h *Handler) SetBackupDB(db BackupDB) {
 // SetTelegramSender sets the Telegram sender for alert test messages.
 func (h *Handler) SetTelegramSender(s TelegramSender) {
 	h.telegramSender = s
+}
+
+// SetAPIKeyStore sets the store for API key management.
+func (h *Handler) SetAPIKeyStore(s APIKeyStore) {
+	h.apiKeyStore = s
+}
+
+// SetAPIv1Store sets the store used by the v1 read API endpoints.
+func (h *Handler) SetAPIv1Store(s APIv1Store) {
+	h.apiv1Store = s
 }
 
 // SetLicenseChecker sets the license checker for runtime activation.

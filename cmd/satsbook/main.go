@@ -203,6 +203,10 @@ func main() {
 		}
 	}
 
+	// Wire up read API key store and v1 data store.
+	handler.SetAPIKeyStore(database)
+	handler.SetAPIv1Store(database)
+
 	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)
 	walletLogger := log.New(os.Stdout, "[wallet] ", log.LstdFlags)

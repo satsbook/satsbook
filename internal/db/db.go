@@ -470,6 +470,19 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_alert_history_type_ext ON alert_history (type, external_id);
 	`,
+
+	// Migration 18: API keys for the Power-tier read API.
+	`
+	CREATE TABLE IF NOT EXISTS api_keys (
+		id          INTEGER  PRIMARY KEY AUTOINCREMENT,
+		name        TEXT     NOT NULL,
+		key_hash    TEXT     NOT NULL UNIQUE,
+		key_prefix  TEXT     NOT NULL,
+		created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+		last_used_at DATETIME,
+		revoked     INTEGER  NOT NULL DEFAULT 0
+	);
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

@@ -79,6 +79,21 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/restore", handler.HandleRestore)
 	mux.HandleFunc("/api/settings/telegram", handler.HandleTelegramSave)
 	mux.HandleFunc("/api/settings/telegram/test", handler.HandleTelegramTest)
+
+	// API key management (Power gate via UI; auth enforced in apiV1Auth middleware)
+	powerGate := requireTier(license.TierPower, handler.renderer)
+	mux.HandleFunc("/api/settings/apikeys/list", powerGate(handler.HandleAPIKeyList))
+	mux.HandleFunc("/api/settings/apikeys", powerGate(handler.HandleAPIKeyCreate))
+	mux.HandleFunc("/api/settings/apikeys/revoke", powerGate(handler.HandleAPIKeyRevoke))
+
+	// v1 read API — authenticated via Bearer token, no session required
+	v1auth := handler.apiV1Auth
+	mux.HandleFunc("/api/v1/forwarding", v1auth(handler.HandleV1Forwarding))
+	mux.HandleFunc("/api/v1/channels", v1auth(handler.HandleV1Channels))
+	mux.HandleFunc("/api/v1/summary", v1auth(handler.HandleV1Summary))
+	mux.HandleFunc("/api/v1/transactions", v1auth(handler.HandleV1Transactions))
+	mux.HandleFunc("/api/v1/lots", v1auth(handler.HandleV1Lots))
+	mux.HandleFunc("/api/v1/score", v1auth(handler.HandleV1Score))
 	mux.Handle("/api/import/strike/clear", handler.HandleClearImport("strike"))
 	mux.Handle("/api/import/river/clear", handler.HandleClearImport("river"))
 	mux.Handle("/api/import/coinbase/clear", handler.HandleClearImport("coinbase"))

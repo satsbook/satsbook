@@ -2497,3 +2497,99 @@ func (d *DB) FeesMsatSince(ctx context.Context, since time.Time) (int64, error) 
 	}
 	return total, nil
 }
+
+// --- API keys ---
+
+// APIKey represents a stored API key record.
+type APIKey struct {
+	ID         int64
+	Name       string
+	KeyHash    string
+	KeyPrefix  string
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	Revoked    bool
+}
+
+// CreateAPIKey inserts a new API key record and returns the new row ID.
+func (d *DB) CreateAPIKey(ctx context.Context, name, keyHash, keyPrefix string) (int64, error) {
+	res, err := d.db.ExecContext(ctx,
+		`INSERT INTO api_keys (name, key_hash, key_prefix) VALUES (?, ?, ?)`,
+		name, keyHash, keyPrefix,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("create api key: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// ListAPIKeys returns all non-revoked API key records, newest first.
+func (d *DB) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT id, name, key_hash, key_prefix, created_at, last_used_at, revoked
+		 FROM api_keys WHERE revoked = 0 ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list api keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []APIKey
+	for rows.Next() {
+		var k APIKey
+		var revoked int
+		var lastUsed sql.NullTime
+		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.CreatedAt, &lastUsed, &revoked); err != nil {
+			return nil, fmt.Errorf("scan api key: %w", err)
+		}
+		k.Revoked = revoked == 1
+		if lastUsed.Valid {
+			k.LastUsedAt = &lastUsed.Time
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+// LookupAPIKey finds an active API key by its SHA-256 hash.
+func (d *DB) LookupAPIKey(ctx context.Context, keyHash string) (*APIKey, error) {
+	var k APIKey
+	var revoked int
+	var lastUsed sql.NullTime
+	err := d.db.QueryRowContext(ctx,
+		`SELECT id, name, key_hash, key_prefix, created_at, last_used_at, revoked
+		 FROM api_keys WHERE key_hash = ? AND revoked = 0`,
+		keyHash,
+	).Scan(&k.ID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.CreatedAt, &lastUsed, &revoked)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup api key: %w", err)
+	}
+	k.Revoked = revoked == 1
+	if lastUsed.Valid {
+		k.LastUsedAt = &lastUsed.Time
+	}
+	return &k, nil
+}
+
+// RevokeAPIKey marks an API key as revoked.
+func (d *DB) RevokeAPIKey(ctx context.Context, id int64) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE api_keys SET revoked = 1 WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("revoke api key: %w", err)
+	}
+	return nil
+}
+
+// TouchAPIKeyLastUsed updates the last_used_at timestamp for an API key.
+func (d *DB) TouchAPIKeyLastUsed(ctx context.Context, id int64) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE api_keys SET last_used_at = ? WHERE id = ?`, time.Now().UTC(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("touch api key last used: %w", err)
+	}
+	return nil
+}
