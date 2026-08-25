@@ -143,6 +143,7 @@ func NewRenderer() *Renderer {
 			"templates/partials/forwarding_table.html",
 			"templates/partials/channel_table.html",
 			"templates/partials/import_result.html",
+			"templates/partials/import_preview.html",
 			"templates/partials/clear_import_result.html",
 			"templates/partials/danger_zone.html",
 			"templates/partials/nav.html",

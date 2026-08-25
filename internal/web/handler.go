@@ -620,7 +620,21 @@ func satsToUSD(sats int64, btcPrice float64) float64 {
 	return float64(sats) / 100_000_000.0 * btcPrice
 }
 
+// ImportPreviewData holds the classified rows for the import preview step.
+type ImportPreviewData struct {
+	Acquisitions []exchange.StrikeRow
+	Disposals    []exchange.StrikeRow
+	Ignored      []exchange.StrikeRow
+	ParseErrors  []string
+	Source       string
+	FilesCount   int
+}
+
 // HandleStrikeImport serves POST /api/import/strike.
+//
+// Two-phase flow:
+//   - Phase 1 (no confirm field): parse CSV, classify rows, render preview — do NOT write to DB.
+//   - Phase 2 (confirm=yes): write to DB, render import_result partial.
 func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -634,29 +648,44 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files := r.MultipartForm.File["file"]
-	if len(files) == 0 {
-		h.writeError(w, http.StatusBadRequest, "no files uploaded")
-		return
-	}
+	confirm := r.FormValue("confirm")
 
 	var allRows []exchange.StrikeRow
 	var allErrors []string
-	for _, fh := range files {
-		file, err := fh.Open()
-		if err != nil {
-			allErrors = append(allErrors, fmt.Sprintf("%s: failed to open: %v", fh.Filename, err))
-			continue
+
+	if confirm == "yes" {
+		// Phase 2: read pre-classified rows from hidden form fields.
+		for _, line := range r.Form["row"] {
+			row, err := exchange.ParseStrikeRawLine(line)
+			if err != nil {
+				allErrors = append(allErrors, fmt.Sprintf("row: %v", err))
+				continue
+			}
+			allRows = append(allRows, row)
 		}
-		h.logger.Printf("strike import: received file %q (%d bytes)", fh.Filename, fh.Size)
-		result, err := exchange.ParseStrikeCSV(file)
-		file.Close()
-		if err != nil {
-			allErrors = append(allErrors, fmt.Sprintf("%s: %v", fh.Filename, err))
-			continue
+	} else {
+		// Phase 1: parse uploaded files.
+		files := r.MultipartForm.File["file"]
+		if len(files) == 0 {
+			h.writeError(w, http.StatusBadRequest, "no files uploaded")
+			return
 		}
-		allRows = append(allRows, result.Rows...)
-		allErrors = append(allErrors, result.Errors...)
+		for _, fh := range files {
+			file, err := fh.Open()
+			if err != nil {
+				allErrors = append(allErrors, fmt.Sprintf("%s: failed to open: %v", fh.Filename, err))
+				continue
+			}
+			h.logger.Printf("strike import: received file %q (%d bytes)", fh.Filename, fh.Size)
+			result, err := exchange.ParseStrikeCSV(file)
+			file.Close()
+			if err != nil {
+				allErrors = append(allErrors, fmt.Sprintf("%s: %v", fh.Filename, err))
+				continue
+			}
+			allRows = append(allRows, result.Rows...)
+			allErrors = append(allErrors, result.Errors...)
+		}
 	}
 
 	if len(allRows) == 0 {
@@ -668,7 +697,48 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	summary, err := h.importStore.ImportStrikeCSV(r.Context(), allRows)
+	// Phase 1: no confirm — classify and show preview, do NOT write to DB.
+	if confirm != "yes" {
+		preview := ImportPreviewData{
+			ParseErrors: allErrors,
+			Source:      "strike",
+			}
+		for _, row := range allRows {
+			switch row.Classify() {
+			case exchange.ClassAcquisition:
+				preview.Acquisitions = append(preview.Acquisitions, row)
+			case exchange.ClassDisposal:
+				preview.Disposals = append(preview.Disposals, row)
+			default:
+				preview.Ignored = append(preview.Ignored, row)
+			}
+		}
+
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := h.renderer.Render(w, "import_preview", preview); err != nil {
+				h.logger.Printf("failed to render import preview: %v", err)
+			}
+			return
+		}
+		// Non-HTMX: return JSON preview counts
+		h.writeJSON(w, http.StatusOK, map[string]int{
+			"acquisitions": len(preview.Acquisitions),
+			"disposals":    len(preview.Disposals),
+			"ignored":      len(preview.Ignored),
+		})
+		return
+	}
+
+	// Phase 2: confirm=yes — write classified (non-ignored) rows to DB.
+	var importRows []exchange.StrikeRow
+	for _, row := range allRows {
+		if !row.IsIgnored() {
+			importRows = append(importRows, row)
+		}
+	}
+
+	summary, err := h.importStore.ImportStrikeCSV(r.Context(), importRows)
 	if err != nil {
 		h.logger.Printf("strike import failed: %v", err)
 		h.writeError(w, http.StatusInternalServerError, "failed to import transactions")
@@ -682,7 +752,6 @@ func (h *Handler) HandleStrikeImport(w http.ResponseWriter, r *http.Request) {
 		NewPurchases:   summary.NewPurchases,
 		Updated:        summary.Updated,
 		Duplicates:     summary.Duplicates,
-		FilesProcessed: len(files),
 		ParseErrors:    allErrors,
 	}
 
@@ -769,7 +838,6 @@ func (h *Handler) HandleRiverImport(w http.ResponseWriter, r *http.Request) {
 		NewPurchases:   summary.NewPurchases,
 		Updated:        summary.Updated,
 		Duplicates:     summary.Duplicates,
-		FilesProcessed: len(files),
 		ParseErrors:    allErrors,
 	}
 

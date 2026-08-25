@@ -54,6 +54,31 @@ func (r StrikeRow) IsSale() bool {
 	return strings.EqualFold(r.Type, "sale")
 }
 
+// IsIgnored returns true if the row's transaction type is not recognized.
+func (r StrikeRow) IsIgnored() bool {
+	return !r.IsPurchase() && !r.IsReceive() && !r.IsSale()
+}
+
+// StrikeClassification represents the classification of a Strike CSV row.
+type StrikeClassification string
+
+const (
+	ClassAcquisition StrikeClassification = "acquisition"
+	ClassDisposal    StrikeClassification = "disposal"
+	ClassIgnored     StrikeClassification = "ignored"
+)
+
+// Classify returns the classification for the row.
+func (r StrikeRow) Classify() StrikeClassification {
+	if r.IsPurchase() || r.IsReceive() {
+		return ClassAcquisition
+	}
+	if r.IsSale() {
+		return ClassDisposal
+	}
+	return ClassIgnored
+}
+
 var expectedStrikeHeader = []string{
 	"Reference", "Date & Time (UTC)", "Transaction Type",
 	"Amount USD", "Fee USD", "Amount BTC", "Fee BTC",
@@ -247,4 +272,23 @@ func parseOptionalFloat(s string) (float64, error) {
 		return 0, nil
 	}
 	return strconv.ParseFloat(s, 64)
+}
+
+// ParseStrikeRawLine parses a single raw CSV data line (no header) into a StrikeRow.
+// The line must be a comma-joined record as produced by RawLine on a parsed row.
+func ParseStrikeRawLine(line string) (StrikeRow, error) {
+	r := csv.NewReader(strings.NewReader(line))
+	record, err := r.Read()
+	if err != nil {
+		return StrikeRow{}, fmt.Errorf("parse raw line: %w", err)
+	}
+	if len(record) < strikeMinColumns {
+		return StrikeRow{}, fmt.Errorf("parse raw line: expected %d columns, got %d", strikeMinColumns, len(record))
+	}
+	row, err := parseStrikeRow(record)
+	if err != nil {
+		return StrikeRow{}, err
+	}
+	row.RawLine = line
+	return row, nil
 }
