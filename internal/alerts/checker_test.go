@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/satsbook/satsbook/internal/db"
 )
 
 // mockStore implements Store for testing.
@@ -298,5 +300,177 @@ func TestTruncatePubKey(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("truncatePubKey(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// --- DBStore integration tests (issue #31) ---
+// These tests exercise the DBStore adapter to verify it correctly bridges the
+// alerts.Store interface to the underlying database methods.
+
+func newTestAlertsDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("failed to create test database: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
+
+// TestDBStore_NewDBStore verifies the constructor returns a non-nil store.
+func TestDBStore_NewDBStore(t *testing.T) {
+	d := newTestAlertsDB(t)
+	s := NewDBStore(d)
+	if s == nil {
+		t.Fatal("expected non-nil DBStore")
+	}
+}
+
+// TestDBStore_HasAlertedRecently_And_RecordAlert verifies the core dedup loop:
+// HasAlertedRecently returns false before an alert is recorded, and true after.
+// This is the mechanism that ensures "fires once per channel" (issue #31).
+func TestDBStore_HasAlertedRecently_And_RecordAlert(t *testing.T) {
+	ctx := context.Background()
+	d := newTestAlertsDB(t)
+	s := NewDBStore(d)
+
+	// Not alerted yet
+	alerted, err := s.HasAlertedRecently(ctx, string(TypeChannelClose), "chan-123", time.Time{})
+	if err != nil {
+		t.Fatalf("HasAlertedRecently: %v", err)
+	}
+	if alerted {
+		t.Error("expected false before any alert is recorded")
+	}
+
+	// Record the alert
+	if err := s.RecordAlert(ctx, string(TypeChannelClose), "chan-123", "test msg"); err != nil {
+		t.Fatalf("RecordAlert: %v", err)
+	}
+
+	// Now HasAlertedRecently must return true — dedup prevents second send
+	alerted, err = s.HasAlertedRecently(ctx, string(TypeChannelClose), "chan-123", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("HasAlertedRecently after record: %v", err)
+	}
+	if !alerted {
+		t.Error("expected true after alert was recorded — dedup should block a second send")
+	}
+}
+
+// TestDBStore_HasAlertedRecently_DifferentType verifies that alerts of different
+// types do not interfere with each other's dedup state.
+func TestDBStore_HasAlertedRecently_DifferentType(t *testing.T) {
+	ctx := context.Background()
+	d := newTestAlertsDB(t)
+	s := NewDBStore(d)
+
+	if err := s.RecordAlert(ctx, string(TypeChannelClose), "chan-1", "closed"); err != nil {
+		t.Fatalf("RecordAlert: %v", err)
+	}
+
+	// LowBalance for same external ID must NOT be blocked by channel_close dedup
+	alerted, err := s.HasAlertedRecently(ctx, string(TypeLowBalance), "chan-1", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("HasAlertedRecently different type: %v", err)
+	}
+	if alerted {
+		t.Error("low_balance dedup must not be affected by channel_close record")
+	}
+}
+
+// TestDBStore_ChannelsWithClosingTx verifies the adapter correctly returns
+// channels that have a closing tx hash set.
+func TestDBStore_ChannelsWithClosingTx(t *testing.T) {
+	ctx := context.Background()
+	d := newTestAlertsDB(t)
+	s := NewDBStore(d)
+
+	// Seed channels via the db SyncTx interface
+	err := d.RunSync(ctx, func(tx db.SyncTx) error {
+		return tx.UpsertChannels([]db.Channel{
+			{ChanID: 1, RemotePubKey: "pk1", ChannelPoint: "tx:0", Capacity: 1_000_000, LocalBalance: 500_000, Active: true},
+			{ChanID: 2, RemotePubKey: "pk2", ChannelPoint: "tx:1", Capacity: 500_000, LocalBalance: 0, Active: false, ClosingTxHash: "deadbeef"},
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed channels: %v", err)
+	}
+
+	channels, err := s.ChannelsWithClosingTx(ctx)
+	if err != nil {
+		t.Fatalf("ChannelsWithClosingTx: %v", err)
+	}
+	if len(channels) != 1 {
+		t.Fatalf("expected 1 closing channel, got %d", len(channels))
+	}
+	if channels[0].ChanID != 2 {
+		t.Errorf("expected chan ID 2, got %d", channels[0].ChanID)
+	}
+}
+
+// TestDBStore_ChannelsBelowBalancePct verifies the adapter correctly applies
+// the balance threshold (issue #31: "Low balance — any channel local balance <10% capacity").
+func TestDBStore_ChannelsBelowBalancePct(t *testing.T) {
+	ctx := context.Background()
+	d := newTestAlertsDB(t)
+	s := NewDBStore(d)
+
+	err := d.RunSync(ctx, func(tx db.SyncTx) error {
+		return tx.UpsertChannels([]db.Channel{
+			// 5% — below 10% threshold
+			{ChanID: 10, RemotePubKey: "pk10", ChannelPoint: "tx:10", Capacity: 1_000_000, LocalBalance: 50_000, Active: true},
+			// 50% — above threshold
+			{ChanID: 11, RemotePubKey: "pk11", ChannelPoint: "tx:11", Capacity: 1_000_000, LocalBalance: 500_000, Active: true},
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed channels: %v", err)
+	}
+
+	channels, err := s.ChannelsBelowBalancePct(ctx, 0.10)
+	if err != nil {
+		t.Fatalf("ChannelsBelowBalancePct: %v", err)
+	}
+	if len(channels) != 1 {
+		t.Fatalf("expected 1 low-balance channel, got %d", len(channels))
+	}
+	if channels[0].ChanID != 10 {
+		t.Errorf("expected chan 10, got %d", channels[0].ChanID)
+	}
+}
+
+// TestDBStore_FeesMsatSince verifies the adapter correctly sums routing fees
+// since the given time. Used by fee spike detection (issue #31).
+func TestDBStore_FeesMsatSince(t *testing.T) {
+	ctx := context.Background()
+	d := newTestAlertsDB(t)
+	s := NewDBStore(d)
+
+	now := time.Now().UTC()
+	err := d.RunSync(ctx, func(tx db.SyncTx) error {
+		return tx.InsertForwardingEvents([]db.ForwardingEvent{
+			{Timestamp: now.Add(-1 * time.Hour), AmtInMsat: 10_000, AmtOutMsat: 9_000, FeeMsat: 1_000},
+			{Timestamp: now.Add(-30 * time.Hour), AmtInMsat: 20_000, AmtOutMsat: 18_000, FeeMsat: 2_000},
+		})
+	})
+	if err != nil {
+		t.Fatalf("seed forwarding events: %v", err)
+	}
+
+	total, err := s.FeesMsatSince(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("FeesMsatSince (all): %v", err)
+	}
+	if total != 3_000 {
+		t.Errorf("expected 3000 total msat, got %d", total)
+	}
+
+	recent, err := s.FeesMsatSince(ctx, now.Add(-5*time.Hour))
+	if err != nil {
+		t.Fatalf("FeesMsatSince (recent): %v", err)
+	}
+	if recent != 1_000 {
+		t.Errorf("expected 1000 recent msat, got %d", recent)
 	}
 }
