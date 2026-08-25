@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -203,4 +204,158 @@ func (c *captureFilterStore) SetTransactionNote(ctx context.Context, sourceID, n
 }
 func (c *captureFilterStore) DistinctTransactionValues(ctx context.Context) ([]string, []string, error) {
 	return c.inner.DistinctTransactionValues(ctx)
+}
+
+// --- HandleTransactionNoteEdit tests (Issue #71: Transaction history detail views) ---
+// The spec says: users can inline-edit notes on any transaction row.
+
+func TestHandleTransactionNoteEdit_RendersEditForm(t *testing.T) {
+	// GET with source_id and note params — renders edit inline form.
+	h := newHandlerWithTxStore(&db.UnifiedTransactionPage{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/note/edit?source_id=tx-abc&note=my+note", nil)
+	w := httptest.NewRecorder()
+	h.HandleTransactionNoteEdit(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Error("expected HTML content type")
+	}
+	// Form should contain the source_id and current note.
+	body := w.Body.String()
+	if !strings.Contains(body, "tx-abc") {
+		t.Errorf("expected source_id in edit form, got: %s", body)
+	}
+}
+
+func TestHandleTransactionNoteEdit_EmptyNote_RendersEmptyInput(t *testing.T) {
+	h := newHandlerWithTxStore(&db.UnifiedTransactionPage{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/note/edit?source_id=tx-xyz&note=", nil)
+	w := httptest.NewRecorder()
+	h.HandleTransactionNoteEdit(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "tx-xyz") {
+		t.Errorf("expected source_id in form, got: %s", body)
+	}
+}
+
+// --- HandleTransactionNoteSave tests (Issue #71: Transaction history detail views) ---
+// The spec says: POST saves a note and returns the display partial.
+
+func newHandlerWithNoteStore(setNoteErr error) *Handler {
+	store := &mockStore{
+		latestWalletFn:  func(_ context.Context) (*db.WalletBalanceSnapshot, error) { return nil, nil },
+		feeSummaryFn:    func(_ context.Context, _ time.Time) (int64, int64, error) { return 0, 0, nil },
+		activeChannelFn: func(_ context.Context) (int, error) { return 0, nil },
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	txStore := &noteTransactionStore{setNoteErr: setNoteErr}
+	h.SetTransactionStore(txStore)
+	return h
+}
+
+// noteTransactionStore implements TransactionStore with configurable SetTransactionNote error.
+type noteTransactionStore struct {
+	setNoteErr error
+	lastID     string
+	lastNote   string
+}
+
+func (n *noteTransactionStore) ListUnifiedTransactions(_ context.Context, _ db.TransactionFilter) (*db.UnifiedTransactionPage, error) {
+	return &db.UnifiedTransactionPage{}, nil
+}
+
+func (n *noteTransactionStore) SetTransactionNote(_ context.Context, sourceID, note string) error {
+	n.lastID = sourceID
+	n.lastNote = note
+	return n.setNoteErr
+}
+
+func (n *noteTransactionStore) DistinctTransactionValues(_ context.Context) ([]string, []string, error) {
+	return nil, nil, nil
+}
+
+func TestHandleTransactionNoteSave_SavesAndRendersDisplay(t *testing.T) {
+	h := newHandlerWithNoteStore(nil)
+
+	body := strings.NewReader("source_id=tx-123&note=My+cool+note")
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/note", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransactionNoteSave(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Error("expected HTML content type")
+	}
+	// Should render the display partial containing the note text.
+	if !strings.Contains(w.Body.String(), "My cool note") {
+		t.Errorf("expected note in display partial, got: %s", w.Body.String())
+	}
+}
+
+func TestHandleTransactionNoteSave_WrongMethod(t *testing.T) {
+	h := newHandlerWithNoteStore(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/transactions/note", nil)
+	w := httptest.NewRecorder()
+	h.HandleTransactionNoteSave(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleTransactionNoteSave_NoTxStore_Returns500(t *testing.T) {
+	store := &mockStore{
+		latestWalletFn:  func(_ context.Context) (*db.WalletBalanceSnapshot, error) { return nil, nil },
+		feeSummaryFn:    func(_ context.Context, _ time.Time) (int64, int64, error) { return 0, 0, nil },
+		activeChannelFn: func(_ context.Context) (int, error) { return 0, nil },
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+	// txStore is nil
+
+	body := strings.NewReader("source_id=tx-1&note=hello")
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/note", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransactionNoteSave(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 without tx store, got %d", w.Code)
+	}
+}
+
+func TestHandleTransactionNoteSave_MissingSourceID_Returns400(t *testing.T) {
+	h := newHandlerWithNoteStore(nil)
+
+	body := strings.NewReader("note=hello") // no source_id
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/note", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransactionNoteSave(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing source_id, got %d", w.Code)
+	}
+}
+
+func TestHandleTransactionNoteSave_StoreError_Returns500(t *testing.T) {
+	h := newHandlerWithNoteStore(errors.New("db write failed"))
+
+	body := strings.NewReader("source_id=tx-1&note=hello")
+	req := httptest.NewRequest(http.MethodPost, "/api/transactions/note", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTransactionNoteSave(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 for store error, got %d", w.Code)
+	}
 }
