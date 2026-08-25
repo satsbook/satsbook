@@ -319,3 +319,4 @@ func TestRiverCostBasisMath(t *testing.T) {
 		t.Errorf("total purchase sats = %d, want 12629", totalPurchaseSat)
 	}
 }
+
