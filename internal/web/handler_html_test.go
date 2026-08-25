@@ -387,6 +387,111 @@ func TestHandleForwardingPartial_Pagination(t *testing.T) {
 
 var errTest = errors.New("test error")
 
+// --- HandlePortfolioChartPartial tests ---
+
+func TestHandlePortfolioChartPartial_Renders(t *testing.T) {
+	store := &mockStore{
+		portfolioSnapshotsFn: func(_ context.Context, _ int) ([]db.PortfolioSnapshot, error) {
+			return []db.PortfolioSnapshot{
+				{CapturedAt: time.Now(), TotalSats: 500000, BTCPriceUSD: 60000},
+			}, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/partials/portfolio-chart?days=30", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioChartPartial(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Error("expected HTML content type")
+	}
+}
+
+func TestHandlePortfolioChartPartial_ZeroDaysDefaultsToAll(t *testing.T) {
+	// days=0 (or negative) should default to "all time" (3650 days) per the spec.
+	var capturedDays int
+	store := &mockStore{
+		portfolioSnapshotsFn: func(_ context.Context, days int) ([]db.PortfolioSnapshot, error) {
+			capturedDays = days
+			return nil, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/partials/portfolio-chart?days=0", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioChartPartial(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if capturedDays != 3650 {
+		t.Errorf("expected days=3650 for 'all time', got %d", capturedDays)
+	}
+}
+
+func TestHandlePortfolioChartPartial_EmptySnapshots(t *testing.T) {
+	store := &mockStore{
+		portfolioSnapshotsFn: func(_ context.Context, _ int) ([]db.PortfolioSnapshot, error) {
+			return nil, nil
+		},
+	}
+	h := newTestHandler(store, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodGet, "/partials/portfolio-chart", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioChartPartial(w, req)
+
+	// Should render without error even with no data
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for empty snapshots, got %d", w.Code)
+	}
+}
+
+// --- HandleTaxGuidePage tests ---
+
+func TestHandleTaxGuidePage_GET_Renders(t *testing.T) {
+	store := &mockStore{
+		feeSummaryFn:    func(_ context.Context, _ time.Time) (int64, int64, error) { return 0, 0, nil },
+		activeChannelFn: func(_ context.Context) (int, error) { return 0, nil },
+		latestWalletFn:  func(_ context.Context) (*db.WalletBalanceSnapshot, error) { return nil, nil },
+	}
+	h := newTestHandler(store, nil, &mockPrice{price: 65000})
+
+	req := httptest.NewRequest(http.MethodGet, "/tax-guide", nil)
+	w := httptest.NewRecorder()
+	h.HandleTaxGuidePage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Error("expected HTML content type")
+	}
+}
+
+func TestHandleTaxGuidePage_PriceUnavailable_StillRenders(t *testing.T) {
+	// Price errors should not prevent the page from rendering.
+	store := &mockStore{
+		feeSummaryFn:    func(_ context.Context, _ time.Time) (int64, int64, error) { return 0, 0, nil },
+		activeChannelFn: func(_ context.Context) (int, error) { return 0, nil },
+		latestWalletFn:  func(_ context.Context) (*db.WalletBalanceSnapshot, error) { return nil, nil },
+	}
+	h := newTestHandler(store, nil, &mockPrice{err: errTest})
+
+	req := httptest.NewRequest(http.MethodGet, "/tax-guide", nil)
+	w := httptest.NewRecorder()
+	h.HandleTaxGuidePage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even when price unavailable, got %d", w.Code)
+	}
+}
+
 // --- HandlePLPage tests ---
 
 func TestHandlePLPage_Success(t *testing.T) {

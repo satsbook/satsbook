@@ -188,3 +188,16 @@ func TestScanXpub_ElectrumError(t *testing.T) {
 		t.Fatal("expected error when balance provider fails")
 	}
 }
+
+func TestNewScanner_WithLogger(t *testing.T) {
+	// WithLogger should be accepted without error; passing nil is valid
+	// (scanner.go falls back to log.Default() for nil in the option).
+	mock := &mockBalanceProvider{balances: map[string]int64{}}
+	scanner := NewScanner(mock, WithGapLimit(3), WithLogger(nil))
+	if scanner == nil {
+		t.Fatal("expected non-nil scanner")
+	}
+	if scanner.gapLimit != 3 {
+		t.Errorf("gapLimit = %d, want 3", scanner.gapLimit)
+	}
+}

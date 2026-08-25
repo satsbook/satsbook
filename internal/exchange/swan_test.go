@@ -178,3 +178,17 @@ func TestSwanRow_IsWithdrawal(t *testing.T) {
 		t.Error("withdrawal should be IsWithdrawal")
 	}
 }
+
+func TestSwanRow_IsDeposit(t *testing.T) {
+	// Per issue #67: deposits are BTC movements into Swan custody (non-purchases).
+	// They should not be counted as cost basis events.
+	if !(SwanRow{Type: "deposit"}).IsDeposit() {
+		t.Error("deposit type should return true for IsDeposit()")
+	}
+	if (SwanRow{Type: "purchase"}).IsDeposit() {
+		t.Error("purchase type should not be IsDeposit()")
+	}
+	if (SwanRow{Type: "withdrawal"}).IsDeposit() {
+		t.Error("withdrawal type should not be IsDeposit()")
+	}
+}
