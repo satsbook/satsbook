@@ -410,3 +410,219 @@ func TestSetSettingsStore(t *testing.T) {
 		t.Error("expected settings store to be set correctly")
 	}
 }
+
+// --- HandleSettingsPage tests (#settings) ---
+
+func TestHandleSettingsPage_GET_Renders(t *testing.T) {
+	h := newSettingsHandler(newMockSettingsStore())
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	w := httptest.NewRecorder()
+	h.HandleSettingsPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Error("expected HTML content type")
+	}
+}
+
+func TestHandleSettingsPage_NoSettingsStore_Renders(t *testing.T) {
+	// HandleSettingsPage is nil-safe for settingsStore — renders with safe defaults.
+	h := newSettingsHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	w := httptest.NewRecorder()
+	h.HandleSettingsPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even without settings store, got %d", w.Code)
+	}
+}
+
+func TestHandleSettingsPage_StrikeKeyMasked(t *testing.T) {
+	ss := newMockSettingsStore()
+	ss.data["strike_api_key"] = "sk_live_testkey1234"
+	h := newSettingsHandler(ss)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	w := httptest.NewRecorder()
+	h.HandleSettingsPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	// Last 4 chars of key ("1234") should appear masked
+	if !strings.Contains(w.Body.String(), "1234") {
+		t.Error("expected masked Strike key (last 4 chars) in page body")
+	}
+}
+
+// --- HandlePlansPage tests ---
+
+func TestHandlePlansPage_GET_Renders(t *testing.T) {
+	h := newSettingsHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/settings/plans", nil)
+	w := httptest.NewRecorder()
+	h.HandlePlansPage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Error("expected HTML content type")
+	}
+}
+
+// --- HandleTelegramSave tests ---
+
+func TestHandleTelegramSave_MethodNotAllowed(t *testing.T) {
+	h := newSettingsHandler(newMockSettingsStore())
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/telegram", nil)
+	w := httptest.NewRecorder()
+	h.HandleTelegramSave(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleTelegramSave_NoStore_Returns500(t *testing.T) {
+	h := newSettingsHandler(nil)
+	form := url.Values{"telegram_bot_token": {"tok"}, "telegram_chat_id": {"123"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/telegram", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTelegramSave(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestHandleTelegramSave_EmptyFields_ReturnsErrorFragment(t *testing.T) {
+	h := newSettingsHandler(newMockSettingsStore())
+	form := url.Values{"telegram_bot_token": {""}, "telegram_chat_id": {""}}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/telegram", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTelegramSave(w, req)
+
+	// HTMX handler: returns 200 with error HTML fragment (not 4xx)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with error fragment, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "required") {
+		t.Errorf("expected 'required' in body, got: %s", w.Body.String())
+	}
+}
+
+func TestHandleTelegramSave_ValidInputs_Saves(t *testing.T) {
+	ss := newMockSettingsStore()
+	h := newSettingsHandler(ss)
+	form := url.Values{
+		"telegram_bot_token": {"123:ABCDEFbot"},
+		"telegram_chat_id":   {"-100123456"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/telegram", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.HandleTelegramSave(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ss.data["telegram_bot_token"] != "123:ABCDEFbot" {
+		t.Errorf("token not saved: %q", ss.data["telegram_bot_token"])
+	}
+	if ss.data["telegram_chat_id"] != "-100123456" {
+		t.Errorf("chat ID not saved: %q", ss.data["telegram_chat_id"])
+	}
+	// HX-Refresh instructs HTMX to reload the page
+	if w.Header().Get("HX-Refresh") != "true" {
+		t.Error("expected HX-Refresh: true header")
+	}
+}
+
+// --- HandleTelegramTest tests ---
+
+func TestHandleTelegramTest_MethodNotAllowed(t *testing.T) {
+	h := newSettingsHandler(newMockSettingsStore())
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/telegram/test", nil)
+	w := httptest.NewRecorder()
+	h.HandleTelegramTest(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandleTelegramTest_NoStore_Returns500(t *testing.T) {
+	h := newSettingsHandler(nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/telegram/test", nil)
+	w := httptest.NewRecorder()
+	h.HandleTelegramTest(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestHandleTelegramTest_NotConfigured_ReturnsErrorFragment(t *testing.T) {
+	// No bot token stored — should return error fragment
+	h := newSettingsHandler(newMockSettingsStore())
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/telegram/test", nil)
+	w := httptest.NewRecorder()
+	h.HandleTelegramTest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with error fragment, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "not configured") {
+		t.Errorf("expected 'not configured' in body, got: %s", w.Body.String())
+	}
+}
+
+func TestHandleTelegramTest_NoSender_ReturnsRestartFragment(t *testing.T) {
+	ss := newMockSettingsStore()
+	ss.data["telegram_bot_token"] = "123:bot"
+	ss.data["telegram_chat_id"] = "-100123"
+	h := newSettingsHandler(ss)
+	// telegramSender is nil by default — simulates not-yet-active client
+
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/telegram/test", nil)
+	w := httptest.NewRecorder()
+	h.HandleTelegramTest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 with error fragment, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Restart") {
+		t.Errorf("expected 'Restart' in body, got: %s", w.Body.String())
+	}
+}
+
+// --- maskToken unit tests ---
+
+func TestMaskToken_Short(t *testing.T) {
+	result := maskToken("ab")
+	if result != "****" {
+		t.Errorf("maskToken(short) = %q, want ****", result)
+	}
+}
+
+func TestMaskToken_ExactlyFour(t *testing.T) {
+	result := maskToken("abcd")
+	if result != "****" {
+		t.Errorf("maskToken(exactly 4) = %q, want ****", result)
+	}
+}
+
+func TestMaskToken_Long(t *testing.T) {
+	result := maskToken("sk_live_abcdefgh1234")
+	if !strings.HasSuffix(result, "1234") {
+		t.Errorf("maskToken(long) = %q, expected suffix '1234'", result)
+	}
+	if !strings.HasPrefix(result, "********") {
+		t.Errorf("maskToken(long) = %q, expected prefix '********'", result)
+	}
+}

@@ -1389,3 +1389,44 @@ func TestHandleExportTransactions_StoreError(t *testing.T) {
 		t.Errorf("expected 500, got %d", w.Code)
 	}
 }
+
+// --- HandlePortfolioBackfill tests (Issue #66: portfolio snapshot history) ---
+
+func TestHandlePortfolioBackfill_Success(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/portfolio/backfill", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioBackfill(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandlePortfolioBackfill_WrongMethod(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+	req := httptest.NewRequest(http.MethodGet, "/api/portfolio/backfill", nil)
+	w := httptest.NewRecorder()
+	h.HandlePortfolioBackfill(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+func TestHandlePortfolioBackfill_HTMXResponse(t *testing.T) {
+	h := newTestHandler(&mockStore{}, nil, &mockPrice{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/portfolio/backfill", nil)
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.HandlePortfolioBackfill(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "text/html") {
+		t.Errorf("expected HTML response for HTMX request, got %q", ct)
+	}
+}
