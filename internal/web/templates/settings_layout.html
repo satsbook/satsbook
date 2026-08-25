@@ -107,6 +107,7 @@
         <div class="settings-sidebar-group">
           <div class="settings-sidebar-group-label">System</div>
           <a href="#database" class="settings-sidebar-link">Database</a>
+          <a href="#developer-api" class="settings-sidebar-link">Developer API</a>
         </div>
       </nav>
 
@@ -454,6 +455,24 @@
               <div id="restore-result" style="margin-top: 10px;"></div>
             </div>
           </details>
+        </section>
+
+        <!-- Developer API Section -->
+        <section id="developer-api" class="card" style="margin-top: 16px;">
+          <h3>Developer API <span class="tier-badge tier-power">power</span></h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px;">
+            Create API keys to access your Satsbook data from scripts, spreadsheets, or custom dashboards.
+            Authenticate with <code style="font-size: 0.75rem;">Authorization: Bearer sbk_…</code>.
+            Rate limit: 100 requests/minute per key.
+          </p>
+          {{if tierAtLeast .Tier "power"}}
+          <div id="apikey-section"
+               hx-get="/api/settings/apikeys/list" hx-trigger="load" hx-swap="outerHTML">
+            <p style="font-size:0.85rem;color:var(--text-muted);">Loading…</p>
+          </div>
+          {{else}}
+            {{template "upgrade_required" (dict "RequiredTier" "power" "CurrentTier" .Tier "FeatureMessage" "Generate API keys and pull your node data into any tool with a Power license.")}}
+          {{end}}
         </section>
 
       </div><!-- /.settings-content -->
