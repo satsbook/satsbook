@@ -6,6 +6,61 @@
   <title>Satsbook — Settings</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js"></script>
+  <style>
+    .settings-page {
+      display: flex;
+      gap: 32px;
+      align-items: flex-start;
+    }
+    .settings-sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 24px;
+    }
+    .settings-sidebar-group {
+      margin-bottom: 20px;
+    }
+    .settings-sidebar-group-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding: 0 8px;
+      margin-bottom: 4px;
+    }
+    .settings-sidebar-link {
+      display: block;
+      padding: 6px 8px;
+      border-radius: 5px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .settings-sidebar-link:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+    .settings-sidebar-link.active {
+      background: var(--bg-hover);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .settings-content {
+      flex: 1;
+      min-width: 0;
+    }
+    @media (max-width: 768px) {
+      .settings-sidebar {
+        display: none;
+      }
+      .settings-page {
+        display: block;
+      }
+    }
+  </style>
 </head>
 <body hx-indicator="#htmx-progress">
   <div id="htmx-progress" class="htmx-indicator"></div>
@@ -27,348 +82,382 @@
   <main class="container" style="padding: 24px 16px;">
     <h2>Settings</h2>
 
-    <!-- License Section -->
-    <section class="card" style="margin-top: 16px;">
-      <h3>License</h3>
-      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
-        Unlock Pro and Power features like tax export, Monarch Money sync, and more.
-      </p>
+    <div class="settings-page">
 
-      {{if .AutoActivateKey}}
-      <div class="alert alert-success" style="margin-bottom: 12px;">
-        License activated! Your tier: <strong>{{.Tier}}</strong>
-      </div>
-      {{end}}
-
-      <div style="margin-bottom: 12px;">
-        <span style="font-size: 0.85rem; color: #aaa;">Current Tier:</span>
-        <span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>
-      </div>
-
-      {{if .LicenseKey}}
-      <div style="margin-bottom: 12px;">
-        <span style="font-size: 0.85rem; color: #aaa;">License Key:</span>
-        <code style="margin-left: 4px;">{{.LicenseKey}}</code>
-      </div>
-      <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-        <button hx-post="/api/settings/license/verify" hx-target="#license-result" class="btn btn-primary" style="font-size: 0.85rem;">
-          Verify License
-        </button>
-      </div>
-      {{end}}
-
-      {{if not (tierAtLeast .Tier "pro")}}
-      <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
-        <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
-          <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Pro</h4>
-          <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
-            <li>FIFO / LIFO cost basis engine</li>
-            <li>Form 8949 CSV export</li>
-            <li>Tax summary dashboard</li>
-          </ul>
-          <a href="/api/subscribe?tier=pro"
-             style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
-            Subscribe to Pro
-          </a>
+      <!-- Sidebar navigation -->
+      <nav class="settings-sidebar" aria-label="Settings sections">
+        <div class="settings-sidebar-group">
+          <div class="settings-sidebar-group-label">Account</div>
+          <a href="#license" class="settings-sidebar-link">License</a>
         </div>
-        <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
-          <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Power</h4>
-          <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
-            <li>Everything in Pro</li>
-            <li>Monarch Money net worth sync</li>
-            <li>Transaction export to Monarch</li>
-          </ul>
-          <a href="/api/subscribe?tier=power"
-             style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
-            Subscribe to Power
-          </a>
+        <div class="settings-sidebar-group">
+          <div class="settings-sidebar-group-label">Data Sources</div>
+          <a href="#strike-api" class="settings-sidebar-link">Strike</a>
+          <a href="#coinbase-api" class="settings-sidebar-link">Coinbase</a>
         </div>
-      </div>
-      {{else if not (tierAtLeast .Tier "power")}}
-      <div style="margin-bottom: 12px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; max-width: 300px;">
-        <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Upgrade to Power</h4>
-        <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
-          <li>Monarch Money net worth sync</li>
-          <li>Transaction export to Monarch</li>
-        </ul>
-        <a href="/api/subscribe?tier=power"
-           style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
-          Upgrade to Power
-        </a>
-      </div>
-      {{end}}
-
-      <p style="margin: 4px 0 8px; font-size: 0.8rem;">
-        <a href="/settings/plans" style="color: var(--accent);">Compare all plans →</a>
-      </p>
-
-      <details style="margin-top: 8px;">
-        <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Enter license key manually</summary>
-        <form hx-post="/api/settings/license" hx-target="#license-result" style="display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; max-width: 500px;">
-          <input type="text" name="license_key" placeholder="sk_..." style="flex: 1; font-size: 0.85rem;" required>
-          <button type="submit" class="btn btn-primary" style="font-size: 0.85rem;">Activate</button>
-        </form>
-      </details>
-
-      <div id="license-result" style="margin-top: 12px;"></div>
-    </section>
-
-    <section class="card" style="margin-top: 16px;">
-      <h3>Strike API Sync</h3>
-      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
-        Connect your Strike API key to automatically sync Lightning invoice receives and your live BTC balance.
-        <strong>Note:</strong> The Strike API only exposes invoices you created (Lightning receives).
-        BTC purchases, DCA orders, sales, and withdrawals are not available via the API — continue using CSV import for those.
-      </p>
-
-      {{if .StrikeAPIConnected}}
-        <div style="margin-bottom: 12px;">
-          <span style="color: #4caf50;">Connected</span> &middot;
-          <code>{{.StrikeAPIKey}}</code>
+        <div class="settings-sidebar-group">
+          <div class="settings-sidebar-group-label">Integrations</div>
+          <a href="#monarch-money" class="settings-sidebar-link">Monarch Money</a>
+          <a href="#monarch-export" class="settings-sidebar-link">Tx Export</a>
         </div>
-        <div id="strike-result">
-          <button hx-post="/api/settings/strike/disconnect" hx-target="#strike-result" hx-confirm="Remove Strike API key?" class="btn btn-danger">
-            Disconnect
-          </button>
+        <div class="settings-sidebar-group">
+          <div class="settings-sidebar-group-label">Notifications</div>
+          <a href="#telegram" class="settings-sidebar-link">Telegram Alerts</a>
         </div>
-      {{else}}
-        <form hx-post="/api/settings/strike/key" hx-target="#strike-result" style="display: flex; gap: 8px; align-items: flex-end; max-width: 500px;">
-          <div style="flex: 1;">
-            <label for="strike_api_key" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Strike API Key</label>
-            <input type="password" id="strike_api_key" name="strike_api_key" placeholder="sk_..." style="width: 100%;" required autocomplete="off">
-          </div>
-          <button type="submit" class="btn btn-primary">Connect</button>
-        </form>
-        <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
-          Generate a read-only API key at <a href="https://dashboard.strike.me" target="_blank" rel="noopener noreferrer" style="color: #4fc3f7;">dashboard.strike.me</a> → API → Create Key.
-          The <code>partner.invoice.read</code> scope is required.
-        </p>
-        <div id="strike-result" style="margin-top: 8px;"></div>
-      {{end}}
-    </section>
-
-    <section class="card" style="margin-top: 16px;">
-      <h3>Coinbase API Sync</h3>
-      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
-        Connect your Coinbase CDP API key to automatically sync your full BTC transaction history
-        (buys, sells, sends, receives, and crypto-to-crypto trades) and live balance.
-      </p>
-
-      {{if .CoinbaseAPIConnected}}
-        <div style="margin-bottom: 12px;">
-          <span style="color: #4caf50;">Connected</span> &middot;
-          <code>{{.CoinbaseAPIKeyID}}</code>
+        <div class="settings-sidebar-group">
+          <div class="settings-sidebar-group-label">System</div>
+          <a href="#database" class="settings-sidebar-link">Database</a>
         </div>
-        <div id="coinbase-result">
-          <button hx-post="/api/settings/coinbase/disconnect" hx-target="#coinbase-result" hx-confirm="Remove Coinbase credentials?" class="btn btn-danger">
-            Disconnect
-          </button>
-        </div>
-      {{else}}
-        <form hx-post="/api/settings/coinbase/key" hx-target="#coinbase-result" style="display: flex; flex-direction: column; gap: 10px; max-width: 500px;">
-          <div>
-            <label for="coinbase_api_key_id" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Key ID</label>
-            <input type="text" id="coinbase_api_key_id" name="coinbase_api_key_id" placeholder="767b9d0a-4303-467b-85f1-..." style="width: 100%;" required autocomplete="off">
-          </div>
-          <div>
-            <label for="coinbase_api_secret" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Private Key (base64)</label>
-            <input type="password" id="coinbase_api_secret" name="coinbase_api_secret" placeholder="dCoHxTcI8+iq..." style="width: 100%;" required autocomplete="off">
-          </div>
-          <div>
-            <button type="submit" class="btn btn-primary">Connect</button>
-          </div>
-        </form>
-        <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
-          Create an API key at <a href="https://cdp.coinbase.com" target="_blank" rel="noopener noreferrer" style="color: #4fc3f7;">cdp.coinbase.com</a> with <strong>Trade - View</strong> permission and <strong>Ed25519</strong> algorithm.
-          Enter the Key ID and the base64-encoded private key shown after creation.
-        </p>
-        <div id="coinbase-result" style="margin-top: 8px;"></div>
-      {{end}}
-    </section>
+      </nav>
 
-    <section class="card" style="margin-top: 16px;">
-      <h3>Monarch Money Integration <span class="tier-badge tier-power">power</span></h3>
-      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
-        Sync your total BTC holdings to a Monarch Money investment account.
-        Your balance updates automatically and shows up in your net worth.
-      </p>
+      <!-- Main settings content -->
+      <div class="settings-content">
 
-      {{if not .MonarchUnlocked}}
-        {{template "upgrade_required" (dict "RequiredTier" "power" "CurrentTier" .Tier "FeatureMessage" "Sync your total BTC holdings and transactions to Monarch Money with Power.")}}
-      {{else if .MonarchConnected}}
-        <div style="margin-bottom: 12px;">
-          <span style="color: #4caf50;">Connected</span> &middot;
-          <code>{{.MonarchToken}}</code>
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button hx-post="/api/monarch/sync" hx-target="#monarch-result" class="btn btn-primary">
-            Sync Now
-          </button>
-          <button hx-post="/api/monarch/disconnect" hx-target="#monarch-result" hx-confirm="Disconnect Monarch Money?" class="btn btn-danger">
-            Disconnect
-          </button>
-        </div>
-      {{else}}
-        <form hx-post="/api/monarch/save" hx-target="#monarch-result" style="display: flex; flex-direction: column; gap: 8px; max-width: 400px;">
-          <div>
-            <label for="monarch_email" style="font-size: 0.8rem; color: #aaa;">Email</label>
-            <input type="email" id="monarch_email" name="monarch_email" placeholder="your@email.com" style="width: 100%; margin-top: 4px;" required>
-          </div>
-          <div>
-            <label for="monarch_password" style="font-size: 0.8rem; color: #aaa;">Password</label>
-            <input type="password" id="monarch_password" name="monarch_password" placeholder="Monarch password" style="width: 100%; margin-top: 4px;" required>
-          </div>
-          <button type="submit" class="btn btn-primary" style="align-self: flex-start;">Connect</button>
-        </form>
-        <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
-          Your credentials are used once to obtain a session token. The password is never stored.
-        </p>
-
-        <details style="margin-top: 16px;">
-          <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Manual token (if login fails)</summary>
-          <div style="margin-top: 8px;">
-            <p style="color: #777; font-size: 0.75rem; margin-bottom: 8px;">
-              Open <a href="https://app.monarch.com" target="_blank" style="color: #4fc3f7;">app.monarch.com</a>, open DevTools (F12) &rarr; Application &rarr; Local Storage &rarr; copy the <code>accessToken</code> value.
-            </p>
-            <form hx-post="/api/monarch/token" hx-target="#monarch-result" style="display: flex; gap: 8px; align-items: flex-end;">
-              <input type="text" name="monarch_token" placeholder="Paste token here" style="flex: 1; font-size: 0.8rem;" required>
-              <button type="submit" class="btn btn-primary">Save Token</button>
-            </form>
-          </div>
-        </details>
-      {{end}}
-
-      <div id="monarch-result" style="margin-top: 12px;"></div>
-    </section>
-
-    <section class="card" style="margin-top: 16px;">
-      <h3>Database</h3>
-      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
-        Download a backup of the satsbook SQLite database, or restore from a previous backup.
-      </p>
-
-      <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px;">
-        <a href="/api/backup" class="btn btn-primary" download>Download Backup</a>
-      </div>
-
-      <details>
-        <summary style="cursor: pointer; color: #888; font-size: 0.85rem; margin-bottom: 8px;">Restore from backup</summary>
-        <div style="margin-top: 12px;">
-          <p style="color: #e53e3e; font-size: 0.82rem; margin-bottom: 10px;">
-            <strong>Warning:</strong> This will replace ALL current data. A restart is required after restore.
+        <!-- License Section -->
+        <section id="license" class="card" style="margin-top: 0;">
+          <h3>License</h3>
+          <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+            Unlock Pro and Power features like tax export, Monarch Money sync, and more.
           </p>
-          <form hx-post="/api/restore"
-                hx-target="#restore-result"
-                hx-encoding="multipart/form-data"
-                style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
-            <div>
-              <label for="restore_file" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Backup file (.db)</label>
-              <input type="file" id="restore_file" name="database" accept=".db" required>
-            </div>
-            <button type="submit" class="btn btn-danger"
-                    hx-confirm="This will replace ALL current data and requires a restart. Continue?"
-                    onclick="this.textContent='Restoring…'; this.disabled=true; this.closest('form').submit();">
-              Restore
+
+          {{if .AutoActivateKey}}
+          <div class="alert alert-success" style="margin-bottom: 12px;">
+            License activated! Your tier: <strong>{{.Tier}}</strong>
+          </div>
+          {{end}}
+
+          <div style="margin-bottom: 12px;">
+            <span style="font-size: 0.85rem; color: #aaa;">Current Tier:</span>
+            <span class="tier-badge tier-{{.Tier}}">{{.Tier}}</span>
+          </div>
+
+          {{if .LicenseKey}}
+          <div style="margin-bottom: 12px;">
+            <span style="font-size: 0.85rem; color: #aaa;">License Key:</span>
+            <code style="margin-left: 4px;">{{.LicenseKey}}</code>
+          </div>
+          <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+            <button hx-post="/api/settings/license/verify" hx-target="#license-result" class="btn btn-primary" style="font-size: 0.85rem;">
+              Verify License
             </button>
+          </div>
+          {{end}}
+
+          {{if not (tierAtLeast .Tier "pro")}}
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+            <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
+              <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Pro</h4>
+              <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+                <li>FIFO / LIFO cost basis engine</li>
+                <li>Form 8949 CSV export</li>
+                <li>Tax summary dashboard</li>
+              </ul>
+              <a href="/api/subscribe?tier=pro"
+                 style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+                Subscribe to Pro
+              </a>
+            </div>
+            <div style="flex: 1; min-width: 220px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px;">
+              <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Power</h4>
+              <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+                <li>Everything in Pro</li>
+                <li>Monarch Money net worth sync</li>
+                <li>Transaction export to Monarch</li>
+              </ul>
+              <a href="/api/subscribe?tier=power"
+                 style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+                Subscribe to Power
+              </a>
+            </div>
+          </div>
+          {{else if not (tierAtLeast .Tier "power")}}
+          <div style="margin-bottom: 12px; border: 1px solid var(--border, #333); border-radius: 8px; padding: 16px; max-width: 300px;">
+            <h4 style="margin: 0 0 8px; color: var(--text, #e6e6e6);">Upgrade to Power</h4>
+            <ul style="margin: 0 0 12px; padding-left: 18px; color: #aaa; font-size: 0.8rem; line-height: 1.6;">
+              <li>Monarch Money net worth sync</li>
+              <li>Transaction export to Monarch</li>
+            </ul>
+            <a href="/api/subscribe?tier=power"
+               style="display: inline-block; padding: 8px 20px; border-radius: 6px; background: #f7931a; color: #000; text-decoration: none; font-size: 0.85rem; font-weight: 600;">
+              Upgrade to Power
+            </a>
+          </div>
+          {{end}}
+
+          <p style="margin: 4px 0 8px; font-size: 0.8rem;">
+            <a href="/settings/plans" style="color: var(--accent);">Compare all plans →</a>
+          </p>
+
+          <details style="margin-top: 8px;">
+            <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Enter license key manually</summary>
+            <form hx-post="/api/settings/license" hx-target="#license-result" style="display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; max-width: 500px;">
+              <input type="text" name="license_key" placeholder="sk_..." style="flex: 1; font-size: 0.85rem;" required>
+              <button type="submit" class="btn btn-primary" style="font-size: 0.85rem;">Activate</button>
+            </form>
+          </details>
+
+          <div id="license-result" style="margin-top: 12px;"></div>
+        </section>
+
+        <section id="strike-api" class="card" style="margin-top: 16px;">
+          <h3>Strike API Sync</h3>
+          <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+            Connect your Strike API key to automatically sync Lightning invoice receives and your live BTC balance.
+            <strong>Note:</strong> The Strike API only exposes invoices you created (Lightning receives).
+            BTC purchases, DCA orders, sales, and withdrawals are not available via the API — continue using CSV import for those.
+          </p>
+
+          {{if .StrikeAPIConnected}}
+            <div style="margin-bottom: 12px;">
+              <span style="color: #4caf50;">Connected</span> &middot;
+              <code>{{.StrikeAPIKey}}</code>
+            </div>
+            <div id="strike-result">
+              <button hx-post="/api/settings/strike/disconnect" hx-target="#strike-result" hx-confirm="Remove Strike API key?" class="btn btn-danger">
+                Disconnect
+              </button>
+            </div>
+          {{else}}
+            <form hx-post="/api/settings/strike/key" hx-target="#strike-result" style="display: flex; gap: 8px; align-items: flex-end; max-width: 500px;">
+              <div style="flex: 1;">
+                <label for="strike_api_key" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Strike API Key</label>
+                <input type="password" id="strike_api_key" name="strike_api_key" placeholder="sk_..." style="width: 100%;" required autocomplete="off">
+              </div>
+              <button type="submit" class="btn btn-primary">Connect</button>
+            </form>
+            <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
+              Generate a read-only API key at <a href="https://dashboard.strike.me" target="_blank" rel="noopener noreferrer" style="color: #4fc3f7;">dashboard.strike.me</a> → API → Create Key.
+              The <code>partner.invoice.read</code> scope is required.
+            </p>
+            <div id="strike-result" style="margin-top: 8px;"></div>
+          {{end}}
+        </section>
+
+        <section id="coinbase-api" class="card" style="margin-top: 16px;">
+          <h3>Coinbase API Sync</h3>
+          <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+            Connect your Coinbase CDP API key to automatically sync your full BTC transaction history
+            (buys, sells, sends, receives, and crypto-to-crypto trades) and live balance.
+          </p>
+
+          {{if .CoinbaseAPIConnected}}
+            <div style="margin-bottom: 12px;">
+              <span style="color: #4caf50;">Connected</span> &middot;
+              <code>{{.CoinbaseAPIKeyID}}</code>
+            </div>
+            <div id="coinbase-result">
+              <button hx-post="/api/settings/coinbase/disconnect" hx-target="#coinbase-result" hx-confirm="Remove Coinbase credentials?" class="btn btn-danger">
+                Disconnect
+              </button>
+            </div>
+          {{else}}
+            <form hx-post="/api/settings/coinbase/key" hx-target="#coinbase-result" style="display: flex; flex-direction: column; gap: 10px; max-width: 500px;">
+              <div>
+                <label for="coinbase_api_key_id" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Key ID</label>
+                <input type="text" id="coinbase_api_key_id" name="coinbase_api_key_id" placeholder="767b9d0a-4303-467b-85f1-..." style="width: 100%;" required autocomplete="off">
+              </div>
+              <div>
+                <label for="coinbase_api_secret" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Private Key (base64)</label>
+                <input type="password" id="coinbase_api_secret" name="coinbase_api_secret" placeholder="dCoHxTcI8+iq..." style="width: 100%;" required autocomplete="off">
+              </div>
+              <div>
+                <button type="submit" class="btn btn-primary">Connect</button>
+              </div>
+            </form>
+            <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
+              Create an API key at <a href="https://cdp.coinbase.com" target="_blank" rel="noopener noreferrer" style="color: #4fc3f7;">cdp.coinbase.com</a> with <strong>Trade - View</strong> permission and <strong>Ed25519</strong> algorithm.
+              Enter the Key ID and the base64-encoded private key shown after creation.
+            </p>
+            <div id="coinbase-result" style="margin-top: 8px;"></div>
+          {{end}}
+        </section>
+
+        <section id="monarch-money" class="card" style="margin-top: 16px;">
+          <h3>Monarch Money Integration <span class="tier-badge tier-power">power</span></h3>
+          <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+            Sync your total BTC holdings to a Monarch Money investment account.
+            Your balance updates automatically and shows up in your net worth.
+          </p>
+
+          {{if not .MonarchUnlocked}}
+            {{template "upgrade_required" (dict "RequiredTier" "power" "CurrentTier" .Tier "FeatureMessage" "Sync your total BTC holdings and transactions to Monarch Money with Power.")}}
+          {{else if .MonarchConnected}}
+            <div style="margin-bottom: 12px;">
+              <span style="color: #4caf50;">Connected</span> &middot;
+              <code>{{.MonarchToken}}</code>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button hx-post="/api/monarch/sync" hx-target="#monarch-result" class="btn btn-primary">
+                Sync Now
+              </button>
+              <button hx-post="/api/monarch/disconnect" hx-target="#monarch-result" hx-confirm="Disconnect Monarch Money?" class="btn btn-danger">
+                Disconnect
+              </button>
+            </div>
+          {{else}}
+            <form hx-post="/api/monarch/save" hx-target="#monarch-result" style="display: flex; flex-direction: column; gap: 8px; max-width: 400px;">
+              <div>
+                <label for="monarch_email" style="font-size: 0.8rem; color: #aaa;">Email</label>
+                <input type="email" id="monarch_email" name="monarch_email" placeholder="your@email.com" style="width: 100%; margin-top: 4px;" required>
+              </div>
+              <div>
+                <label for="monarch_password" style="font-size: 0.8rem; color: #aaa;">Password</label>
+                <input type="password" id="monarch_password" name="monarch_password" placeholder="Monarch password" style="width: 100%; margin-top: 4px;" required>
+              </div>
+              <button type="submit" class="btn btn-primary" style="align-self: flex-start;">Connect</button>
+            </form>
+            <p style="color: #666; font-size: 0.75rem; margin-top: 8px;">
+              Your credentials are used once to obtain a session token. The password is never stored.
+            </p>
+
+            <details style="margin-top: 16px;">
+              <summary style="cursor: pointer; color: #888; font-size: 0.8rem;">Manual token (if login fails)</summary>
+              <div style="margin-top: 8px;">
+                <p style="color: #777; font-size: 0.75rem; margin-bottom: 8px;">
+                  Open <a href="https://app.monarch.com" target="_blank" style="color: #4fc3f7;">app.monarch.com</a>, open DevTools (F12) &rarr; Application &rarr; Local Storage &rarr; copy the <code>accessToken</code> value.
+                </p>
+                <form hx-post="/api/monarch/token" hx-target="#monarch-result" style="display: flex; gap: 8px; align-items: flex-end;">
+                  <input type="text" name="monarch_token" placeholder="Paste token here" style="flex: 1; font-size: 0.8rem;" required>
+                  <button type="submit" class="btn btn-primary">Save Token</button>
+                </form>
+              </div>
+            </details>
+          {{end}}
+
+          <div id="monarch-result" style="margin-top: 12px;"></div>
+        </section>
+
+        {{if and .MonarchUnlocked .MonarchConnected}}
+        <section id="monarch-export" class="card" style="margin-top: 16px;">
+          <h3>Transaction Export to Monarch</h3>
+          <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+            Select which transaction types to export as Monarch transactions.
+            Each transaction is synced once — duplicates are automatically skipped.
+          </p>
+
+          {{if .MonarchSyncedCount}}
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;">
+            {{.MonarchSyncedCount}} transaction(s) already synced.
+          </p>
+          {{end}}
+
+          <form hx-post="/api/monarch/sync-types" hx-target="#monarch-tx-result" style="margin-bottom: 12px;">
+            <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Sources</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
+              {{range .AvailableSources}}
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" name="sync_sources" value="{{.}}"
+                  {{if contains $.MonarchSyncSources .}}checked{{end}}
+                  style="accent-color: var(--accent);">
+                {{sourceLabel .}}
+              </label>
+              {{end}}
+            </div>
+
+            <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Transaction Types</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
+              {{range .AvailableTxTypes}}
+              <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" name="sync_types" value="{{.}}"
+                  {{if contains $.MonarchSyncTypes .}}checked{{end}}
+                  style="accent-color: var(--accent);">
+                {{.}}
+              </label>
+              {{end}}
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="submit" style="background: var(--accent); color: #000; border: none; border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
+                Save Preferences
+              </button>
+              <button type="button" hx-post="/api/monarch/tx-sync" hx-target="#monarch-tx-result"
+                style="background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">
+                Sync Transactions Now
+              </button>
+            </div>
           </form>
-          <div id="restore-result" style="margin-top: 10px;"></div>
-        </div>
-      </details>
-    </section>
 
-    {{if and .MonarchUnlocked .MonarchConnected}}
-    <section class="card" style="margin-top: 16px;">
-      <h3>Transaction Export to Monarch</h3>
-      <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
-        Select which transaction types to export as Monarch transactions.
-        Each transaction is synced once — duplicates are automatically skipped.
-      </p>
+          <div id="monarch-tx-result"></div>
+        </section>
+        {{end}}
 
-      {{if .MonarchSyncedCount}}
-      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;">
-        {{.MonarchSyncedCount}} transaction(s) already synced.
-      </p>
-      {{end}}
+        <!-- Telegram Alerts -->
+        <section id="telegram" class="card" style="margin-top: 16px;">
+          <h2 style="font-size: 1rem; margin-bottom: 4px;">Telegram Alerts</h2>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
+            Get notified on channel closes, low balance, fee spikes, and a daily summary.
+            Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color: var(--accent);">@BotFather</a> and paste your token below.
+            To find your Chat ID, send a message to your bot and visit <code style="font-size: 0.75rem;">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.
+          </p>
+          <form hx-post="/api/settings/telegram" hx-target="#telegram-result" hx-swap="innerHTML"
+                style="display: flex; flex-direction: column; gap: 12px; max-width: 480px;">
+            <div>
+              <label for="telegram_bot_token" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Bot Token</label>
+              <input type="password" id="telegram_bot_token" name="telegram_bot_token"
+                     placeholder="123456:ABC-DEF..."
+                     value="{{if .TelegramBotToken}}••••••••{{end}}"
+                     style="width: 100%;" autocomplete="off">
+            </div>
+            <div>
+              <label for="telegram_chat_id" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Chat ID</label>
+              <input type="text" id="telegram_chat_id" name="telegram_chat_id"
+                     placeholder="-100123456789"
+                     value="{{.TelegramChatID}}"
+                     style="width: 100%;">
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button type="submit"
+                      style="background: var(--accent); color: #000; border: none; border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
+                Save
+              </button>
+              {{if .TelegramBotToken}}
+              <button type="button" hx-post="/api/settings/telegram/test" hx-target="#telegram-result"
+                      style="background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">
+                Send Test Message
+              </button>
+              <a href="/alerts" style="font-size: 0.8rem; color: var(--accent); margin-left: 4px;">View alert history →</a>
+              {{end}}
+            </div>
+          </form>
+          <div id="telegram-result" style="margin-top: 8px; font-size: 0.85rem;"></div>
+        </section>
 
-      <form hx-post="/api/monarch/sync-types" hx-target="#monarch-tx-result" style="margin-bottom: 12px;">
-        <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Sources</p>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
-          {{range .AvailableSources}}
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
-            <input type="checkbox" name="sync_sources" value="{{.}}"
-              {{if contains $.MonarchSyncSources .}}checked{{end}}
-              style="accent-color: var(--accent);">
-            {{sourceLabel .}}
-          </label>
-          {{end}}
-        </div>
+        <section id="database" class="card" style="margin-top: 16px;">
+          <h3>Database</h3>
+          <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+            Download a backup of the satsbook SQLite database, or restore from a previous backup.
+          </p>
 
-        <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 6px; font-weight: 600;">Transaction Types</p>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px;">
-          {{range .AvailableTxTypes}}
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
-            <input type="checkbox" name="sync_types" value="{{.}}"
-              {{if contains $.MonarchSyncTypes .}}checked{{end}}
-              style="accent-color: var(--accent);">
-            {{.}}
-          </label>
-          {{end}}
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button type="submit" style="background: var(--accent); color: #000; border: none; border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
-            Save Preferences
-          </button>
-          <button type="button" hx-post="/api/monarch/tx-sync" hx-target="#monarch-tx-result"
-            style="background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">
-            Sync Transactions Now
-          </button>
-        </div>
-      </form>
+          <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px;">
+            <a href="/api/backup" class="btn btn-primary" download>Download Backup</a>
+          </div>
 
-      <div id="monarch-tx-result"></div>
-    </section>
-    {{end}}
+          <details>
+            <summary style="cursor: pointer; color: #888; font-size: 0.85rem; margin-bottom: 8px;">Restore from backup</summary>
+            <div style="margin-top: 12px;">
+              <p style="color: #e53e3e; font-size: 0.82rem; margin-bottom: 10px;">
+                <strong>Warning:</strong> This will replace ALL current data. A restart is required after restore.
+              </p>
+              <form hx-post="/api/restore"
+                    hx-target="#restore-result"
+                    hx-encoding="multipart/form-data"
+                    style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
+                <div>
+                  <label for="restore_file" style="font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 4px;">Backup file (.db)</label>
+                  <input type="file" id="restore_file" name="database" accept=".db" required>
+                </div>
+                <button type="submit" class="btn btn-danger"
+                        hx-confirm="This will replace ALL current data and requires a restart. Continue?"
+                        onclick="this.textContent='Restoring…'; this.disabled=true; this.closest('form').submit();">
+                  Restore
+                </button>
+              </form>
+              <div id="restore-result" style="margin-top: 10px;"></div>
+            </div>
+          </details>
+        </section>
 
-    <!-- Telegram Alerts -->
-    <section class="card" style="margin-top: 16px;">
-      <h2 style="font-size: 1rem; margin-bottom: 4px;">Telegram Alerts</h2>
-      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">
-        Get notified on channel closes, low balance, fee spikes, and a daily summary.
-        Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color: var(--accent);">@BotFather</a> and paste your token below.
-        To find your Chat ID, send a message to your bot and visit <code style="font-size: 0.75rem;">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code>.
-      </p>
-      <form hx-post="/api/settings/telegram" hx-target="#telegram-result" hx-swap="innerHTML"
-            style="display: flex; flex-direction: column; gap: 12px; max-width: 480px;">
-        <div>
-          <label for="telegram_bot_token" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Bot Token</label>
-          <input type="password" id="telegram_bot_token" name="telegram_bot_token"
-                 placeholder="123456:ABC-DEF..."
-                 value="{{if .TelegramBotToken}}••••••••{{end}}"
-                 style="width: 100%;" autocomplete="off">
-        </div>
-        <div>
-          <label for="telegram_chat_id" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Chat ID</label>
-          <input type="text" id="telegram_chat_id" name="telegram_chat_id"
-                 placeholder="-100123456789"
-                 value="{{.TelegramChatID}}"
-                 style="width: 100%;">
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <button type="submit"
-                  style="background: var(--accent); color: #000; border: none; border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
-            Save
-          </button>
-          {{if .TelegramBotToken}}
-          <button type="button" hx-post="/api/settings/telegram/test" hx-target="#telegram-result"
-                  style="background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; cursor: pointer;">
-            Send Test Message
-          </button>
-          <a href="/alerts" style="font-size: 0.8rem; color: var(--accent); margin-left: 4px;">View alert history →</a>
-          {{end}}
-        </div>
-      </form>
-      <div id="telegram-result" style="margin-top: 8px; font-size: 0.85rem;"></div>
-    </section>
+      </div><!-- /.settings-content -->
+    </div><!-- /.settings-page -->
   </main>
 
   <footer>
@@ -376,5 +465,25 @@
       <span>Satsbook</span>
     </div>
   </footer>
+
+  <script>
+    (function() {
+      var links = document.querySelectorAll('.settings-sidebar-link');
+      var sections = Array.from(links).map(function(l) {
+        return document.querySelector(l.getAttribute('href'));
+      }).filter(Boolean);
+      var active = null;
+      var observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(e) {
+          if (e.isIntersecting) active = e.target.id;
+        });
+        links.forEach(function(l) {
+          var isActive = l.getAttribute('href') === '#' + active;
+          l.classList.toggle('active', isActive);
+        });
+      }, { rootMargin: '-20% 0px -70% 0px' });
+      sections.forEach(function(s) { observer.observe(s); });
+    })();
+  </script>
 </body>
 </html>{{end}}
