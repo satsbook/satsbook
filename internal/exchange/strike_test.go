@@ -423,3 +423,57 @@ tx-003,Jan 03 2026 10:00:00,Receive,,,0.01000000,,,,bc1qaddr,,hash3,
 		t.Errorf("total purchase sats = %d, want 636000", totalPurchaseSat)
 	}
 }
+
+func TestStrikeRowClassify(t *testing.T) {
+	cases := []struct {
+		typ  string
+		want StrikeClassification
+	}{
+		{"Purchase", ClassAcquisition},
+		{"buy", ClassAcquisition},
+		{"Receive", ClassAcquisition},
+		{"Sale", ClassDisposal},
+		{"Withdraw", ClassIgnored},
+		{"Transfer", ClassIgnored},
+		{"Send", ClassIgnored},
+		{"unknown_future_type", ClassIgnored},
+		{"", ClassIgnored},
+	}
+	for _, tc := range cases {
+		row := StrikeRow{Type: tc.typ}
+		got := row.Classify()
+		if got != tc.want {
+			t.Errorf("Classify(%q) = %q, want %q", tc.typ, got, tc.want)
+		}
+		isIgnored := row.IsIgnored()
+		wantIgnored := tc.want == ClassIgnored
+		if isIgnored != wantIgnored {
+			t.Errorf("IsIgnored(%q) = %v, want %v", tc.typ, isIgnored, wantIgnored)
+		}
+	}
+}
+
+func TestParseStrikeRawLine(t *testing.T) {
+	// A valid raw line that was originally parsed and joined
+	line := `REF001,Jan 15 2025 10:00:00,Purchase,500.00,2.50,0.00500000,0.00002500,100000.00,500.00,wallet123,Buy BTC,txhash001,`
+	row, err := ParseStrikeRawLine(line)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if row.TransactionID != "REF001" {
+		t.Errorf("expected TransactionID REF001, got %q", row.TransactionID)
+	}
+	if row.Type != "Purchase" {
+		t.Errorf("expected Type Purchase, got %q", row.Type)
+	}
+	if row.Classify() != ClassAcquisition {
+		t.Errorf("expected ClassAcquisition, got %q", row.Classify())
+	}
+}
+
+func TestParseStrikeRawLine_TooFewColumns(t *testing.T) {
+	_, err := ParseStrikeRawLine("col1,col2")
+	if err == nil {
+		t.Error("expected error for too few columns, got nil")
+	}
+}

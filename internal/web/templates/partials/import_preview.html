@@ -1,0 +1,143 @@
+{{define "import_preview"}}
+<div class="card">
+  <div class="card-label">Preview Import</div>
+  <p style="margin-top: 8px; color: var(--text-muted); font-size: 0.85rem;">
+    Review the rows below before committing them to the database.
+    {{if gt .FilesCount 1}}<strong>{{.FilesCount}}</strong> files parsed.{{end}}
+  </p>
+
+  {{if .Ignored}}
+  <div style="background: #3a2e00; border: 1px solid #7a6000; border-radius: 4px; padding: 10px 14px; margin: 12px 0;">
+    <strong style="color: #f5c518;">{{len .Ignored}} row{{if ne (len .Ignored) 1}}s{{end}} not imported</strong>
+    <p style="margin: 6px 0 10px; font-size: 0.83rem; color: var(--text-muted);">
+      These rows have an unrecognized transaction type. Review them before confirming — they will be skipped.
+    </p>
+    <table style="width: 100%; font-size: 0.8rem; border-collapse: collapse;">
+      <thead>
+        <tr style="text-align: left; color: var(--text-muted);">
+          <th style="padding: 4px 8px 4px 0;">Date</th>
+          <th style="padding: 4px 8px;">Raw Type</th>
+          <th style="padding: 4px 8px;">BTC Amount</th>
+          <th style="padding: 4px 8px;">Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Ignored}}
+        <tr style="border-top: 1px solid var(--border);">
+          <td style="padding: 4px 8px 4px 0; white-space: nowrap;">{{formatDate .Date}}</td>
+          <td style="padding: 4px 8px; font-family: monospace;">{{.Type}}</td>
+          <td style="padding: 4px 8px; text-align: right; font-family: monospace;">{{printf "%.8f" .AmountBTC}}</td>
+          <td style="padding: 4px 8px; color: var(--text-muted);">{{.Description}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <div style="display: flex; gap: 24px; margin: 12px 0; font-size: 0.9rem;">
+    <span style="color: var(--green);">
+      <strong>{{len .Acquisitions}}</strong> acquisition{{if ne (len .Acquisitions) 1}}s{{end}}
+    </span>
+    <span style="color: var(--accent, #f7931a);">
+      <strong>{{len .Disposals}}</strong> disposal{{if ne (len .Disposals) 1}}s{{end}}
+    </span>
+    {{if .Ignored}}
+    <span style="color: #f5c518;">
+      <strong>{{len .Ignored}}</strong> ignored
+    </span>
+    {{end}}
+  </div>
+
+  {{if .Acquisitions}}
+  <details style="margin-bottom: 10px;">
+    <summary style="cursor: pointer; font-size: 0.85rem; color: var(--text-muted);">
+      {{len .Acquisitions}} acquisition{{if ne (len .Acquisitions) 1}}s{{end}} (purchases &amp; receives)
+    </summary>
+    <table style="width: 100%; font-size: 0.8rem; border-collapse: collapse; margin-top: 8px;">
+      <thead>
+        <tr style="text-align: left; color: var(--text-muted);">
+          <th style="padding: 4px 8px 4px 0;">Date</th>
+          <th style="padding: 4px 8px;">Type</th>
+          <th style="padding: 4px 8px; text-align: right;">BTC</th>
+          <th style="padding: 4px 8px; text-align: right;">USD</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Acquisitions}}
+        <tr style="border-top: 1px solid var(--border);">
+          <td style="padding: 4px 8px 4px 0; white-space: nowrap;">{{formatDate .Date}}</td>
+          <td style="padding: 4px 8px;">{{.Type}}</td>
+          <td style="padding: 4px 8px; text-align: right; font-family: monospace;">{{printf "%.8f" .AmountBTC}}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{if .AmountUSD}}{{formatUSD .AmountUSD}}{{else}}—{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+
+  {{if .Disposals}}
+  <details style="margin-bottom: 10px;">
+    <summary style="cursor: pointer; font-size: 0.85rem; color: var(--text-muted);">
+      {{len .Disposals}} disposal{{if ne (len .Disposals) 1}}s{{end}} (sales)
+    </summary>
+    <table style="width: 100%; font-size: 0.8rem; border-collapse: collapse; margin-top: 8px;">
+      <thead>
+        <tr style="text-align: left; color: var(--text-muted);">
+          <th style="padding: 4px 8px 4px 0;">Date</th>
+          <th style="padding: 4px 8px;">Type</th>
+          <th style="padding: 4px 8px; text-align: right;">BTC</th>
+          <th style="padding: 4px 8px; text-align: right;">Proceeds (USD)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Disposals}}
+        <tr style="border-top: 1px solid var(--border);">
+          <td style="padding: 4px 8px 4px 0; white-space: nowrap;">{{formatDate .Date}}</td>
+          <td style="padding: 4px 8px;">{{.Type}}</td>
+          <td style="padding: 4px 8px; text-align: right; font-family: monospace;">{{printf "%.8f" .AmountBTC}}</td>
+          <td style="padding: 4px 8px; text-align: right;">{{if .AmountUSD}}{{formatUSD .AmountUSD}}{{else}}—{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+
+  {{if .ParseErrors}}
+  <details style="margin-bottom: 10px;">
+    <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.85rem;">
+      {{len .ParseErrors}} row{{if ne (len .ParseErrors) 1}}s{{end}} had parse errors
+    </summary>
+    <ul style="margin-top: 8px; font-size: 0.8rem; color: var(--text-muted);">
+      {{range .ParseErrors}}
+      <li>{{.}}</li>
+      {{end}}
+    </ul>
+  </details>
+  {{end}}
+
+  <div style="margin-top: 16px; display: flex; gap: 12px; align-items: center;">
+    <form hx-post="/api/import/{{.Source}}"
+          hx-target="#import-result"
+          hx-swap="innerHTML"
+          hx-encoding="multipart/form-data"
+          hx-indicator="#import-loading">
+      {{range .Acquisitions}}
+      <input type="hidden" name="row" value="{{.RawLine}}">
+      {{end}}
+      {{range .Disposals}}
+      <input type="hidden" name="row" value="{{.RawLine}}">
+      {{end}}
+      <input type="hidden" name="confirm" value="yes">
+      <button type="submit" class="filter-form" hx-disabled-elt="this" style="display: inline-block; background: var(--green); color: #000;">
+        Confirm Import
+      </button>
+      <span id="import-loading" class="htmx-indicator">Importing...</span>
+    </form>
+    <a href="#" onclick="document.getElementById('import-result').innerHTML=''; return false;"
+       style="font-size: 0.85rem; color: var(--text-muted);">Cancel</a>
+  </div>
+</div>
+{{end}}

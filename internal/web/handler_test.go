@@ -653,8 +653,16 @@ func TestHandleStrikeImport_Success(t *testing.T) {
 	}
 	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
 
-	csv := "Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note\ntx-001,Jan 15 2024 10:30:00,Purchase,67.00,0.50,0.001,,94000.00,67.00,,,,\n"
-	req, w := createMultipartCSV(t, csv)
+	// Phase 2 (confirm=yes): post a pre-classified row and expect import result.
+	rawLine := "tx-001,Jan 15 2024 10:30:00,Purchase,67.00,0.50,0.00100000,0.00000500,94000.00,67.00,,Buy,,"
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writer.WriteField("confirm", "yes")
+	writer.WriteField("row", rawLine)
+	writer.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
 	h.HandleStrikeImport(w, req)
 
 	if w.Code != http.StatusOK {
@@ -718,15 +726,10 @@ func TestHandleStrikeImport_MissingFile(t *testing.T) {
 	}
 }
 
-func TestHandleStrikeImport_HTMXResponse(t *testing.T) {
-	importStore := &mockImportStore{
-		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
-			return &db.ImportSummary{Total: 2, NewPurchases: 1, Duplicates: 1}, nil
-		},
-	}
-	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+func TestHandleStrikeImport_HTMXPreviewPhase(t *testing.T) {
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, &mockImportStore{}, log.New(os.Stderr, "[test] ", 0))
 
-	csv := "Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note\ntx-001,Jan 15 2024 10:30:00,Purchase,67.00,0.50,0.001,,94000.00,67.00,,,,\n"
+	csv := strikeHeader + "tx-001,Jan 15 2024 10:30:00,Purchase,67.00,0.50,0.001,,94000.00,67.00,,,,\n"
 	req, w := createMultipartCSV(t, csv)
 	req.Header.Set("HX-Request", "true")
 	h.HandleStrikeImport(w, req)
@@ -734,13 +737,45 @@ func TestHandleStrikeImport_HTMXResponse(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	ct := w.Header().Get("Content-Type")
-	if !strings.Contains(ct, "text/html") {
-		t.Errorf("expected text/html for HTMX, got %q", ct)
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("expected text/html for HTMX preview, got %q", w.Header().Get("Content-Type"))
 	}
+	// Phase 1 HTMX returns the preview partial
 	body := w.Body.String()
-	if !strings.Contains(body, "new purchase") {
-		t.Errorf("expected summary in HTML, got: %s", body)
+	if !strings.Contains(body, "Preview Import") {
+		t.Errorf("expected preview HTML, got: %s", body)
+	}
+}
+
+func TestHandleStrikeImport_HTMXConfirmPhase(t *testing.T) {
+	importStore := &mockImportStore{
+		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+			return &db.ImportSummary{Total: 1, NewPurchases: 1}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	rawLine := "tx-001,Jan 15 2024 10:30:00,Purchase,67.00,0.50,0.00100000,0.00000500,94000.00,67.00,,Buy,,"
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writer.WriteField("confirm", "yes")
+	writer.WriteField("row", rawLine)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("expected text/html, got %q", w.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(w.Body.String(), "new purchase") {
+		t.Errorf("expected import result HTML with 'new purchase', got: %s", w.Body.String())
 	}
 }
 
@@ -1428,5 +1463,164 @@ func TestHandlePortfolioBackfill_HTMXResponse(t *testing.T) {
 	ct := w.Header().Get("Content-Type")
 	if !strings.Contains(ct, "text/html") {
 		t.Errorf("expected HTML response for HTMX request, got %q", ct)
+	}
+}
+
+// --- Import preview/confirm tests (#147) ---
+
+const strikeHeader = "Reference,Date & Time (UTC),Transaction Type,Amount USD,Fee USD,Amount BTC,Fee BTC,BTC Price,Cost Basis (USD),Destination,Description,Transaction Hash,Note\n"
+
+// TestHandleStrikeImport_PreviewPhase verifies that posting without confirm=yes
+// returns a preview and does NOT write to the DB.
+func TestHandleStrikeImport_PreviewPhase(t *testing.T) {
+	imported := 0
+	importStore := &mockImportStore{
+		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+			imported += len(rows)
+			return &db.ImportSummary{Total: len(rows), NewPurchases: len(rows)}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	csv := strikeHeader +
+		"tx-001,Jan 15 2025 10:00:00,Purchase,500.00,2.50,0.005,,100000.00,500.00,,Buy BTC,,\n" +
+		"tx-002,Jan 16 2025 11:00:00,Withdraw,,,0.001,,,,,wallet,txhash,\n"
+
+	req, w := createMultipartCSV(t, csv)
+	h.HandleStrikeImport(w, req)
+
+	// No confirm — should return JSON preview, not write to DB
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if imported != 0 {
+		t.Errorf("expected 0 rows imported in preview phase, got %d", imported)
+	}
+	var preview map[string]int
+	if err := json.NewDecoder(w.Body).Decode(&preview); err != nil {
+		t.Fatalf("failed to decode preview: %v", err)
+	}
+	if preview["acquisitions"] != 1 {
+		t.Errorf("expected 1 acquisition, got %d", preview["acquisitions"])
+	}
+	if preview["ignored"] != 1 {
+		t.Errorf("expected 1 ignored row (Withdraw), got %d", preview["ignored"])
+	}
+}
+
+// TestHandleStrikeImport_UnrecognizedTypeAppearsIgnored verifies that rows with
+// unknown transaction types are classified as ignored and do NOT get imported.
+func TestHandleStrikeImport_UnrecognizedTypeAppearsIgnored(t *testing.T) {
+	imported := 0
+	importStore := &mockImportStore{
+		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+			imported += len(rows)
+			return &db.ImportSummary{Total: len(rows)}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	// CSV with only unrecognized types: Send, Transfer, Withdraw
+	csv := strikeHeader +
+		"tx-001,Jan 15 2025 10:00:00,Send,,,0.001,,,,,payment,txhash,\n" +
+		"tx-002,Jan 16 2025 11:00:00,Transfer,,,0.002,,,,,transfer,txhash2,\n" +
+		"tx-003,Jan 17 2025 12:00:00,Withdraw,,,0.003,,,,,withdraw,txhash3,\n"
+
+	req, w := createMultipartCSV(t, csv)
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var preview map[string]int
+	if err := json.NewDecoder(w.Body).Decode(&preview); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if preview["ignored"] != 3 {
+		t.Errorf("expected 3 ignored rows, got %d", preview["ignored"])
+	}
+	if preview["acquisitions"] != 0 {
+		t.Errorf("expected 0 acquisitions, got %d", preview["acquisitions"])
+	}
+	if imported != 0 {
+		t.Errorf("expected 0 rows written to DB before confirm, got %d", imported)
+	}
+}
+
+// TestHandleStrikeImport_ConfirmWritesToDB verifies that confirm=yes posts
+// the pre-classified rows and writes them to the DB.
+func TestHandleStrikeImport_ConfirmWritesToDB(t *testing.T) {
+	var importedRows []exchange.StrikeRow
+	importStore := &mockImportStore{
+		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+			importedRows = rows
+			return &db.ImportSummary{Total: len(rows), NewPurchases: len(rows)}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	// Send confirm=yes with pre-classified row data (as the confirm form would)
+	rawLine := "tx-001,Jan 15 2025 10:00:00,Purchase,500.00,2.50,0.00500000,0.00002500,100000.00,500.00,,Buy BTC,,"
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writer.WriteField("confirm", "yes")
+	writer.WriteField("row", rawLine)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(importedRows) != 1 {
+		t.Fatalf("expected 1 row imported, got %d", len(importedRows))
+	}
+	if importedRows[0].Type != "Purchase" {
+		t.Errorf("expected imported row type Purchase, got %q", importedRows[0].Type)
+	}
+}
+
+// TestHandleStrikeImport_IgnoredRowsNotImportedOnConfirm verifies that even if
+// ignored rows somehow appear in the confirm POST, they are not written to the DB.
+func TestHandleStrikeImport_IgnoredRowsNotImportedOnConfirm(t *testing.T) {
+	var importedRows []exchange.StrikeRow
+	importStore := &mockImportStore{
+		importStrikeFn: func(_ context.Context, rows []exchange.StrikeRow) (*db.ImportSummary, error) {
+			importedRows = rows
+			return &db.ImportSummary{Total: len(rows)}, nil
+		},
+	}
+	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
+
+	withdrawLine := "tx-bad,Jan 15 2025 10:00:00,Withdraw,,,0.001,,,,,wallet,txhash,"
+	purchaseLine := "tx-ok,Jan 15 2025 10:00:00,Purchase,500.00,2.50,0.00500000,0.00002500,100000.00,500.00,,Buy,,"
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writer.WriteField("confirm", "yes")
+	writer.WriteField("row", withdrawLine)
+	writer.WriteField("row", purchaseLine)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/import/strike", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	h.HandleStrikeImport(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	// Only the Purchase row should be imported — Withdraw is ignored
+	for _, r := range importedRows {
+		if r.IsIgnored() {
+			t.Errorf("ignored row type %q was written to DB", r.Type)
+		}
+	}
+	if len(importedRows) != 1 {
+		t.Errorf("expected 1 row imported (Purchase only), got %d", len(importedRows))
 	}
 }
