@@ -104,6 +104,12 @@
           <div class="settings-sidebar-group-label">Notifications</div>
           <a href="#telegram" class="settings-sidebar-link">Telegram Alerts</a>
         </div>
+        {{if .NodesUnlocked}}
+        <div class="settings-sidebar-group">
+          <div class="settings-sidebar-group-label">Nodes</div>
+          <a href="#nodes" class="settings-sidebar-link">Connected Nodes</a>
+        </div>
+        {{end}}
         <div class="settings-sidebar-group">
           <div class="settings-sidebar-group-label">System</div>
           <a href="#database" class="settings-sidebar-link">Database</a>
@@ -421,6 +427,94 @@
           </form>
           <div id="telegram-result" style="margin-top: 8px; font-size: 0.85rem;"></div>
         </section>
+
+        <!-- Nodes Section (Power tier) -->
+        {{if .NodesUnlocked}}
+        <section id="nodes" class="card" style="margin-top: 16px;">
+          <h3>Connected Nodes <span class="tier-badge tier-power">power</span></h3>
+          <p style="color: #999; font-size: 0.85rem; margin-bottom: 12px;">
+            Connect up to 3 LND nodes. The primary node is configured via environment variables and cannot be removed. Secondary nodes are stored in the database.
+          </p>
+
+          {{if .Nodes}}
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 0.85rem;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <th style="text-align: left; padding: 6px 8px; color: var(--text-muted);">ID</th>
+                <th style="text-align: left; padding: 6px 8px; color: var(--text-muted);">Alias</th>
+                <th style="text-align: left; padding: 6px 8px; color: var(--text-muted);">Host</th>
+                <th style="text-align: left; padding: 6px 8px; color: var(--text-muted);">Type</th>
+                <th style="text-align: left; padding: 6px 8px; color: var(--text-muted);">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Nodes}}
+              <tr style="border-bottom: 1px solid var(--border, #222);">
+                <td style="padding: 6px 8px;">{{.ID}}</td>
+                <td style="padding: 6px 8px;">{{if .Alias}}{{.Alias}}{{else}}<span style="color: var(--text-muted);">—</span>{{end}}</td>
+                <td style="padding: 6px 8px; font-family: monospace;">{{.LNDHost}}:{{.LNDPort}}</td>
+                <td style="padding: 6px 8px;">
+                  {{if .IsPrimary}}<span class="tier-badge tier-pro">primary</span>{{else}}<span style="color: var(--text-muted); font-size: 0.8rem;">secondary</span>{{end}}
+                </td>
+                <td style="padding: 6px 8px;">
+                  {{if not .IsPrimary}}
+                  <form hx-post="/api/settings/nodes/delete"
+                        hx-target="#nodes-result"
+                        hx-confirm="Remove node {{.ID}} ({{.LNDHost}})? All its synced data will be deleted."
+                        style="display: inline;">
+                    <input type="hidden" name="node_id" value="{{.ID}}">
+                    <button type="submit" class="btn btn-danger" style="font-size: 0.75rem; padding: 3px 10px;">Remove</button>
+                  </form>
+                  {{else}}
+                  <span style="color: var(--text-muted); font-size: 0.8rem;">env vars</span>
+                  {{end}}
+                </td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+          {{else}}
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 16px;">No nodes configured yet. The primary node from environment variables will appear here after the first sync.</p>
+          {{end}}
+
+          <div id="nodes-result" style="margin-bottom: 12px; font-size: 0.85rem;"></div>
+
+          {{if lt (len .Nodes) 3}}
+          <details style="margin-top: 8px;">
+            <summary style="cursor: pointer; color: #888; font-size: 0.85rem;">Add a secondary node</summary>
+            <form hx-post="/api/settings/nodes"
+                  hx-target="#nodes-result"
+                  style="margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 600px;">
+              <div>
+                <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">LND Host</label>
+                <input type="text" name="lnd_host" placeholder="192.168.1.2" required style="width: 100%;">
+              </div>
+              <div>
+                <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">gRPC Port</label>
+                <input type="number" name="lnd_port" placeholder="10009" value="10009" required style="width: 100%;">
+              </div>
+              <div>
+                <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">Macaroon Path</label>
+                <input type="text" name="macaroon_path" placeholder="/path/to/admin.macaroon" required style="width: 100%;">
+              </div>
+              <div>
+                <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 4px;">TLS Cert Path</label>
+                <input type="text" name="tls_cert_path" placeholder="/path/to/tls.cert" required style="width: 100%;">
+              </div>
+              <div style="grid-column: 1 / -1;">
+                <button type="submit"
+                        onclick="this.textContent='Connecting…'; this.disabled=true;"
+                        style="background: var(--accent); color: #000; border: none; border-radius: 4px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; cursor: pointer;">
+                  Add Node
+                </button>
+              </div>
+            </form>
+          </details>
+          {{else}}
+          <p style="color: var(--text-muted); font-size: 0.82rem; margin-top: 8px;">Maximum of 3 nodes reached.</p>
+          {{end}}
+        </section>
+        {{end}}
 
         <section id="database" class="card" style="margin-top: 16px;">
           <h3>Database</h3>

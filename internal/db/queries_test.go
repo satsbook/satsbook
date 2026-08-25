@@ -12,7 +12,7 @@ import (
 func seedForwardingEvents(t *testing.T, d *DB, events []ForwardingEvent) {
 	t.Helper()
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertForwardingEvents(events)
+		return tx.InsertForwardingEvents(1, events)
 	})
 	if err != nil {
 		t.Fatalf("failed to seed forwarding events: %v", err)
@@ -22,7 +22,7 @@ func seedForwardingEvents(t *testing.T, d *DB, events []ForwardingEvent) {
 func seedChannels(t *testing.T, d *DB, channels []Channel) {
 	t.Helper()
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels(channels)
+		return tx.UpsertChannels(1, channels)
 	})
 	if err != nil {
 		t.Fatalf("failed to seed channels: %v", err)
@@ -32,7 +32,7 @@ func seedChannels(t *testing.T, d *DB, channels []Channel) {
 func seedWalletSnapshot(t *testing.T, d *DB, s WalletBalanceSnapshot) {
 	t.Helper()
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertWalletBalanceSnapshot(s)
+		return tx.InsertWalletBalanceSnapshot(1, s)
 	})
 	if err != nil {
 		t.Fatalf("failed to seed wallet snapshot: %v", err)
@@ -230,7 +230,7 @@ func TestChannelStats_ROI(t *testing.T) {
 	})
 	// Seed the funding onchain tx: amount_sat = -1_001_500 (outgoing)
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns([]OnchainTx{
+		return tx.UpsertOnchainTxns(1, []OnchainTx{
 			{TxHash: "abc123", AmountSat: -1_001_500, NumConfirmations: 100, Timestamp: openedAt},
 		})
 	})
@@ -313,7 +313,7 @@ func TestChannelStats_ROI_BreakEven(t *testing.T) {
 			Capacity: 1_000_000, LocalBalance: 500_000, RemoteBalance: 500_000, Active: true},
 	})
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns([]OnchainTx{
+		return tx.UpsertOnchainTxns(1, []OnchainTx{
 			{TxHash: "def456", AmountSat: -1_002_000, NumConfirmations: 50, Timestamp: openedAt},
 		})
 	})
@@ -2494,7 +2494,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 	// Seed data from multiple sources
 	err := d.RunSync(ctx, func(tx SyncTx) error {
 		// Forwarding event (fee income)
-		if err := tx.InsertForwardingEvents([]ForwardingEvent{{
+		if err := tx.InsertForwardingEvents(1, []ForwardingEvent{{
 			Timestamp:  now.Add(-4 * time.Hour),
 			ChanIDIn:   1001,
 			ChanIDOut:  1002,
@@ -2507,7 +2507,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 
 		// Invoice received
 		settled := now.Add(-3 * time.Hour)
-		if err := tx.UpsertInvoices([]Invoice{{
+		if err := tx.UpsertInvoices(1, []Invoice{{
 			PaymentHash: "inv-hash-1",
 			AmtPaidMsat: 50_000_000,
 			CreatedAt:   now.Add(-4 * time.Hour),
@@ -2517,7 +2517,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 		}
 
 		// Unsettled invoice (should NOT appear)
-		if err := tx.UpsertInvoices([]Invoice{{
+		if err := tx.UpsertInvoices(1, []Invoice{{
 			PaymentHash: "inv-hash-unsettled",
 			AmtPaidMsat: 10_000_000,
 			CreatedAt:   now.Add(-2 * time.Hour),
@@ -2526,7 +2526,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 		}
 
 		// Payment sent
-		if err := tx.UpsertPayments([]Payment{{
+		if err := tx.UpsertPayments(1, []Payment{{
 			PaymentHash: "pay-hash-1",
 			ValueMsat:   25_000_000,
 			FeeMsat:     1_000,
@@ -2537,7 +2537,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 		}
 
 		// Failed payment (should NOT appear)
-		if err := tx.UpsertPayments([]Payment{{
+		if err := tx.UpsertPayments(1, []Payment{{
 			PaymentHash: "pay-hash-failed",
 			ValueMsat:   5_000_000,
 			FeeMsat:     500,
@@ -2548,7 +2548,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 		}
 
 		// On-chain receive (confirmed)
-		if err := tx.UpsertOnchainTxns([]OnchainTx{{
+		if err := tx.UpsertOnchainTxns(1, []OnchainTx{{
 			TxHash:           "onchain-tx-1",
 			AmountSat:        100_000,
 			NumConfirmations: 6,
@@ -2559,7 +2559,7 @@ func TestListUnifiedTransactions(t *testing.T) {
 		}
 
 		// On-chain unconfirmed (should NOT appear)
-		if err := tx.UpsertOnchainTxns([]OnchainTx{{
+		if err := tx.UpsertOnchainTxns(1, []OnchainTx{{
 			TxHash:           "onchain-tx-unconfirmed",
 			AmountSat:        50_000,
 			NumConfirmations: 0,
@@ -2639,21 +2639,21 @@ func TestListUnifiedTransactionsFilters(t *testing.T) {
 
 	// Seed diverse data
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		if err := tx.InsertForwardingEvents([]ForwardingEvent{{
+		if err := tx.InsertForwardingEvents(1, []ForwardingEvent{{
 			Timestamp: time.Date(2024, 3, 10, 12, 0, 0, 0, time.UTC),
 			ChanIDIn: 1001, ChanIDOut: 1002,
 			AmtInMsat: 10000, AmtOutMsat: 9000, FeeMsat: 1000,
 		}}); err != nil {
 			return err
 		}
-		if err := tx.UpsertInvoices([]Invoice{{
+		if err := tx.UpsertInvoices(1, []Invoice{{
 			PaymentHash: "inv-filter-1", AmtPaidMsat: 50_000_000,
 			CreatedAt: time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC),
 			SettledAt: func() *time.Time { t := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC); return &t }(),
 		}}); err != nil {
 			return err
 		}
-		return tx.UpsertPayments([]Payment{{
+		return tx.UpsertPayments(1, []Payment{{
 			PaymentHash: "pay-filter-1", ValueMsat: 25_000_000, FeeMsat: 100,
 			CreatedAt: time.Date(2024, 6, 20, 12, 0, 0, 0, time.UTC),
 			Status: "SUCCEEDED",
@@ -2719,7 +2719,7 @@ func TestListUnifiedTransactionsSince(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns([]OnchainTx{
+		return tx.UpsertOnchainTxns(1, []OnchainTx{
 			{TxHash: "old-tx", AmountSat: 1000, NumConfirmations: 6, Timestamp: now.Add(-2 * time.Hour)},
 			{TxHash: "new-tx", AmountSat: 2000, NumConfirmations: 3, Timestamp: now.Add(-30 * time.Minute)},
 		})
@@ -2757,7 +2757,7 @@ func TestTotalPortfolioSats(t *testing.T) {
 
 	// Add a wallet balance
 	err = d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertWalletBalanceSnapshot(WalletBalanceSnapshot{
+		return tx.InsertWalletBalanceSnapshot(1, WalletBalanceSnapshot{
 			CapturedAt:     time.Now(),
 			TotalSat:       100_000,
 			ConfirmedSat:   90_000,
@@ -3544,7 +3544,7 @@ func TestAutoTagChannelTransfers(t *testing.T) {
 
 	// Seed a channel with a known channel_point (txid:output_index)
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		if err := tx.UpsertChannels([]Channel{{
+		if err := tx.UpsertChannels(1, []Channel{{
 			ChanID:       12345,
 			RemotePubKey: "pubkey1",
 			ChannelPoint: "abc123def456:0",
@@ -3554,7 +3554,7 @@ func TestAutoTagChannelTransfers(t *testing.T) {
 			return err
 		}
 		// Seed a closed channel with closing_tx_hash
-		if err := tx.UpsertChannels([]Channel{{
+		if err := tx.UpsertChannels(1, []Channel{{
 			ChanID:        67890,
 			RemotePubKey:  "pubkey2",
 			ChannelPoint:  "open789:1",
@@ -3564,7 +3564,7 @@ func TestAutoTagChannelTransfers(t *testing.T) {
 			return err
 		}
 		// Seed on-chain txns matching both
-		if err := tx.UpsertOnchainTxns([]OnchainTx{
+		if err := tx.UpsertOnchainTxns(1, []OnchainTx{
 			{TxHash: "abc123def456", AmountSat: -500000, NumConfirmations: 6, Timestamp: time.Now()},   // channel open
 			{TxHash: "close456def", AmountSat: 490000, NumConfirmations: 6, Timestamp: time.Now()},     // channel close
 			{TxHash: "unrelated999", AmountSat: -100000, NumConfirmations: 6, Timestamp: time.Now()},   // not a channel tx
@@ -3735,12 +3735,12 @@ func TestAutoTagChannelTransfers_TableDriven(t *testing.T) {
 
 			err := d.RunSync(ctx, func(tx SyncTx) error {
 				if len(tc.channels) > 0 {
-					if err := tx.UpsertChannels(tc.channels); err != nil {
+					if err := tx.UpsertChannels(1, tc.channels); err != nil {
 						return err
 					}
 				}
 				if len(tc.onchainTxns) > 0 {
-					if err := tx.UpsertOnchainTxns(tc.onchainTxns); err != nil {
+					if err := tx.UpsertOnchainTxns(1, tc.onchainTxns); err != nil {
 						return err
 					}
 				}
@@ -3794,7 +3794,7 @@ func TestAutoTagChannelTransfers_ExchangeImportsNotTagged(t *testing.T) {
 	// Seed a channel whose channel_point txid matches the Strike transaction ID.
 	// The auto-tagger must not tag the exchange import row.
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.UpsertChannels([]Channel{{
+		return tx.UpsertChannels(1, []Channel{{
 			ChanID:       99,
 			RemotePubKey: "pkX",
 			ChannelPoint: "exchgtx001:0",
@@ -3837,7 +3837,7 @@ func TestAutoTagChannelTransfers_UserNotePreserved(t *testing.T) {
 	ctx := context.Background()
 
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		if err := tx.UpsertChannels([]Channel{{
+		if err := tx.UpsertChannels(1, []Channel{{
 			ChanID:       100,
 			RemotePubKey: "pkY",
 			ChannelPoint: "customtx:0",
@@ -3845,7 +3845,7 @@ func TestAutoTagChannelTransfers_UserNotePreserved(t *testing.T) {
 		}}); err != nil {
 			return err
 		}
-		return tx.UpsertOnchainTxns([]OnchainTx{
+		return tx.UpsertOnchainTxns(1, []OnchainTx{
 			{TxHash: "customtx", AmountSat: -100000, NumConfirmations: 6, Timestamp: time.Now()},
 		})
 	})
@@ -4103,7 +4103,7 @@ func TestAnnualReport_WithForwardingData(t *testing.T) {
 	ts2023 := time.Date(2023, 11, 1, 0, 0, 0, 0, time.UTC)
 
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.InsertForwardingEvents([]ForwardingEvent{
+		return tx.InsertForwardingEvents(1, []ForwardingEvent{
 			{Timestamp: ts2024, ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 10_000, AmtOutMsat: 9_000, FeeMsat: 1_000},
 			{Timestamp: ts2024.Add(time.Hour), ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 20_000, AmtOutMsat: 18_000, FeeMsat: 2_000},
 			{Timestamp: ts2023, ChanIDIn: 3, ChanIDOut: 4, AmtInMsat: 50_000, AmtOutMsat: 45_000, FeeMsat: 5_000}, // different year
@@ -4145,7 +4145,7 @@ func TestAnnualReport_BestChannel(t *testing.T) {
 	ts := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.InsertForwardingEvents([]ForwardingEvent{
+		return tx.InsertForwardingEvents(1, []ForwardingEvent{
 			{Timestamp: ts, ChanIDIn: 100, ChanIDOut: 200, AmtInMsat: 10_000, AmtOutMsat: 9_000, FeeMsat: 500},
 			{Timestamp: ts.Add(time.Hour), ChanIDIn: 100, ChanIDOut: 300, AmtInMsat: 10_000, AmtOutMsat: 9_000, FeeMsat: 2_000},
 			{Timestamp: ts.Add(2 * time.Hour), ChanIDIn: 200, ChanIDOut: 100, AmtInMsat: 5_000, AmtOutMsat: 4_500, FeeMsat: 200},
@@ -4190,7 +4190,7 @@ func TestAvailableReportYears_WithForwardingData(t *testing.T) {
 	// Insert data from 2021 (older than the default 4-year window)
 	ts2021 := time.Date(2021, 1, 15, 0, 0, 0, 0, time.UTC)
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.InsertForwardingEvents([]ForwardingEvent{
+		return tx.InsertForwardingEvents(1, []ForwardingEvent{
 			{Timestamp: ts2021, ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 1_000, AmtOutMsat: 900, FeeMsat: 100},
 		})
 	})
@@ -4262,7 +4262,7 @@ func TestAutoTagChannelTransfers_TagsChannelOpens(t *testing.T) {
 	ctx := context.Background()
 	// Seed a channel with a known channel_point (txid:0)
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.UpsertChannels([]Channel{
+		return tx.UpsertChannels(1, []Channel{
 			{
 				ChanID:       12345,
 				RemotePubKey: "pk1",
@@ -4279,7 +4279,7 @@ func TestAutoTagChannelTransfers_TagsChannelOpens(t *testing.T) {
 
 	// Seed an on-chain transaction with that txid
 	err = d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns([]OnchainTx{
+		return tx.UpsertOnchainTxns(1, []OnchainTx{
 			{
 				TxHash:           "deadbeef00000000000000000000000000000000000000000000000000000000",
 				AmountSat:        -1_000_000, // channel open spends sats
@@ -4316,7 +4316,7 @@ func TestAutoTagChannelTransfers_TagsChannelCloses(t *testing.T) {
 	closingTxHash := "cafebabe00000000000000000000000000000000000000000000000000000000"
 
 	err := d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.UpsertChannels([]Channel{
+		return tx.UpsertChannels(1, []Channel{
 			{
 				ChanID:        99999,
 				RemotePubKey:  "pk2",
@@ -4333,7 +4333,7 @@ func TestAutoTagChannelTransfers_TagsChannelCloses(t *testing.T) {
 	}
 
 	err = d.RunSync(ctx, func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns([]OnchainTx{
+		return tx.UpsertOnchainTxns(1, []OnchainTx{
 			{
 				TxHash:           closingTxHash,
 				AmountSat:        490_000,

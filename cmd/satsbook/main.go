@@ -90,6 +90,14 @@ func main() {
 	// Initialize price cache
 	priceCache := price.NewCache(price.WithAPIURL(cfg.PriceAPIURL))
 
+	// Ensure primary node row is persisted whenever LND is configured.
+	if cfg.LNDConfigured() {
+		if err := database.EnsurePrimaryNode(context.Background(),
+			cfg.LNDHost, cfg.LNDPort, cfg.LNDMacaroonPath, cfg.LNDTLSCertPath); err != nil {
+			log.Printf("WARNING: failed to persist primary node: %v", err)
+		}
+	}
+
 	// Initialize LND client (optional — app works without it for dashboard-only mode)
 	var lndClient *lnd.Client
 	var s *syncer.Syncer
@@ -102,7 +110,7 @@ func main() {
 			log.Printf("connected to LND at %s:%d", cfg.LNDHost, cfg.LNDPort)
 
 			syncerLogger := log.New(os.Stdout, "[syncer] ", log.LstdFlags)
-			s = syncer.New(lndClient, database, syncerLogger, cfg.SyncInterval, cfg.MaxHistoryDays)
+			s = syncer.New(1, lndClient, database, syncerLogger, cfg.SyncInterval, cfg.MaxHistoryDays)
 			s.SetSnapshotStore(database, priceCache)
 		}
 	} else {
@@ -206,6 +214,9 @@ func main() {
 	// Wire up read API key store and v1 data store.
 	handler.SetAPIKeyStore(database)
 	handler.SetAPIv1Store(database)
+
+	// Wire up node management store.
+	handler.SetNodeStore(database)
 
 	// Wire up wallet tracking (wallet store is always available; scanner requires Electrum or Bitcoin RPC)
 	handler.SetWalletStore(database)
