@@ -2593,3 +2593,160 @@ func (d *DB) TouchAPIKeyLastUsed(ctx context.Context, id int64) error {
 	}
 	return nil
 }
+
+// ── Node management ──────────────────────────────────────────────────────────
+
+// Node represents a managed LND node stored in the database.
+type Node struct {
+	ID           int64
+	Alias        string
+	Pubkey       string
+	LNDHost      string
+	LNDPort      int
+	MacaroonPath string
+	TLSCertPath  string
+	IsPrimary    bool
+	CreatedAt    time.Time
+}
+
+// EnsurePrimaryNode upserts the primary node row (id=1) from env-var config.
+// This is called at startup to keep node_id=1 in sync with the env.
+func (d *DB) EnsurePrimaryNode(ctx context.Context, host string, port int, macaroonPath, tlsCertPath string) error {
+	_, err := d.db.ExecContext(ctx, `
+		INSERT INTO nodes (id, lnd_host, lnd_port, macaroon_path, tls_cert_path, is_primary)
+		VALUES (1, ?, ?, ?, ?, 1)
+		ON CONFLICT(id) DO UPDATE SET
+			lnd_host      = excluded.lnd_host,
+			lnd_port      = excluded.lnd_port,
+			macaroon_path = excluded.macaroon_path,
+			tls_cert_path = excluded.tls_cert_path,
+			is_primary    = 1
+	`, host, port, macaroonPath, tlsCertPath)
+	if err != nil {
+		return fmt.Errorf("ensure primary node: %w", err)
+	}
+	return nil
+}
+
+// ListNodes returns all nodes ordered by id.
+func (d *DB) ListNodes(ctx context.Context) ([]Node, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT id, alias, pubkey, lnd_host, lnd_port, macaroon_path, tls_cert_path, is_primary, created_at
+		FROM nodes ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var nodes []Node
+	for rows.Next() {
+		var n Node
+		var isPrimary int
+		var createdAt string
+		if err := rows.Scan(&n.ID, &n.Alias, &n.Pubkey, &n.LNDHost, &n.LNDPort,
+			&n.MacaroonPath, &n.TLSCertPath, &isPrimary, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan node: %w", err)
+		}
+		n.IsPrimary = isPrimary == 1
+		// Parse created_at (stored by SQLite as text)
+		for _, f := range []string{"2006-01-02T15:04:05Z", "2006-01-02 15:04:05", time.RFC3339} {
+			if t, err := time.Parse(f, createdAt); err == nil {
+				n.CreatedAt = t
+				break
+			}
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+
+// AddNode inserts a new secondary node. Returns the new node id.
+// Enforces a maximum of 3 nodes total.
+func (d *DB) AddNode(ctx context.Context, host string, port int, macaroonPath, tlsCertPath string) (int64, error) {
+	// Enforce 3-node limit
+	var count int
+	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count nodes: %w", err)
+	}
+	if count >= 3 {
+		return 0, fmt.Errorf("maximum of 3 nodes reached")
+	}
+
+	res, err := d.db.ExecContext(ctx, `
+		INSERT INTO nodes (lnd_host, lnd_port, macaroon_path, tls_cert_path, is_primary)
+		VALUES (?, ?, ?, ?, 0)
+	`, host, port, macaroonPath, tlsCertPath)
+	if err != nil {
+		return 0, fmt.Errorf("add node: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// RemoveNode deletes a secondary node and its associated data.
+// The primary node (id=1) cannot be removed.
+func (d *DB) RemoveNode(ctx context.Context, id int64) error {
+	if id == 1 {
+		return fmt.Errorf("cannot remove the primary node")
+	}
+
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin remove node tx: %w", err)
+	}
+
+	tables := []string{
+		"forwarding_events", "channels", "onchain_txns",
+		"invoices", "payments", "wallet_balance_snapshots",
+	}
+	for _, table := range tables {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE node_id = ?`, id); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("remove node data from %s: %w", table, err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id = ? AND is_primary = 0`, id); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("remove node row: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// UpdateNodeAlias sets the human-readable alias and pubkey for a node.
+func (d *DB) UpdateNodeAlias(ctx context.Context, id int64, alias, pubkey string) error {
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE nodes SET alias = ?, pubkey = ? WHERE id = ?`, alias, pubkey, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update node alias: %w", err)
+	}
+	return nil
+}
+
+// GetNode returns a single node by id.
+func (d *DB) GetNode(ctx context.Context, id int64) (*Node, error) {
+	var n Node
+	var isPrimary int
+	var createdAt string
+	err := d.db.QueryRowContext(ctx, `
+		SELECT id, alias, pubkey, lnd_host, lnd_port, macaroon_path, tls_cert_path, is_primary, created_at
+		FROM nodes WHERE id = ?
+	`, id).Scan(&n.ID, &n.Alias, &n.Pubkey, &n.LNDHost, &n.LNDPort,
+		&n.MacaroonPath, &n.TLSCertPath, &isPrimary, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get node %d: %w", id, err)
+	}
+	n.IsPrimary = isPrimary == 1
+	for _, f := range []string{"2006-01-02T15:04:05Z", "2006-01-02 15:04:05", time.RFC3339} {
+		if t, err := time.Parse(f, createdAt); err == nil {
+			n.CreatedAt = t
+			break
+		}
+	}
+	return &n, nil
+}

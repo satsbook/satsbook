@@ -93,6 +93,7 @@ type AlertChecker interface {
 type Syncer struct {
 	lnd              LNDClient
 	store            Store
+	nodeID           int64 // which node this syncer is for (1 = primary)
 	snapshot         SnapshotStore
 	price            PriceProvider
 	monarch          MonarchSyncer
@@ -110,9 +111,10 @@ type Syncer struct {
 	maxHistoryDays   int
 }
 
-// New creates a new Syncer.
-func New(lnd LNDClient, store Store, logger *log.Logger, syncInterval time.Duration, maxHistoryDays int) *Syncer {
+// New creates a new Syncer for the given node (nodeID=1 for the primary node).
+func New(nodeID int64, lnd LNDClient, store Store, logger *log.Logger, syncInterval time.Duration, maxHistoryDays int) *Syncer {
 	return &Syncer{
+		nodeID:          nodeID,
 		lnd:             lnd,
 		store:           store,
 		logger:          logger,
@@ -462,7 +464,7 @@ func (s *Syncer) syncForwardingEvents(ctx context.Context, tx db.SyncTx) error {
 		}
 	}
 
-	if err := tx.InsertForwardingEvents(dbEvents); err != nil {
+	if err := tx.InsertForwardingEvents(s.nodeID, dbEvents); err != nil {
 		return err
 	}
 
@@ -494,7 +496,7 @@ func (s *Syncer) syncChannels(ctx context.Context, tx db.SyncTx) error {
 		}
 	}
 
-	if err := tx.UpsertChannels(dbChannels); err != nil {
+	if err := tx.UpsertChannels(s.nodeID, dbChannels); err != nil {
 		return err
 	}
 
@@ -514,7 +516,7 @@ func (s *Syncer) syncChannels(ctx context.Context, tx db.SyncTx) error {
 				Active:        false,
 			}
 		}
-		if err := tx.UpsertChannels(dbClosed); err != nil {
+		if err := tx.UpsertChannels(s.nodeID, dbClosed); err != nil {
 			return err
 		}
 		s.logger.Printf("synced %d closed channels", len(dbClosed))
@@ -551,7 +553,7 @@ func (s *Syncer) syncInvoices(ctx context.Context, tx db.SyncTx) error {
 		}
 	}
 
-	if err := tx.UpsertInvoices(dbInvoices); err != nil {
+	if err := tx.UpsertInvoices(s.nodeID, dbInvoices); err != nil {
 		return err
 	}
 
@@ -586,7 +588,7 @@ func (s *Syncer) syncPayments(ctx context.Context, tx db.SyncTx) error {
 		}
 	}
 
-	if err := tx.UpsertPayments(dbPayments); err != nil {
+	if err := tx.UpsertPayments(s.nodeID, dbPayments); err != nil {
 		return err
 	}
 
@@ -617,7 +619,7 @@ func (s *Syncer) syncOnchainTxns(ctx context.Context, tx db.SyncTx) error {
 		}
 	}
 
-	if err := tx.UpsertOnchainTxns(dbTxns); err != nil {
+	if err := tx.UpsertOnchainTxns(s.nodeID, dbTxns); err != nil {
 		return err
 	}
 
@@ -644,7 +646,7 @@ func (s *Syncer) syncWalletBalance(ctx context.Context, tx db.SyncTx) error {
 		UnconfirmedSat: balance.UnconfirmedBalance,
 	}
 
-	if err := tx.InsertWalletBalanceSnapshot(snapshot); err != nil {
+	if err := tx.InsertWalletBalanceSnapshot(s.nodeID, snapshot); err != nil {
 		return err
 	}
 

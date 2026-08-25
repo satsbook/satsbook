@@ -122,6 +122,15 @@ type TelegramSender interface {
 	SendMessage(ctx context.Context, text string) error
 }
 
+// NodeStore defines DB operations for multi-node management.
+type NodeStore interface {
+	ListNodes(ctx context.Context) ([]db.Node, error)
+	AddNode(ctx context.Context, host string, port int, macaroonPath, tlsCertPath string) (int64, error)
+	RemoveNode(ctx context.Context, id int64) error
+	UpdateNodeAlias(ctx context.Context, id int64, alias, pubkey string) error
+	GetNode(ctx context.Context, id int64) (*db.Node, error)
+}
+
 // Handler serves dashboard API and HTML endpoints.
 type Handler struct {
 	store            DashboardStore
@@ -139,6 +148,7 @@ type Handler struct {
 	telegramSender   TelegramSender
 	apiKeyStore      APIKeyStore
 	apiv1Store       APIv1Store
+	nodeStore        NodeStore
 	rateLimiter      *apikey.RateLimiter
 	licenseChecker    *license.DefaultChecker
 	checkoutBaseURL   string // e.g. "https://api.satsbook.io"
@@ -246,6 +256,11 @@ func (h *Handler) SetAPIKeyStore(s APIKeyStore) {
 // SetAPIv1Store sets the store used by the v1 read API endpoints.
 func (h *Handler) SetAPIv1Store(s APIv1Store) {
 	h.apiv1Store = s
+}
+
+// SetNodeStore sets the node management store.
+func (h *Handler) SetNodeStore(s NodeStore) {
+	h.nodeStore = s
 }
 
 // SetLicenseChecker sets the license checker for runtime activation.

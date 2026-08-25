@@ -121,16 +121,16 @@ func (t *dbSyncTx) SetSyncState(source string, syncedAt time.Time, offset int64)
 
 // InsertForwardingEvents inserts forwarding events into the database.
 // Duplicate events are ignored via the unique index.
-func (t *dbSyncTx) InsertForwardingEvents(events []ForwardingEvent) error {
+func (t *dbSyncTx) InsertForwardingEvents(nodeID int64, events []ForwardingEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
 
 	for _, event := range events {
 		_, err := t.tx.Exec(
-			`INSERT OR IGNORE INTO forwarding_events (timestamp, chan_id_in, chan_id_out, amt_in_msat, amt_out_msat, fee_msat)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			event.Timestamp, event.ChanIDIn, event.ChanIDOut, event.AmtInMsat, event.AmtOutMsat, event.FeeMsat,
+			`INSERT OR IGNORE INTO forwarding_events (timestamp, chan_id_in, chan_id_out, amt_in_msat, amt_out_msat, fee_msat, node_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			event.Timestamp, event.ChanIDIn, event.ChanIDOut, event.AmtInMsat, event.AmtOutMsat, event.FeeMsat, nodeID,
 		)
 		if err != nil {
 			return fmt.Errorf("insert forwarding event for channels %d→%d: %w", event.ChanIDIn, event.ChanIDOut, err)
@@ -141,15 +141,15 @@ func (t *dbSyncTx) InsertForwardingEvents(events []ForwardingEvent) error {
 }
 
 // UpsertChannels inserts or updates channels in the database.
-func (t *dbSyncTx) UpsertChannels(channels []Channel) error {
+func (t *dbSyncTx) UpsertChannels(nodeID int64, channels []Channel) error {
 	if len(channels) == 0 {
 		return nil
 	}
 
 	for _, ch := range channels {
 		_, err := t.tx.Exec(
-			`INSERT INTO channels (chan_id, remote_pubkey, channel_point, closing_tx_hash, capacity, local_balance, remote_balance, active)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO channels (chan_id, remote_pubkey, channel_point, closing_tx_hash, capacity, local_balance, remote_balance, active, node_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(chan_id) DO UPDATE SET
 			   remote_pubkey = excluded.remote_pubkey,
 			   channel_point = CASE WHEN excluded.channel_point != '' THEN excluded.channel_point ELSE channels.channel_point END,
@@ -157,8 +157,9 @@ func (t *dbSyncTx) UpsertChannels(channels []Channel) error {
 			   capacity = CASE WHEN excluded.capacity > 0 THEN excluded.capacity ELSE channels.capacity END,
 			   local_balance = excluded.local_balance,
 			   remote_balance = excluded.remote_balance,
-			   active = excluded.active`,
-			ch.ChanID, ch.RemotePubKey, ch.ChannelPoint, ch.ClosingTxHash, ch.Capacity, ch.LocalBalance, ch.RemoteBalance, boolToInt(ch.Active),
+			   active = excluded.active,
+			   node_id = excluded.node_id`,
+			ch.ChanID, ch.RemotePubKey, ch.ChannelPoint, ch.ClosingTxHash, ch.Capacity, ch.LocalBalance, ch.RemoteBalance, boolToInt(ch.Active), nodeID,
 		)
 		if err != nil {
 			return fmt.Errorf("upsert channel %d: %w", ch.ChanID, err)
@@ -169,16 +170,20 @@ func (t *dbSyncTx) UpsertChannels(channels []Channel) error {
 }
 
 // UpsertInvoices inserts or updates invoices in the database.
-func (t *dbSyncTx) UpsertInvoices(invoices []Invoice) error {
+func (t *dbSyncTx) UpsertInvoices(nodeID int64, invoices []Invoice) error {
 	if len(invoices) == 0 {
 		return nil
 	}
 
 	for _, inv := range invoices {
 		_, err := t.tx.Exec(
-			`INSERT OR REPLACE INTO invoices (payment_hash, amt_paid_msat, created_at, settled_at)
-			 VALUES (?, ?, ?, ?)`,
-			inv.PaymentHash, inv.AmtPaidMsat, inv.CreatedAt, inv.SettledAt,
+			`INSERT INTO invoices (payment_hash, amt_paid_msat, created_at, settled_at, node_id)
+			 VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT(payment_hash) DO UPDATE SET
+			   amt_paid_msat = excluded.amt_paid_msat,
+			   settled_at    = excluded.settled_at,
+			   node_id       = excluded.node_id`,
+			inv.PaymentHash, inv.AmtPaidMsat, inv.CreatedAt, inv.SettledAt, nodeID,
 		)
 		if err != nil {
 			return fmt.Errorf("upsert invoice %s: %w", inv.PaymentHash, err)
@@ -189,16 +194,21 @@ func (t *dbSyncTx) UpsertInvoices(invoices []Invoice) error {
 }
 
 // UpsertPayments inserts or updates payments in the database.
-func (t *dbSyncTx) UpsertPayments(payments []Payment) error {
+func (t *dbSyncTx) UpsertPayments(nodeID int64, payments []Payment) error {
 	if len(payments) == 0 {
 		return nil
 	}
 
 	for _, pmt := range payments {
 		_, err := t.tx.Exec(
-			`INSERT OR REPLACE INTO payments (payment_hash, status, value_msat, fee_msat, created_at)
-			 VALUES (?, ?, ?, ?, ?)`,
-			pmt.PaymentHash, pmt.Status, pmt.ValueMsat, pmt.FeeMsat, pmt.CreatedAt,
+			`INSERT INTO payments (payment_hash, status, value_msat, fee_msat, created_at, node_id)
+			 VALUES (?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(payment_hash) DO UPDATE SET
+			   status     = excluded.status,
+			   value_msat = excluded.value_msat,
+			   fee_msat   = excluded.fee_msat,
+			   node_id    = excluded.node_id`,
+			pmt.PaymentHash, pmt.Status, pmt.ValueMsat, pmt.FeeMsat, pmt.CreatedAt, nodeID,
 		)
 		if err != nil {
 			return fmt.Errorf("upsert payment %s (%s): %w", pmt.PaymentHash, pmt.Status, err)
@@ -210,16 +220,20 @@ func (t *dbSyncTx) UpsertPayments(payments []Payment) error {
 
 // UpsertOnchainTxns inserts or updates on-chain transactions.
 // Confirmation count and label may change between syncs.
-func (t *dbSyncTx) UpsertOnchainTxns(txns []OnchainTx) error {
+func (t *dbSyncTx) UpsertOnchainTxns(nodeID int64, txns []OnchainTx) error {
 	if len(txns) == 0 {
 		return nil
 	}
 
 	for _, tx := range txns {
 		_, err := t.tx.Exec(
-			`INSERT OR REPLACE INTO onchain_txns (tx_hash, amount_sat, num_confirmations, timestamp, label)
-			 VALUES (?, ?, ?, ?, ?)`,
-			tx.TxHash, tx.AmountSat, tx.NumConfirmations, tx.Timestamp, tx.Label,
+			`INSERT INTO onchain_txns (tx_hash, amount_sat, num_confirmations, timestamp, label, node_id)
+			 VALUES (?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(tx_hash) DO UPDATE SET
+			   num_confirmations = excluded.num_confirmations,
+			   label             = excluded.label,
+			   node_id           = excluded.node_id`,
+			tx.TxHash, tx.AmountSat, tx.NumConfirmations, tx.Timestamp, tx.Label, nodeID,
 		)
 		if err != nil {
 			return fmt.Errorf("upsert onchain tx %s: %w", tx.TxHash, err)
@@ -230,11 +244,11 @@ func (t *dbSyncTx) UpsertOnchainTxns(txns []OnchainTx) error {
 }
 
 // InsertWalletBalanceSnapshot inserts a wallet balance snapshot.
-func (t *dbSyncTx) InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error {
+func (t *dbSyncTx) InsertWalletBalanceSnapshot(nodeID int64, s WalletBalanceSnapshot) error {
 	_, err := t.tx.Exec(
-		`INSERT INTO wallet_balance_snapshots (captured_at, total_sat, confirmed_sat, unconfirmed_sat)
-		 VALUES (?, ?, ?, ?)`,
-		s.CapturedAt, s.TotalSat, s.ConfirmedSat, s.UnconfirmedSat,
+		`INSERT INTO wallet_balance_snapshots (captured_at, total_sat, confirmed_sat, unconfirmed_sat, node_id)
+		 VALUES (?, ?, ?, ?, ?)`,
+		s.CapturedAt, s.TotalSat, s.ConfirmedSat, s.UnconfirmedSat, nodeID,
 	)
 	if err != nil {
 		return fmt.Errorf("insert wallet balance snapshot: %w", err)
@@ -272,12 +286,12 @@ func (d *DB) GetSyncState(ctx context.Context, source string) (time.Time, int64,
 type SyncTx interface {
 	SetSyncState(source string, syncedAt time.Time, offset int64) error
 	GetSyncState(source string) (time.Time, int64, error)
-	InsertForwardingEvents(events []ForwardingEvent) error
-	UpsertChannels(channels []Channel) error
-	UpsertInvoices(invoices []Invoice) error
-	UpsertPayments(payments []Payment) error
-	UpsertOnchainTxns(txns []OnchainTx) error
-	InsertWalletBalanceSnapshot(s WalletBalanceSnapshot) error
+	InsertForwardingEvents(nodeID int64, events []ForwardingEvent) error
+	UpsertChannels(nodeID int64, channels []Channel) error
+	UpsertInvoices(nodeID int64, invoices []Invoice) error
+	UpsertPayments(nodeID int64, payments []Payment) error
+	UpsertOnchainTxns(nodeID int64, txns []OnchainTx) error
+	InsertWalletBalanceSnapshot(nodeID int64, s WalletBalanceSnapshot) error
 }
 
 // RunSync wraps a sync operation in a transaction.
