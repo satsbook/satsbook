@@ -4367,3 +4367,167 @@ func TestAutoTagChannelTransfers_Empty_NoError(t *testing.T) {
 		t.Errorf("expected 0 tags on empty DB, got %d", n)
 	}
 }
+
+func TestCreateAPIKey(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	id, err := d.CreateAPIKey(ctx, "Test Key", "hash123", "sbk_abc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id <= 0 {
+		t.Errorf("expected positive ID, got %d", id)
+	}
+
+	// Duplicate hash should fail (UNIQUE constraint)
+	_, err = d.CreateAPIKey(ctx, "Duplicate", "hash123", "sbk_xyz")
+	if err == nil {
+		t.Error("expected error for duplicate key_hash, got nil")
+	}
+}
+
+func TestListAPIKeys(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Empty list
+	keys, err := d.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected 0 keys, got %d", len(keys))
+	}
+
+	id1, _ := d.CreateAPIKey(ctx, "Key One", "hash_one", "sbk_one")
+	id2, _ := d.CreateAPIKey(ctx, "Key Two", "hash_two", "sbk_two")
+
+	// Revoke the first key
+	if err := d.RevokeAPIKey(ctx, id1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	keys, err = d.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 active key, got %d", len(keys))
+	}
+	if keys[0].ID != id2 {
+		t.Errorf("expected key ID %d, got %d", id2, keys[0].ID)
+	}
+	if keys[0].Name != "Key Two" {
+		t.Errorf("expected name 'Key Two', got %q", keys[0].Name)
+	}
+	if keys[0].KeyPrefix != "sbk_two" {
+		t.Errorf("expected prefix 'sbk_two', got %q", keys[0].KeyPrefix)
+	}
+	if keys[0].LastUsedAt != nil {
+		t.Errorf("expected nil LastUsedAt, got %v", keys[0].LastUsedAt)
+	}
+}
+
+func TestLookupAPIKey(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Not found
+	k, err := d.LookupAPIKey(ctx, "nonexistent_hash")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if k != nil {
+		t.Errorf("expected nil for nonexistent key, got %+v", k)
+	}
+
+	id, _ := d.CreateAPIKey(ctx, "My Key", "sha256hash", "sbk_pref")
+
+	k, err = d.LookupAPIKey(ctx, "sha256hash")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if k == nil {
+		t.Fatal("expected key, got nil")
+	}
+	if k.ID != id {
+		t.Errorf("expected ID %d, got %d", id, k.ID)
+	}
+	if k.Name != "My Key" {
+		t.Errorf("expected name 'My Key', got %q", k.Name)
+	}
+	if k.Revoked {
+		t.Error("expected key not revoked")
+	}
+
+	// Revoked key should not be found
+	if err := d.RevokeAPIKey(ctx, id); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	k, err = d.LookupAPIKey(ctx, "sha256hash")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if k != nil {
+		t.Errorf("expected nil for revoked key, got %+v", k)
+	}
+}
+
+func TestRevokeAPIKey(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	id, _ := d.CreateAPIKey(ctx, "Revoker", "revoker_hash", "sbk_rev")
+
+	if err := d.RevokeAPIKey(ctx, id); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Revoked key excluded from list
+	keys, err := d.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected 0 active keys after revocation, got %d", len(keys))
+	}
+
+	// Revoking nonexistent ID should not error
+	if err := d.RevokeAPIKey(ctx, 9999); err != nil {
+		t.Errorf("expected no error for nonexistent ID, got %v", err)
+	}
+}
+
+func TestTouchAPIKeyLastUsed(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	id, _ := d.CreateAPIKey(ctx, "Touch Test", "touch_hash", "sbk_tch")
+
+	before := time.Now().UTC()
+	if err := d.TouchAPIKeyLastUsed(ctx, id); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	after := time.Now().UTC()
+
+	keys, err := d.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if keys[0].LastUsedAt == nil {
+		t.Fatal("expected LastUsedAt to be set, got nil")
+	}
+	lu := *keys[0].LastUsedAt
+	if lu.Before(before.Add(-time.Second)) || lu.After(after.Add(time.Second)) {
+		t.Errorf("LastUsedAt %v out of expected range [%v, %v]", lu, before, after)
+	}
+}
