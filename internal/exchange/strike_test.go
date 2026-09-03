@@ -469,7 +469,7 @@ func TestStrikeRowClassify_AmountFallback(t *testing.T) {
 		{"Loan collateral", 0.055, ClassAcquisition, false},
 		{"Loan collateral", -0.055, ClassDisposal, false},
 		{"Loan collateral", 0, ClassIgnored, true},
-		// 0-BTC fiat operations stay ignored
+		// 0-BTC AND 0-USD rows are truly ignored (no accounting impact at all)
 		{"Deposit", 0, ClassIgnored, true},
 		{"Withdrawal", 0, ClassIgnored, true},
 		{"Line of credit draw", 0, ClassIgnored, true},
@@ -484,6 +484,37 @@ func TestStrikeRowClassify_AmountFallback(t *testing.T) {
 		}
 		if row.IsIgnored() != tc.ignored {
 			t.Errorf("IsIgnored(%q, btc=%g) = %v, want %v", tc.typ, tc.amountBTC, row.IsIgnored(), tc.ignored)
+		}
+	}
+}
+
+func TestStrikeRowClassify_USDFallback(t *testing.T) {
+	// When BTC is 0, USD direction decides classification.
+	// This ensures fiat-only rows (bill pay, credit draws, deposits)
+	// are imported for Monarch sync, matching pre-preview-commit behaviour.
+	cases := []struct {
+		typ       string
+		amountUSD float64
+		want      StrikeClassification
+		ignored   bool
+	}{
+		{"Withdrawal", -95.00, ClassDisposal, false},   // bill pay
+		{"Deposit", 100.00, ClassAcquisition, false},   // fiat deposit
+		{"Line of credit draw", 405.42, ClassAcquisition, false},
+		{"Principal payment", -316.58, ClassDisposal, false},
+		{"Interest payment", -69.67, ClassDisposal, false},
+		// Both 0 — truly ignored
+		{"Withdrawal", 0, ClassIgnored, true},
+		{"Deposit", 0, ClassIgnored, true},
+	}
+	for _, tc := range cases {
+		row := StrikeRow{Type: tc.typ, AmountBTC: 0, AmountUSD: tc.amountUSD}
+		got := row.Classify()
+		if got != tc.want {
+			t.Errorf("Classify(%q, usd=%g) = %q, want %q", tc.typ, tc.amountUSD, got, tc.want)
+		}
+		if row.IsIgnored() != tc.ignored {
+			t.Errorf("IsIgnored(%q, usd=%g) = %v, want %v", tc.typ, tc.amountUSD, row.IsIgnored(), tc.ignored)
 		}
 	}
 }

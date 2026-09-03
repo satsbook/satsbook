@@ -1482,10 +1482,10 @@ func TestHandleStrikeImport_PreviewPhase(t *testing.T) {
 	}
 	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
 
-	// Withdraw with 0 BTC mirrors real Strike "Withdrawal" (fiat bill pay) — should be ignored.
+	// A truly zero row (0 BTC and 0 USD) should be ignored.
 	csv := strikeHeader +
 		"tx-001,Jan 15 2025 10:00:00,Purchase,500.00,2.50,0.005,,100000.00,500.00,,Buy BTC,,\n" +
-		"tx-002,Jan 16 2025 11:00:00,Withdraw,-200.00,,0.00000000,,,,,wallet,,\n"
+		"tx-002,Jan 16 2025 11:00:00,Withdraw,0.00,,0.00000000,,,,,wallet,,\n"
 
 	req, w := createMultipartCSV(t, csv)
 	h.HandleStrikeImport(w, req)
@@ -1521,12 +1521,11 @@ func TestHandleStrikeImport_UnrecognizedTypeAppearsIgnored(t *testing.T) {
 	}
 	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
 
-	// CSV with unrecognized types that have 0 BTC — these remain ignored because
-	// they carry no BTC impact (e.g. fiat-only operations like bill pay).
+	// Only rows with 0 BTC AND 0 USD are truly ignored (no accounting impact).
 	csv := strikeHeader +
-		"tx-001,Jan 15 2025 10:00:00,Deposit,100.00,,0.00000000,,,,,,,\n" +
-		"tx-002,Jan 16 2025 11:00:00,Withdrawal,-200.00,,0.00000000,,,,,Bill pay,,\n" +
-		"tx-003,Jan 17 2025 12:00:00,Line of credit draw,200.00,,0.00000000,,,,,,,\n"
+		"tx-001,Jan 15 2025 10:00:00,Deposit,0.00,,0.00000000,,,,,,,\n" +
+		"tx-002,Jan 16 2025 11:00:00,Withdrawal,0.00,,0.00000000,,,,,,,\n" +
+		"tx-003,Jan 17 2025 12:00:00,FutureUnknownType,0.00,,0.00000000,,,,,,,\n"
 
 	req, w := createMultipartCSV(t, csv)
 	h.HandleStrikeImport(w, req)
@@ -1598,9 +1597,9 @@ func TestHandleStrikeImport_IgnoredRowsNotImportedOnConfirm(t *testing.T) {
 	}
 	h := NewHandler(&mockStore{}, nil, &mockPrice{}, importStore, log.New(os.Stderr, "[test] ", 0))
 
-	// Withdraw with 0 BTC (fiat bill pay) — ignored; should not reach the DB even
+	// A truly zero row (0 BTC and 0 USD) — ignored; should not reach the DB even
 	// if the client somehow includes it in the confirm POST.
-	withdrawLine := "tx-bad,Jan 15 2025 10:00:00,Withdraw,-200.00,,0.00000000,,,,,wallet,,"
+	withdrawLine := "tx-bad,Jan 15 2025 10:00:00,Withdraw,0.00,,0.00000000,,,,,wallet,,"
 	purchaseLine := "tx-ok,Jan 15 2025 10:00:00,Purchase,500.00,2.50,0.00500000,0.00002500,100000.00,500.00,,Buy,,"
 
 	var buf bytes.Buffer

@@ -90,6 +90,16 @@ func (r StrikeRow) Classify() StrikeClassification {
 	if r.AmountBTC < 0 {
 		return ClassDisposal
 	}
+	// 0 BTC: fall back to USD direction so fiat-only transactions
+	// (bill pay, credit draws, deposits, loan payments, etc.) are
+	// still imported for portfolio tracking and Monarch sync.
+	// This restores pre-preview-commit behavior where all non-zero rows were stored.
+	if r.AmountUSD < 0 {
+		return ClassDisposal
+	}
+	if r.AmountUSD > 0 {
+		return ClassAcquisition
+	}
 	return ClassIgnored
 }
 
