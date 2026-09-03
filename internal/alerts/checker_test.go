@@ -388,7 +388,7 @@ func TestDBStore_ChannelsWithClosingTx(t *testing.T) {
 
 	// Seed channels via the db SyncTx interface
 	err := d.RunSync(ctx, func(tx db.SyncTx) error {
-		return tx.UpsertChannels([]db.Channel{
+		return tx.UpsertChannels(1, []db.Channel{
 			{ChanID: 1, RemotePubKey: "pk1", ChannelPoint: "tx:0", Capacity: 1_000_000, LocalBalance: 500_000, Active: true},
 			{ChanID: 2, RemotePubKey: "pk2", ChannelPoint: "tx:1", Capacity: 500_000, LocalBalance: 0, Active: false, ClosingTxHash: "deadbeef"},
 		})
@@ -417,7 +417,7 @@ func TestDBStore_ChannelsBelowBalancePct(t *testing.T) {
 	s := NewDBStore(d)
 
 	err := d.RunSync(ctx, func(tx db.SyncTx) error {
-		return tx.UpsertChannels([]db.Channel{
+		return tx.UpsertChannels(1, []db.Channel{
 			// 5% — below 10% threshold
 			{ChanID: 10, RemotePubKey: "pk10", ChannelPoint: "tx:10", Capacity: 1_000_000, LocalBalance: 50_000, Active: true},
 			// 50% — above threshold
@@ -449,7 +449,7 @@ func TestDBStore_FeesMsatSince(t *testing.T) {
 
 	now := time.Now().UTC()
 	err := d.RunSync(ctx, func(tx db.SyncTx) error {
-		return tx.InsertForwardingEvents([]db.ForwardingEvent{
+		return tx.InsertForwardingEvents(1, []db.ForwardingEvent{
 			{Timestamp: now.Add(-1 * time.Hour), AmtInMsat: 10_000, AmtOutMsat: 9_000, FeeMsat: 1_000},
 			{Timestamp: now.Add(-30 * time.Hour), AmtInMsat: 20_000, AmtOutMsat: 18_000, FeeMsat: 2_000},
 		})

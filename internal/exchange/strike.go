@@ -54,9 +54,9 @@ func (r StrikeRow) IsSale() bool {
 	return strings.EqualFold(r.Type, "sale")
 }
 
-// IsIgnored returns true if the row's transaction type is not recognized.
+// IsIgnored returns true if the row has no BTC impact and should be skipped.
 func (r StrikeRow) IsIgnored() bool {
-	return !r.IsPurchase() && !r.IsReceive() && !r.IsSale()
+	return r.Classify() == ClassIgnored
 }
 
 // StrikeClassification represents the classification of a Strike CSV row.
@@ -69,12 +69,36 @@ const (
 )
 
 // Classify returns the classification for the row.
+//
+// For explicitly-typed rows (Purchase, Buy, Receive, Sale) the type name drives
+// the classification. For all other types (Send, Loan collateral, Reversal, etc.)
+// we fall back to the sign of AmountBTC so that new Strike transaction types are
+// automatically captured for portfolio balance tracking. Rows with zero BTC
+// (Deposit, Withdrawal, Line of credit draw, Principal payment, etc.) are ignored
+// since they carry no BTC impact.
 func (r StrikeRow) Classify() StrikeClassification {
 	if r.IsPurchase() || r.IsReceive() {
 		return ClassAcquisition
 	}
 	if r.IsSale() {
 		return ClassDisposal
+	}
+	// Fall back to amount direction for unrecognized types.
+	if r.AmountBTC > 0 {
+		return ClassAcquisition
+	}
+	if r.AmountBTC < 0 {
+		return ClassDisposal
+	}
+	// 0 BTC: fall back to USD direction so fiat-only transactions
+	// (bill pay, credit draws, deposits, loan payments, etc.) are
+	// still imported for portfolio tracking and Monarch sync.
+	// This restores pre-preview-commit behavior where all non-zero rows were stored.
+	if r.AmountUSD < 0 {
+		return ClassDisposal
+	}
+	if r.AmountUSD > 0 {
+		return ClassAcquisition
 	}
 	return ClassIgnored
 }

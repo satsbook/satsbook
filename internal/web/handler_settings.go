@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/satsbook/satsbook/internal/db"
 	"github.com/satsbook/satsbook/internal/license"
+	"github.com/satsbook/satsbook/internal/lnd"
 	"github.com/satsbook/satsbook/internal/monarch"
 )
 
@@ -41,6 +44,9 @@ type SettingsPageData struct {
 	// Telegram alerts
 	TelegramBotToken string // non-empty means configured (actual value masked)
 	TelegramChatID   string
+	// Multi-node management (Power tier)
+	Nodes         []db.Node
+	NodesUnlocked bool
 }
 
 // HandleSettingsPage serves GET /settings.
@@ -59,10 +65,19 @@ func (h *Handler) HandleSettingsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	isPower := license.TierAtLeast(tier, license.TierPower)
 	data := SettingsPageData{
 		Tier:            string(tier),
-		MonarchUnlocked: license.TierAtLeast(tier, license.TierPower),
+		MonarchUnlocked: isPower,
+		NodesUnlocked:   isPower,
 		AutoActivateKey: autoKey,
+	}
+
+	// Load connected nodes (Power tier)
+	if isPower && h.nodeStore != nil {
+		if nodes, err := h.nodeStore.ListNodes(ctx); err == nil {
+			data.Nodes = nodes
+		}
 	}
 
 	if info := h.getNodeInfo(ctx); info != nil {
@@ -710,3 +725,99 @@ func (h *Handler) HandleTelegramTest(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprint(w, `<div class="alert alert-success">Test message sent! Check your Telegram chat.</div>`)
 }
+
+// ── Multi-node management (Power gate) ───────────────────────────────────────
+
+// HandleAddNode handles POST /api/settings/nodes — adds a secondary LND node.
+func (h *Handler) HandleAddNode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if h.nodeStore == nil {
+		fmt.Fprint(w, `<div class="alert alert-error">Node store not available.</div>`)
+		return
+	}
+
+	host := strings.TrimSpace(r.FormValue("lnd_host"))
+	portStr := strings.TrimSpace(r.FormValue("lnd_port"))
+	macaroonPath := strings.TrimSpace(r.FormValue("macaroon_path"))
+	tlsCertPath := strings.TrimSpace(r.FormValue("tls_cert_path"))
+
+	if host == "" || portStr == "" || macaroonPath == "" || tlsCertPath == "" {
+		fmt.Fprint(w, `<div class="alert alert-error">All fields are required.</div>`)
+		return
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		fmt.Fprint(w, `<div class="alert alert-error">Invalid port number.</div>`)
+		return
+	}
+
+	// Validate connection before persisting
+	client, err := lnd.NewClient(host, port, macaroonPath, tlsCertPath)
+	if err != nil {
+		h.logger.Printf("add node: connect failed: %v", err)
+		fmt.Fprintf(w, `<div class="alert alert-error">Connection failed: %s</div>`, err.Error())
+		return
+	}
+
+	// Fetch node info to get alias/pubkey
+	var alias, pubkey string
+	if info, err := client.GetInfo(r.Context()); err == nil {
+		alias = info.Alias
+		pubkey = info.PubKey
+	}
+	client.Close()
+
+	nodeID, err := h.nodeStore.AddNode(r.Context(), host, port, macaroonPath, tlsCertPath)
+	if err != nil {
+		h.logger.Printf("add node: db error: %v", err)
+		fmt.Fprintf(w, `<div class="alert alert-error">%s</div>`, err.Error())
+		return
+	}
+
+	if alias != "" || pubkey != "" {
+		_ = h.nodeStore.UpdateNodeAlias(r.Context(), nodeID, alias, pubkey)
+	}
+
+	fmt.Fprintf(w, `<div class="alert alert-success">Node added (id=%d alias=%q). Restart Satsbook to begin syncing.</div>`, nodeID, alias)
+}
+
+// HandleRemoveNode handles POST /api/settings/nodes/delete — removes a secondary LND node.
+func (h *Handler) HandleRemoveNode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if h.nodeStore == nil {
+		fmt.Fprint(w, `<div class="alert alert-error">Node store not available.</div>`)
+		return
+	}
+
+	idStr := strings.TrimSpace(r.FormValue("node_id"))
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		fmt.Fprint(w, `<div class="alert alert-error">Invalid node id.</div>`)
+		return
+	}
+
+	if id == 1 {
+		fmt.Fprint(w, `<div class="alert alert-error">Cannot remove the primary node.</div>`)
+		return
+	}
+
+	if err := h.nodeStore.RemoveNode(r.Context(), id); err != nil {
+		h.logger.Printf("remove node %d: %v", id, err)
+		fmt.Fprintf(w, `<div class="alert alert-error">%s</div>`, err.Error())
+		return
+	}
+
+	fmt.Fprintf(w, `<div class="alert alert-success">Node %d removed. Restart Satsbook to apply changes.</div>`, id)
+}
+

@@ -129,7 +129,7 @@ func TestInsertForwardingEvents(t *testing.T) {
 	}
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertForwardingEvents(events)
+		return tx.InsertForwardingEvents(1, events)
 	})
 	if err != nil {
 		t.Fatalf("failed to insert events: %v", err)
@@ -151,7 +151,7 @@ func TestInsertForwardingEvents_Empty(t *testing.T) {
 	defer d.Close()
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertForwardingEvents(nil)
+		return tx.InsertForwardingEvents(1, nil)
 	})
 	if err != nil {
 		t.Fatalf("inserting empty events should not error: %v", err)
@@ -173,7 +173,7 @@ func TestUpsertChannels(t *testing.T) {
 	}
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels(channels)
+		return tx.UpsertChannels(1, channels)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert channels: %v", err)
@@ -191,7 +191,7 @@ func TestUpsertChannels(t *testing.T) {
 	}
 
 	err = d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels(updatedChannels)
+		return tx.UpsertChannels(1, updatedChannels)
 	})
 	if err != nil {
 		t.Fatalf("failed to update channels: %v", err)
@@ -213,7 +213,7 @@ func TestUpsertChannels_Empty(t *testing.T) {
 	defer d.Close()
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels(nil)
+		return tx.UpsertChannels(1, nil)
 	})
 	if err != nil {
 		t.Fatalf("upserting empty channels should not error: %v", err)
@@ -235,7 +235,7 @@ func TestUpsertInvoices(t *testing.T) {
 	}
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertInvoices(invoices)
+		return tx.UpsertInvoices(1, invoices)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert invoices: %v", err)
@@ -253,7 +253,7 @@ func TestUpsertInvoices(t *testing.T) {
 	}
 
 	err = d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertInvoices(updatedInvoices)
+		return tx.UpsertInvoices(1, updatedInvoices)
 	})
 	if err != nil {
 		t.Fatalf("failed to update invoice: %v", err)
@@ -275,7 +275,7 @@ func TestUpsertInvoices_Empty(t *testing.T) {
 	defer d.Close()
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertInvoices(nil)
+		return tx.UpsertInvoices(1, nil)
 	})
 	if err != nil {
 		t.Fatalf("upserting empty invoices should not error: %v", err)
@@ -298,7 +298,7 @@ func TestUpsertPayments(t *testing.T) {
 	}
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertPayments(payments)
+		return tx.UpsertPayments(1, payments)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert payments: %v", err)
@@ -316,7 +316,7 @@ func TestUpsertPayments(t *testing.T) {
 	}
 
 	err = d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertPayments(updatedPayments)
+		return tx.UpsertPayments(1, updatedPayments)
 	})
 	if err != nil {
 		t.Fatalf("failed to update payment: %v", err)
@@ -338,7 +338,7 @@ func TestUpsertPayments_Empty(t *testing.T) {
 	defer d.Close()
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertPayments(nil)
+		return tx.UpsertPayments(1, nil)
 	})
 	if err != nil {
 		t.Fatalf("upserting empty payments should not error: %v", err)
@@ -361,7 +361,7 @@ func TestUpsertOnchainTxns(t *testing.T) {
 	}
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns(txns)
+		return tx.UpsertOnchainTxns(1, txns)
 	})
 	if err != nil {
 		t.Fatalf("failed to upsert onchain txns: %v", err)
@@ -379,7 +379,7 @@ func TestUpsertOnchainTxns(t *testing.T) {
 	}
 
 	err = d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns(updatedTxns)
+		return tx.UpsertOnchainTxns(1, updatedTxns)
 	})
 	if err != nil {
 		t.Fatalf("failed to update onchain txn: %v", err)
@@ -411,7 +411,7 @@ func TestUpsertOnchainTxns_Empty(t *testing.T) {
 	defer d.Close()
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertOnchainTxns(nil)
+		return tx.UpsertOnchainTxns(1, nil)
 	})
 	if err != nil {
 		t.Fatalf("upserting empty onchain txns should not error: %v", err)
@@ -431,7 +431,7 @@ func TestInsertWalletBalanceSnapshot(t *testing.T) {
 	}
 
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.InsertWalletBalanceSnapshot(snapshot)
+		return tx.InsertWalletBalanceSnapshot(1, snapshot)
 	})
 	if err != nil {
 		t.Fatalf("failed to insert snapshot: %v", err)
@@ -456,7 +456,7 @@ func TestRunSync_RollsBackOnError(t *testing.T) {
 
 	// Insert a channel successfully
 	err := d.RunSync(context.Background(), func(tx SyncTx) error {
-		return tx.UpsertChannels([]Channel{
+		return tx.UpsertChannels(1, []Channel{
 			{
 				ChanID:        123456,
 				RemotePubKey:  "node1",
@@ -521,4 +521,162 @@ type TestError struct {
 
 func (e *TestError) Error() string {
 	return e.msg
+}
+
+// ── Multi-node tests ─────────────────────────────────────────────────────────
+
+func TestEnsurePrimaryNode(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	err := d.EnsurePrimaryNode(ctx, "localhost", 10009, "/mac", "/tls")
+	if err != nil {
+		t.Fatalf("EnsurePrimaryNode: %v", err)
+	}
+
+	nodes, err := d.ListNodes(ctx)
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	n := nodes[0]
+	if n.ID != 1 {
+		t.Errorf("expected node id=1, got %d", n.ID)
+	}
+	if !n.IsPrimary {
+		t.Error("expected primary=true")
+	}
+	if n.LNDHost != "localhost" || n.LNDPort != 10009 {
+		t.Errorf("unexpected host/port: %s:%d", n.LNDHost, n.LNDPort)
+	}
+}
+
+func TestEnsurePrimaryNode_Idempotent(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	_ = d.EnsurePrimaryNode(ctx, "host1", 10009, "/mac1", "/tls1")
+	// Second call should update, not duplicate
+	_ = d.EnsurePrimaryNode(ctx, "host2", 10010, "/mac2", "/tls2")
+
+	nodes, _ := d.ListNodes(ctx)
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node after two EnsurePrimaryNode calls, got %d", len(nodes))
+	}
+	if nodes[0].LNDHost != "host2" || nodes[0].LNDPort != 10010 {
+		t.Errorf("expected updated host/port after second call, got %s:%d", nodes[0].LNDHost, nodes[0].LNDPort)
+	}
+}
+
+func TestAddNode(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	_ = d.EnsurePrimaryNode(ctx, "primary", 10009, "/m1", "/t1")
+
+	id, err := d.AddNode(ctx, "secondary", 10009, "/m2", "/t2")
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+	if id <= 1 {
+		t.Errorf("expected id>1, got %d", id)
+	}
+
+	nodes, _ := d.ListNodes(ctx)
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(nodes))
+	}
+}
+
+func TestAddNode_MaxThree(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	_ = d.EnsurePrimaryNode(ctx, "primary", 10009, "/m1", "/t1")
+	_, _ = d.AddNode(ctx, "secondary2", 10009, "/m2", "/t2")
+	_, _ = d.AddNode(ctx, "secondary3", 10009, "/m3", "/t3")
+
+	// Fourth add should fail — already at 3 nodes
+	_, err := d.AddNode(ctx, "secondary4", 10009, "/m4", "/t4")
+	if err == nil {
+		t.Error("expected error when adding 4th node, got nil")
+	}
+}
+
+func TestRemoveNode(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	_ = d.EnsurePrimaryNode(ctx, "primary", 10009, "/m1", "/t1")
+	id, _ := d.AddNode(ctx, "secondary", 10009, "/m2", "/t2")
+
+	// Seed some data for the secondary node
+	_ = d.RunSync(ctx, func(tx SyncTx) error {
+		return tx.InsertForwardingEvents(id, []ForwardingEvent{
+			{Timestamp: time.Now(), ChanIDIn: 1, ChanIDOut: 2, AmtInMsat: 1000, AmtOutMsat: 900, FeeMsat: 100},
+		})
+	})
+
+	if err := d.RemoveNode(ctx, id); err != nil {
+		t.Fatalf("RemoveNode: %v", err)
+	}
+
+	nodes, _ := d.ListNodes(ctx)
+	if len(nodes) != 1 {
+		t.Errorf("expected 1 node after remove, got %d", len(nodes))
+	}
+
+	// Verify data was deleted
+	var count int
+	_ = d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM forwarding_events WHERE node_id=?", id).Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 forwarding events for removed node, got %d", count)
+	}
+}
+
+func TestRemoveNode_PrimaryFails(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	_ = d.EnsurePrimaryNode(ctx, "primary", 10009, "/m1", "/t1")
+
+	if err := d.RemoveNode(ctx, 1); err == nil {
+		t.Error("expected error removing primary node, got nil")
+	}
+}
+
+func TestNodeIDScopingInSyncTx(t *testing.T) {
+	d := newTestDB(t)
+	defer d.Close()
+	ctx := context.Background()
+
+	// Insert events for node 1 and node 2
+	_ = d.RunSync(ctx, func(tx SyncTx) error {
+		if err := tx.InsertForwardingEvents(1, []ForwardingEvent{
+			{Timestamp: time.Now(), ChanIDIn: 10, ChanIDOut: 11, AmtInMsat: 5000, AmtOutMsat: 4500, FeeMsat: 500},
+		}); err != nil {
+			return err
+		}
+		return tx.InsertForwardingEvents(2, []ForwardingEvent{
+			{Timestamp: time.Now(), ChanIDIn: 20, ChanIDOut: 21, AmtInMsat: 9000, AmtOutMsat: 8000, FeeMsat: 1000},
+		})
+	})
+
+	var count1, count2 int
+	_ = d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM forwarding_events WHERE node_id=1").Scan(&count1)
+	_ = d.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM forwarding_events WHERE node_id=2").Scan(&count2)
+	if count1 != 1 {
+		t.Errorf("expected 1 event for node 1, got %d", count1)
+	}
+	if count2 != 1 {
+		t.Errorf("expected 1 event for node 2, got %d", count2)
+	}
 }

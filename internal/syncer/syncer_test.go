@@ -158,7 +158,7 @@ func (m *mockSyncTx) SetSyncState(source string, syncedAt time.Time, offset int6
 	return nil
 }
 
-func (m *mockSyncTx) InsertForwardingEvents(events []db.ForwardingEvent) error {
+func (m *mockSyncTx) InsertForwardingEvents(_ int64, events []db.ForwardingEvent) error {
 	if m.insertForwardingErr != nil {
 		return m.insertForwardingErr
 	}
@@ -166,7 +166,7 @@ func (m *mockSyncTx) InsertForwardingEvents(events []db.ForwardingEvent) error {
 	return nil
 }
 
-func (m *mockSyncTx) UpsertChannels(channels []db.Channel) error {
+func (m *mockSyncTx) UpsertChannels(_ int64, channels []db.Channel) error {
 	if m.upsertChannelsErr != nil {
 		return m.upsertChannelsErr
 	}
@@ -174,7 +174,7 @@ func (m *mockSyncTx) UpsertChannels(channels []db.Channel) error {
 	return nil
 }
 
-func (m *mockSyncTx) UpsertInvoices(invoices []db.Invoice) error {
+func (m *mockSyncTx) UpsertInvoices(_ int64, invoices []db.Invoice) error {
 	if m.upsertInvoicesErr != nil {
 		return m.upsertInvoicesErr
 	}
@@ -182,7 +182,7 @@ func (m *mockSyncTx) UpsertInvoices(invoices []db.Invoice) error {
 	return nil
 }
 
-func (m *mockSyncTx) UpsertPayments(payments []db.Payment) error {
+func (m *mockSyncTx) UpsertPayments(_ int64, payments []db.Payment) error {
 	if m.upsertPaymentsErr != nil {
 		return m.upsertPaymentsErr
 	}
@@ -190,7 +190,7 @@ func (m *mockSyncTx) UpsertPayments(payments []db.Payment) error {
 	return nil
 }
 
-func (m *mockSyncTx) UpsertOnchainTxns(txns []db.OnchainTx) error {
+func (m *mockSyncTx) UpsertOnchainTxns(_ int64, txns []db.OnchainTx) error {
 	if m.upsertOnchainErr != nil {
 		return m.upsertOnchainErr
 	}
@@ -198,7 +198,7 @@ func (m *mockSyncTx) UpsertOnchainTxns(txns []db.OnchainTx) error {
 	return nil
 }
 
-func (m *mockSyncTx) InsertWalletBalanceSnapshot(s db.WalletBalanceSnapshot) error {
+func (m *mockSyncTx) InsertWalletBalanceSnapshot(_ int64, s db.WalletBalanceSnapshot) error {
 	if m.insertBalanceErr != nil {
 		return m.insertBalanceErr
 	}
@@ -216,7 +216,7 @@ func defaultMockBalance() *lnd.WalletBalance {
 
 func newTestSyncer(lndClient LNDClient, store Store) *Syncer {
 	logger := log.New(os.Stderr, "[syncer-test] ", 0)
-	return New(lndClient, store, logger, 5*time.Minute, 90)
+	return New(1, lndClient, store, logger, 5*time.Minute, 90)
 }
 
 func TestSync_FirstRun(t *testing.T) {
@@ -1331,7 +1331,7 @@ func TestRun_InitialSyncError(t *testing.T) {
 	}
 
 	logger := log.New(os.Stderr, "[syncer-test] ", 0)
-	s := New(mockLND, store, logger, 1*time.Hour, 90)
+	s := New(1, mockLND, store, logger, 1*time.Hour, 90)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1369,7 +1369,7 @@ func TestRun_TickerSyncError(t *testing.T) {
 	}
 
 	logger := log.New(os.Stderr, "[syncer-test] ", 0)
-	s := New(mockLND, store, logger, 50*time.Millisecond, 90)
+	s := New(1, mockLND, store, logger, 50*time.Millisecond, 90)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1418,7 +1418,7 @@ func TestRun_StopsOnCancel(t *testing.T) {
 
 	// Use a very long interval to prevent ticks during the test
 	logger := log.New(os.Stderr, "[syncer-test] ", 0)
-	s := New(mockLND, store, logger, 1*time.Hour, 90)
+	s := New(1, mockLND, store, logger, 1*time.Hour, 90)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

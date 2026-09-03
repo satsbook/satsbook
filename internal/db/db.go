@@ -483,6 +483,28 @@ var migrations = []string{
 		revoked     INTEGER  NOT NULL DEFAULT 0
 	);
 	`,
+
+	// Migration 19: Multi-node support — nodes table and node_id scoping.
+	`
+	CREATE TABLE IF NOT EXISTS nodes (
+		id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+		alias         TEXT     NOT NULL DEFAULT '',
+		pubkey        TEXT     NOT NULL DEFAULT '',
+		lnd_host      TEXT     NOT NULL,
+		lnd_port      INTEGER  NOT NULL,
+		macaroon_path TEXT     NOT NULL,
+		tls_cert_path TEXT     NOT NULL,
+		is_primary    INTEGER  NOT NULL DEFAULT 0,
+		created_at    DATETIME NOT NULL DEFAULT (datetime('now'))
+	);
+
+	ALTER TABLE forwarding_events         ADD COLUMN node_id INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE channels                  ADD COLUMN node_id INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE onchain_txns              ADD COLUMN node_id INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE invoices                  ADD COLUMN node_id INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE payments                  ADD COLUMN node_id INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE wallet_balance_snapshots  ADD COLUMN node_id INTEGER NOT NULL DEFAULT 1;
+	`,
 }
 
 // NewDB opens a SQLite database at the given path, runs migrations, and returns a DB.

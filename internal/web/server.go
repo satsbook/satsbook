@@ -86,6 +86,10 @@ func NewServer(handler *Handler, port int, logger *log.Logger, checker license.C
 	mux.HandleFunc("/api/settings/apikeys", powerGate(handler.HandleAPIKeyCreate))
 	mux.HandleFunc("/api/settings/apikeys/revoke", powerGate(handler.HandleAPIKeyRevoke))
 
+	// Multi-node management (Power gate)
+	mux.HandleFunc("/api/settings/nodes", powerGate(handler.HandleAddNode))
+	mux.HandleFunc("/api/settings/nodes/delete", powerGate(handler.HandleRemoveNode))
+
 	// v1 read API — authenticated via Bearer token, no session required
 	v1auth := handler.apiV1Auth
 	mux.HandleFunc("/api/v1/forwarding", v1auth(handler.HandleV1Forwarding))
