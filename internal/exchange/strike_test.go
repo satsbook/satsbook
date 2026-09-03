@@ -453,6 +453,41 @@ func TestStrikeRowClassify(t *testing.T) {
 	}
 }
 
+func TestStrikeRowClassify_AmountFallback(t *testing.T) {
+	// Unrecognized types are classified by BTC amount direction.
+	cases := []struct {
+		typ       string
+		amountBTC float64
+		want      StrikeClassification
+		ignored   bool
+	}{
+		// Send: negative = disposal, positive = acquisition (reversal), zero = ignored
+		{"Send", -0.001, ClassDisposal, false},
+		{"Send", 0.001, ClassAcquisition, false},
+		{"Send", 0, ClassIgnored, true},
+		// Loan collateral: positive = retrieval (acquisition), negative = pledge (disposal)
+		{"Loan collateral", 0.055, ClassAcquisition, false},
+		{"Loan collateral", -0.055, ClassDisposal, false},
+		{"Loan collateral", 0, ClassIgnored, true},
+		// 0-BTC fiat operations stay ignored
+		{"Deposit", 0, ClassIgnored, true},
+		{"Withdrawal", 0, ClassIgnored, true},
+		{"Line of credit draw", 0, ClassIgnored, true},
+		{"Principal payment", 0, ClassIgnored, true},
+		{"Interest payment", 0, ClassIgnored, true},
+	}
+	for _, tc := range cases {
+		row := StrikeRow{Type: tc.typ, AmountBTC: tc.amountBTC}
+		got := row.Classify()
+		if got != tc.want {
+			t.Errorf("Classify(%q, btc=%g) = %q, want %q", tc.typ, tc.amountBTC, got, tc.want)
+		}
+		if row.IsIgnored() != tc.ignored {
+			t.Errorf("IsIgnored(%q, btc=%g) = %v, want %v", tc.typ, tc.amountBTC, row.IsIgnored(), tc.ignored)
+		}
+	}
+}
+
 func TestParseStrikeRawLine(t *testing.T) {
 	// A valid raw line that was originally parsed and joined
 	line := `REF001,Jan 15 2025 10:00:00,Purchase,500.00,2.50,0.00500000,0.00002500,100000.00,500.00,wallet123,Buy BTC,txhash001,`
